@@ -30,6 +30,7 @@
 | `plugins/x2ai-avatar/gen-clicks.py` | генератор реплик на клик |
 | `tools/build.py` | собирает `gui-experimental.cjs` из шаблона + payload'ов |
 | `tools/build_sprites.py` | собирает кадры персонажей из моделей LivLiv |
+| `tools/make_pack.py` | готовит свои кадры: маджента-фон → прозрачность, общая рамка, 336 px |
 | `tools/make_preview.py` | рисует `docs/preview.png` (картинка выше) из `sprites.json` |
 | `x2ai-teratts/server.py` | тёплый TTS-демон на unix-сокете |
 | `x2ai-teratts/x2ai-teratts-speak` | клиент: `echo "текст" \| x2ai-teratts-speak` |
