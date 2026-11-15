@@ -16,7 +16,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from urllib.request import urlopen
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageChops, ImageDraw
 
 BASE = "https://raw.githubusercontent.com/livliv-dev/player/HEAD/characters"
 CACHE = Path("/tmp/x2ai-char/cache")
@@ -70,6 +70,17 @@ def tint(img: Image.Image, color: tuple[int, int, int], strength: float) -> Imag
     g = g.point(lambda v: int(v * (1 - strength) + v * color[1] / 255 * strength))
     b = b.point(lambda v: int(v * (1 - strength) + v * color[2] / 255 * strength))
     return Image.merge("RGBA", (r, g, b, a))
+
+
+def tint_region(img: Image.Image, color: tuple[int, int, int], strength: float, box) -> Image.Image:
+    """Тонирует только пиксели кожи внутри box (координаты слоя)."""
+    base = img.copy()
+    tinted = tint(img, color, strength)
+    mask = Image.new("L", img.size, 0)
+    draw = ImageDraw.Draw(mask)
+    draw.rectangle(box, fill=255)
+    mask = ImageChops.multiply(mask, img.getchannel("A"))
+    return Image.composite(tinted, base, mask)
 
 
 def decorate(canvas: Image.Image, spec: dict, model: dict) -> None:
@@ -138,14 +149,28 @@ def compose(model: dict, images: dict[str, Image.Image], spec: dict, state: str)
             rel = layer["texture"]
 
         img = images[rel]
-        if skin and layer["id"] in SKIN:
+        if skin and layer["id"] == "body":
+            # шея/плечи — часть слоя body, красим только полосу шеи
+            head_a = model["anchors"]["head"]
+            chin = model["anchors"]["jaw"]["chin"]
+            neck = model["anchors"]["neck_y"]
+            box = (
+                int(head_a["cx"] - 0.42 * head_a["rx"]) - layer["x"],
+                int(chin) - layer["y"],
+                int(head_a["cx"] + 0.42 * head_a["rx"]) - layer["x"],
+                int(neck + 0.25 * (neck - chin)) - layer["y"],
+            )
+            if spec.get("desat"):
+                img = desaturate(img)
+            img = tint_region(img, skin, float(spec.get("strength", 0.72)), box)
+        elif skin and layer["id"] in SKIN:
             if spec.get("desat"):
                 img = desaturate(img)
             img = tint(img, skin, float(spec.get("strength", 0.72)))
         elif iris and layer["id"] in IRIS:
             img = tint(img, iris, 0.95)
         elif skin and spec.get("tint_mouth") and layer["id"] == "mouth":
-            img = tint(img, skin, 0.45)
+            img = tint(img, tuple(spec.get("mouth_color", skin)), float(spec.get("mouth_strength", 0.45)))
         elif iris and spec.get("eye_glow") and layer["id"] in EYES:
             img = tint(desaturate(img), iris, 0.7)
         canvas.alpha_composite(img, (layer["x"], layer["y"]))
@@ -165,7 +190,7 @@ def compose(model: dict, images: dict[str, Image.Image], spec: dict, state: str)
 
 SPECS = {
     "fx_robot": {
-        "char": "char07",
+        "char": "d02",
         "skin": (198, 208, 226),
         "iris": (120, 240, 255),
         "strength": 0.9,
@@ -179,10 +204,12 @@ SPECS = {
         "iris": (255, 208, 70),
         "strength": 0.8,
         "tint_mouth": True,
+        "mouth_strength": 0.55,
+        "mouth_color": (140, 56, 52),
         "extras": [],
     },
     "fx_alien": {
-        "char": "f06",
+        "char": "f07",
         "skin": (147, 209, 161),
         "iris": (20, 24, 30),
         "extras": ["antennae2"],
