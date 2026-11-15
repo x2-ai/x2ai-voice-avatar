@@ -124,6 +124,24 @@ function createView(ctx) {
   };
   setVisible(false);
 
+  // Правый блок (side region) съедает ширину колонки, и персонаж начинает
+  // перекрывать поле ввода — на это время его прячем.
+  const sideOpen = (session) => {
+    try {
+      return !!(ctx.layout && ctx.layout.side && ctx.layout.side.opened(session));
+    } catch (e) {
+      return false;
+    }
+  };
+  const refreshVisibility = () => {
+    const session = ctx.sessions.current();
+    if (!session || !session.id) {
+      setVisible(false);
+      return;
+    }
+    setVisible(!sideOpen(session));
+  };
+
   try {
     createEffect(() => {
       const session = ctx.sessions.current();
@@ -133,9 +151,12 @@ function createView(ctx) {
       }
       lastSid = session.id;
       applyForSession(session.id);
-      setVisible(true);
+      refreshVisibility();
     });
   } catch (e) {}
+
+  // side.opened() не всегда реактивен — подстраховываемся дешёвым опросом.
+  const sidePoll = setInterval(refreshVisibility, 500);
 
   let speaking = false;
   let talkTimer = null;
@@ -299,7 +320,7 @@ function createView(ctx) {
     evCount++;
     if (String(id).startsWith("ses_")) {
       lastSid = id;
-      apply(voiceFor(id));
+      applyForSession(id);
     }
     // Рот НЕ двигаем по событию ответа: между концом ответа и стартом звука
     // проходит пересказ и синтез (бывает 10+ секунд, а на холодную модель
@@ -324,7 +345,7 @@ function createView(ctx) {
               const id = event && event.data && event.data.id;
               if (String(id).startsWith("ses_")) {
                 lastSid = id;
-                apply(voiceFor(id));
+                applyForSession(id);
               }
             }),
           );
@@ -347,6 +368,7 @@ function createView(ctx) {
   root.destroy = () => {
     clearTimeout(blinkTimer);
     clearTimeout(speakTimer);
+    clearInterval(sidePoll);
     if (talkTimer) clearInterval(talkTimer);
     if (typeof unsub === "function") {
       try {
