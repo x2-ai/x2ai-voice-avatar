@@ -589,6 +589,24 @@ function startBridge(ctx) {
     const value = readJson(voicesFile);
     return value && typeof value === "object" ? value : {};
   };
+  const charVoicesFile = `${process.env.HOME}/.config/opencode/x2ai-char-voices.json`;
+  const readCharVoices = () => {
+    const value = readJson(charVoicesFile);
+    return value && typeof value === "object" ? value : {};
+  };
+  // Голоса, которые умеет TeraTTS: 4 спикера и 6 эффектов поверх них.
+  const VOICE_LIST = [
+    { id: "ru_f1", label: "Аня — женский", kind: "voice" },
+    { id: "ru_f2", label: "Мила — женский, ниже", kind: "voice" },
+    { id: "ru_m1", label: "Гриша — мужской", kind: "voice" },
+    { id: "ru_m5", label: "Тимур — мужской, ниже", kind: "voice" },
+    { id: "fx_robot", label: "Робот — кольцевая модуляция", kind: "effect" },
+    { id: "fx_demon", label: "Демон — питч вниз, драйв", kind: "effect" },
+    { id: "fx_alien", label: "Пришелец — вибрато", kind: "effect" },
+    { id: "fx_cat", label: "Кот — питч вверх", kind: "effect" },
+    { id: "fx_penguin", label: "Пингвин — высокий писк", kind: "effect" },
+    { id: "fx_ghost", label: "Призрак — реверб", kind: "effect" },
+  ];
   const send = (res, code, payload) => {
     res.writeHead(code, CORS);
     res.end(JSON.stringify(payload));
@@ -645,7 +663,17 @@ function startBridge(ctx) {
       const total = Number(state.ms) || 0;
       const at = Number(state.at) || 0;
       const left = Math.max(0, Math.round(at * 1000 + total - Date.now()));
-      send(res, 200, { speaking: left > 0, ms: left, sid: state.sid || "", voices: readVoices() });
+      send(res, 200, {
+        speaking: left > 0,
+        ms: left,
+        sid: state.sid || "",
+        voices: readVoices(),
+        charVoices: readCharVoices(),
+      });
+      return;
+    }
+    if (req.method === "GET" && route === "/voices") {
+      send(res, 200, { voices: VOICE_LIST, charVoices: readCharVoices() });
       return;
     }
     if (req.method === "GET" && route === "/models") {
@@ -673,6 +701,18 @@ function startBridge(ctx) {
           } catch (e) {}
         }
         send(res, 200, { ok: true });
+        return;
+      }
+      if (req.method === "POST" && route === "/charvoice") {
+        if (payload.charId) {
+          const map = readCharVoices();
+          if (payload.voice) map[payload.charId] = payload.voice;
+          else delete map[payload.charId];
+          try {
+            fs.writeFileSync(charVoicesFile, JSON.stringify(map, null, 2));
+          } catch (e) {}
+        }
+        send(res, 200, { ok: true, charVoices: readCharVoices() });
         return;
       }
       if (req.method === "POST" && route === "/model") {

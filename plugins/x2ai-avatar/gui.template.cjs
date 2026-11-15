@@ -173,9 +173,9 @@ function createView(ctx) {
   ].join(";");
   box.appendChild(panel);
 
+  let voiceCatalog = null;
   const renderPanel = () => {
-    panel.textContent = "";
-    const title = document.createElement("div");
+    panel.textContent = "";    const title = document.createElement("div");
     title.textContent = "Пак персонажей";
     title.style.cssText = "font-weight:600;margin-bottom:8px;opacity:.9";
     panel.appendChild(title);
@@ -206,12 +206,100 @@ function createView(ctx) {
         if (pick) {
           apply(pick, true);
           saveLocal(currentSid, pick);
-          if (currentSid) bridge("/voice", { sid: currentSid, voice: pick }).catch(() => {});
+          if (currentSid) bridge("/voice", { sid: currentSid, voice: charVoice(pick) }).catch(() => {});
         }
         renderPanel();
       };
       panel.appendChild(row);
     }
+    // Голос, привязанный к персонажу (по умолчанию — его собственный).
+    const vTitle = document.createElement("div");
+    vTitle.textContent = "Голос персонажа";
+    vTitle.style.cssText = "font-weight:600;margin:10px 0 6px;opacity:.9";
+    panel.appendChild(vTitle);
+
+    const labelOf = (id) => {
+      const found = (voiceCatalog || []).find((v) => v.id === id);
+      return found ? found.label : id;
+    };
+    const curVoice = charVoices[voice] || voice;
+
+    const vCur = document.createElement("div");
+    vCur.textContent = `сейчас: ${labelOf(curVoice)}`;
+    vCur.style.cssText = "font-size:11px;opacity:.7;margin-bottom:6px";
+    panel.appendChild(vCur);
+
+    const vList = document.createElement("div");
+    vList.style.cssText = "max-height:132px;overflow-y:auto;display:flex;flex-direction:column;gap:4px";
+    panel.appendChild(vList);
+
+    const bindVoice = (id) => {
+      bridge("/charvoice", { charId: voice, voice: id })
+        .then((out) => {
+          charVoices = (out && out.charVoices) || {};
+          if (currentSid) bridge("/voice", { sid: currentSid, voice: charVoice(voice) }).catch(() => {});
+          renderPanel();
+        })
+        .catch(() => {});
+    };
+
+    const vRow = (text, active, onClick, extra) => {
+      const row = document.createElement("button");
+      row.type = "button";
+      row.textContent = text;
+      row.style.cssText = [
+        "display:flex",
+        "align-items:center",
+        "box-sizing:border-box",
+        "width:100%",
+        "min-height:26px",
+        "line-height:1.4",
+        "text-align:left",
+        "padding:4px 8px",
+        "border-radius:6px",
+        "cursor:pointer",
+        "font:inherit",
+        "font-size:11px",
+        "color:inherit",
+        "white-space:nowrap",
+        "overflow:hidden",
+        "text-overflow:ellipsis",
+        `border:1px solid ${active ? "rgba(120,180,255,.75)" : "rgba(255,255,255,.1)"}`,
+        `background:${active ? "rgba(80,130,220,.22)" : "rgba(255,255,255,.03)"}`,
+        extra || "",
+      ].join(";");
+      row.onclick = (ev) => {
+        ev.stopPropagation();
+        onClick();
+      };
+      return row;
+    };
+
+    if (!voiceCatalog) {
+      const loading = document.createElement("div");
+      loading.textContent = "загружаю голоса…";
+      loading.style.cssText = "opacity:.5;font-size:11px";
+      vList.appendChild(loading);
+      bridge("/voices")
+        .then((data) => {
+          voiceCatalog = (data && data.voices) || [];
+          renderPanel();
+        })
+        .catch(() => {});
+    } else {
+      for (const v of voiceCatalog) {
+        vList.appendChild(vRow(v.label, v.id === curVoice, () => bindVoice(v.id)));
+      }
+      vList.appendChild(
+        vRow(
+          "По умолчанию",
+          !charVoices[voice],
+          () => bindVoice(null),
+          "margin-top:2px;opacity:.85;justify-content:center",
+        ),
+      );
+    }
+
     const sep = document.createElement("div");
     sep.style.cssText = "height:1px;background:rgba(255,255,255,.12);margin:10px 0 8px";
     panel.appendChild(sep);
@@ -392,7 +480,11 @@ function createView(ctx) {
   // Главный канал: TeraTTS пишет state-файл ровно в момент старта afplay,
   // main-процесс плагина читает его и пушит событие в окно.
   let voiceMap = {};
+  let charVoices = {};
   let currentSid = "";
+  // Персонаж и голос — разные вещи: по умолчанию голос персонажа совпадает
+  // с его id, но в настройках можно привязать любой другой голос.
+  const charVoice = (id) => (id && charVoices[id]) || id;
 
   // Выбор персонажа храним ещё и в localStorage окна: он читается сразу,
   // не дожидаясь ответа main-процесса, и переживает переключение вкладок.
@@ -427,7 +519,7 @@ function createView(ctx) {
       const picked = localMap[currentSid];
       voiceMap[currentSid] = picked;
       try {
-        bridge("/voice", { sid: currentSid, voice: picked }).catch(() => {});
+        bridge("/voice", { sid: currentSid, voice: charVoice(picked) }).catch(() => {});
       } catch (e) {}
     }
   };
@@ -454,9 +546,10 @@ function createView(ctx) {
     bridge("/state")
       .then((state) => {
         if (!state) return;
-        const key = JSON.stringify(state.voices || {});
+        const key = JSON.stringify([state.voices || {}, state.charVoices || {}]);
         if (key !== adoptedKey) {
           adoptedKey = key;
+          charVoices = state.charVoices || {};
           adopt(state.voices);
         }
         // Губами двигает только тот чат, чья это озвучка: сервер пишет sid
@@ -522,7 +615,7 @@ function createView(ctx) {
     const next = list[(index + 1) % list.length] || voice;
     apply(next);
     saveLocal(currentSid, next);
-    if (currentSid) bridge("/voice", { sid: currentSid, voice: next }).catch(() => {});
+    if (currentSid) bridge("/voice", { sid: currentSid, voice: charVoice(next) }).catch(() => {});
   };
 
   // Моргание только в тишине, чтобы не спорить с артикуляцией.
