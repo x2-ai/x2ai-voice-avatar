@@ -66,6 +66,11 @@ try {
   else if (!PACKS.pixel || !Object.keys(PACKS.pixel).length) activePack = "anime";
 } catch (e) {}
 
+function packVoices(name) {
+  const pack = PACKS[name || activePack] || {};
+  return Object.keys(pack).filter((voice) => pack[voice] && pack[voice].closed);
+}
+
 function setPack(name) {
   if (!PACKS[name]) return;
   activePack = name;
@@ -119,8 +124,8 @@ function createView(ctx) {
   let voice = "ru_f1";
   img.src = frame(voice, "closed");
 
-  const apply = (next) => {
-    if (!next || next === voice) return;
+  const apply = (next, force) => {
+    if (!next || (next === voice && !force)) return;
     voice = next;
     img.src = frame(voice, "closed");
     root.title = `x2ai · ${nameFor(voice)} · ${voice}`;
@@ -177,7 +182,7 @@ function createView(ctx) {
       const count = Object.keys(PACKS[name] || {}).length;
       const row = document.createElement("button");
       row.type = "button";
-      row.textContent = `${PACK_NAMES[name] || name} · ${count}/${VOICES.length}`;
+      row.textContent = `${PACK_NAMES[name] || name} · ${count}`;
       const active = name === activePack;
       row.style.cssText = [
         "display:block",
@@ -195,11 +200,90 @@ function createView(ctx) {
       row.onclick = (ev) => {
         ev.stopPropagation();
         setPack(name);
-        img.src = frame(voice, "closed");
+        const list = packVoices();
+        const pick = list.includes(voice) ? voice : list[0];
+        if (pick) {
+          apply(pick, true);
+          saveLocal(currentSid, pick);
+          if (currentSid) bridge("/voice", { sid: currentSid, voice: pick }).catch(() => {});
+        }
         renderPanel();
       };
       panel.appendChild(row);
     }
+    const sep = document.createElement("div");
+    sep.style.cssText = "height:1px;background:rgba(255,255,255,.12);margin:10px 0 8px";
+    panel.appendChild(sep);
+
+    const mTitle = document.createElement("div");
+    mTitle.textContent = "Модель пересказа";
+    mTitle.style.cssText = "font-weight:600;margin-bottom:6px;opacity:.9";
+    panel.appendChild(mTitle);
+
+    const mList = document.createElement("div");
+    mList.style.cssText = "max-height:150px;overflow-y:auto;display:flex;flex-direction:column;gap:4px";
+    const mNote = document.createElement("div");
+    mNote.textContent = "загружаю…";
+    mNote.style.cssText = "opacity:.5;font-size:11px";
+    mList.appendChild(mNote);
+    panel.appendChild(mList);
+
+    const renderModels = (data) => {
+      mList.textContent = "";
+      const models = (data && data.models) || [];
+      const current = (data && data.current) || {};
+      const free = models.filter((m) => m.free);
+      const shown = free.slice(0, 40);
+      if (!shown.length) {
+        const empty = document.createElement("div");
+        empty.textContent = data && data.error ? "не удалось получить список" : "бесплатных моделей нет";
+        empty.style.cssText = "opacity:.5;font-size:11px";
+        mList.appendChild(empty);
+        return;
+      }
+      for (const m of shown) {
+        const row = document.createElement("button");
+        row.type = "button";
+        const active = m.providerID === current.providerID && m.id === current.id;
+        row.textContent = `${m.name}`;
+        row.title = `${m.providerID}/${m.id}`;
+        row.style.cssText = [
+          "display:block",
+          "width:100%",
+          "text-align:left",
+          "padding:5px 7px",
+          "border-radius:6px",
+          "cursor:pointer",
+          "font:inherit",
+          "font-size:11px",
+          "color:inherit",
+          "white-space:nowrap",
+          "overflow:hidden",
+          "text-overflow:ellipsis",
+          `border:1px solid ${active ? "rgba(120,180,255,.75)" : "rgba(255,255,255,.1)"}`,
+          `background:${active ? "rgba(80,130,220,.22)" : "rgba(255,255,255,.03)"}`,
+        ].join(";");
+        row.onclick = (ev) => {
+          ev.stopPropagation();
+          bridge("/model", { providerID: m.providerID, id: m.id })
+            .then(() => renderPanel())
+            .catch(() => {});
+        };
+        mList.appendChild(row);
+      }
+      if (free.length > shown.length) {
+        const more = document.createElement("div");
+        more.textContent = `и ещё ${free.length - shown.length} бесплатных`;
+        more.style.cssText = "opacity:.45;font-size:10px;padding:2px 7px";
+        mList.appendChild(more);
+      }
+    };
+    bridge("/models")
+      .then(renderModels)
+      .catch(() => {
+        mNote.textContent = "мост недоступен";
+      });
+
     const hint = document.createElement("div");
     hint.textContent = "Правый клик — следующий персонаж";
     hint.style.cssText = "opacity:.5;margin-top:2px;font-size:11px";
@@ -421,8 +505,9 @@ function createView(ctx) {
   box.oncontextmenu = (event) => {
     if (event) event.preventDefault();
     stopAll();
-    const index = VOICES.indexOf(voice);
-    const next = VOICES[(index + 1) % VOICES.length];
+    const list = packVoices();
+    const index = list.indexOf(voice);
+    const next = list[(index + 1) % list.length] || voice;
     apply(next);
     saveLocal(currentSid, next);
     if (currentSid) bridge("/voice", { sid: currentSid, voice: next }).catch(() => {});

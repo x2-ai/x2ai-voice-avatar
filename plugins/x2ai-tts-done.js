@@ -159,7 +159,20 @@ function teraVoice(sid) {
 }
 
 // Пересказ через бесплатную модель OpenCode: без сессии, истории и инструментов.
-const SUM_MODEL = { providerID: "opencode-go", id: "iceman-contributor-free" };
+const SUM_MODEL_DEFAULT = { providerID: "opencode-go", id: "iceman-contributor-free" };
+// Модель пересказа меняется в настройках персонажа (панель шестерёнки):
+// выбор лежит в x2ai-tts-model.json, иначе берём бесплатную по умолчанию.
+const sumModel = () => {
+  try {
+    const raw = require("node:fs").readFileSync(
+      `${process.env.HOME}/.config/opencode/x2ai-tts-model.json`,
+      "utf8",
+    );
+    const value = JSON.parse(raw);
+    if (value && value.id && value.providerID) return value;
+  } catch (e) {}
+  return SUM_MODEL_DEFAULT;
+};
 const LLM_SUMMARY = true;
 const LLM_TIMEOUT = 12000;
 let genText = null;
@@ -423,7 +436,7 @@ async function translateRu(text) {
   try {
     const out = await Promise.race([
       genText({
-        model: SUM_MODEL,
+        model: sumModel(),
         prompt: `Переведи на русский язык, сохранив смысл. Только перевод, без пояснений:\n\n${text.slice(0, 3000)}`,
       }),
       new Promise((r) => setTimeout(() => r(null), LLM_TIMEOUT)),
@@ -468,7 +481,7 @@ async function llmSummary(raw, gender) {
   ].join("\n");
   try {
     const out = await Promise.race([
-      genText({ model: SUM_MODEL, prompt }),
+      genText({ model: sumModel(), prompt }),
       new Promise((r) => setTimeout(() => r(null), LLM_TIMEOUT)),
     ]);
     let text = String(out?.text || "")
@@ -541,7 +554,7 @@ function speak(text, sid, voice) {
 //   GET  /state  -> { speaking, ms, voices }
 //   POST /voice  -> { sid, voice }  (ручной выбор персонажа правым кликом)
 //   POST /stop   -> заглушить текущую озвучку
-function startBridge() {
+function startBridge(ctx) {
   // После перезагрузки плагина старый сервер остаётся жить на порту и держит
   // СТАРЫЙ код обработчиков. Закрываем его и поднимаем новый.
   if (globalThis.__x2aiBridge) {
@@ -580,6 +593,37 @@ function startBridge() {
     res.writeHead(code, CORS);
     res.end(JSON.stringify(payload));
   };
+  const modelFile = `${process.env.HOME}/.config/opencode/x2ai-tts-model.json`;
+  const readModel = () => {
+    const value = readJson(modelFile);
+    return value && value.id ? value : null;
+  };
+  const listModels = async () => {
+    try {
+      const raw = await ctx.model.list();
+      const data = raw && raw.data ? raw.data : raw;
+      const items = Array.isArray(data) ? data : (data && (data.models || data.items)) || [];
+      const models = [];
+      for (const m of items) {
+        if (!m || !m.id) continue;
+        if (m.type && m.type !== "chat") continue;
+        if (m.enabled === false || (m.status && m.status !== "active")) continue;
+        const cost = (Array.isArray(m.cost) ? m.cost[0] : m.cost) || {};
+        const input = Number(cost.input) || 0;
+        const output = Number(cost.output) || 0;
+        models.push({
+          providerID: m.providerID || m.provider || "",
+          id: m.modelID || m.id,
+          name: m.name || m.modelID || m.id,
+          free: input === 0 && output === 0,
+        });
+      }
+      return { models, source: "model.list" };
+    } catch (e) {
+      return { models: [], source: "error", error: e && e.message ? e.message : String(e) };
+    }
+  };
+
   const stopTts = () => {
     try {
       const net = require("node:net");
@@ -604,6 +648,12 @@ function startBridge() {
       send(res, 200, { speaking: left > 0, ms: left, sid: state.sid || "", voices: readVoices() });
       return;
     }
+    if (req.method === "GET" && route === "/models") {
+      listModels()
+        .then((out) => send(res, 200, { ...out, current: readModel() || SUM_MODEL_DEFAULT }))
+        .catch(() => send(res, 200, { models: [], source: "error", current: readModel() || SUM_MODEL_DEFAULT }));
+      return;
+    }
     let body = "";
     req.on("data", (chunk) => {
       body += chunk;
@@ -623,6 +673,18 @@ function startBridge() {
           } catch (e) {}
         }
         send(res, 200, { ok: true });
+        return;
+      }
+      if (req.method === "POST" && route === "/model") {
+        if (payload.providerID && payload.id) {
+          try {
+            fs.writeFileSync(
+              modelFile,
+              JSON.stringify({ providerID: payload.providerID, id: payload.id }, null, 2),
+            );
+          } catch (e) {}
+        }
+        send(res, 200, { ok: true, current: readModel() || SUM_MODEL_DEFAULT });
         return;
       }
       if (req.method === "POST" && route === "/stop") {
@@ -648,7 +710,7 @@ module.exports = {
   _test: { agreeGender, fixBareVerbs, genderOf, effectiveVoice, teraVoice, llmSummary },
   async setup(ctx) {
     try {
-      startBridge();
+      startBridge(ctx);
     } catch (e) {}
     if (!enabled()) {
       log("SETUP: disabled");
