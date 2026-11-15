@@ -20,13 +20,14 @@ const TERATTS = `${process.env.HOME}/.config/opencode/x2ai-teratts/x2ai-teratts-
 const VOICE_MODE = (process.env.TTS_VOICE_MODE || "chat").toLowerCase();
 const TERA_VOICES = [
   "ru_f1", "ru_f2", "ru_m1", "ru_m5",
-  "fx_robot", "fx_demon", "fx_alien", "fx_cat", "fx_penguin", "fx_ghost",
+  "fx_robot", "fx_demon", "fx_demoness", "fx_alien", "fx_cat", "fx_penguin", "fx_ghost",
 ];
 
 // Характерные голоса говорят от лица своего персонажа.
 const FX_GENDER = {
   fx_robot: "m",
   fx_demon: "m",
+  fx_demoness: "f",
   fx_alien: "f",
   fx_cat: "f",
   fx_penguin: "m",
@@ -601,7 +602,8 @@ function startBridge(ctx) {
     { id: "ru_m1", label: "Гриша — мужской", kind: "voice" },
     { id: "ru_m5", label: "Тимур — мужской, ниже", kind: "voice" },
     { id: "fx_robot", label: "Робот — кольцевая модуляция", kind: "effect" },
-    { id: "fx_demon", label: "Демон — питч вниз, драйв", kind: "effect" },
+    { id: "fx_demon", label: "Демон — мужской, питч вниз", kind: "effect" },
+    { id: "fx_demoness", label: "Демонесса — женский, низкий, хриплый", kind: "effect" },
     { id: "fx_alien", label: "Пришелец — вибрато", kind: "effect" },
     { id: "fx_cat", label: "Кот — питч вверх", kind: "effect" },
     { id: "fx_penguin", label: "Пингвин — высокий писк", kind: "effect" },

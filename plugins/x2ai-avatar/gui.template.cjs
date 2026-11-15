@@ -20,15 +20,17 @@ const BRIDGE_URL = "http://127.0.0.1:47821";
 const PACKS = __SPRITES__;
 const CLICKS = __CLICKS__;
 
-const VOICES = ["ru_f1","ru_f2","ru_m1","ru_m5","fx_robot","fx_demon","fx_alien","fx_cat","fx_penguin","fx_ghost"];
+const VOICES = ["ru_f1","ru_f2","ru_m1","ru_m5","fx_robot","fx_demoness","fx_alien","fx_cat","fx_penguin","fx_ghost"];
+// Мужской «демон» остался голосом в меню, но спрайт у него тот же — демонесса.
+const SPRITE_ALIAS = { fx_demon: "fx_demoness" };
 const CHAR_NAMES = {
   anime: {
     ru_f1: "Аня", ru_f2: "Мила", ru_m1: "Гриша", ru_m5: "Тимур",
-    fx_robot: "Робик", fx_demon: "Азазель", fx_alien: "Зета",
+    fx_robot: "Робик", fx_demoness: "Азазель", fx_alien: "Зета",
     fx_cat: "Мурзик", fx_penguin: "Пико", fx_ghost: "Юки",
   },
   pixel: {
-    ru_f1: "Тянка", fx_robot: "Робот", fx_demon: "Демон",
+    ru_f1: "Тянка", fx_robot: "Робот", fx_demoness: "Демонесса",
     fx_penguin: "Инопланетянин", ru_m1: "Программист",
   },
 };
@@ -80,9 +82,10 @@ function setPack(name) {
 }
 
 function frame(voice, state) {
+  const key = SPRITE_ALIAS[voice] || voice;
   const pack = PACKS[activePack] || {};
   const base = PACKS.anime || {};
-  const set = pack[voice] || base[voice] || base.ru_f1 || Object.values(PACKS)[0].ru_f1;
+  const set = pack[key] || base[key] || base.ru_f1 || Object.values(PACKS)[0].ru_f1;
   return set[state] || set.closed;
 }
 

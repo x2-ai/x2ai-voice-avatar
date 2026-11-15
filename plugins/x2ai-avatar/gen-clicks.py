@@ -8,7 +8,7 @@
 
 Запуск (нужен venv с onnxruntime):
 
-    ~/.config/opencode/teratts-venv/bin/python gen-clicks.py
+    ~/.config/opencode/teratts-venv/bin/python gen-clicks.py [голос ...]
 """
 from __future__ import annotations
 
@@ -25,7 +25,8 @@ SERVER_DIR = HOME / ".config/opencode/x2ai-teratts"
 OUT = Path(__file__).with_name("clicks.json")
 TMP = Path("/tmp/x2ai-clicks")
 VOICES = ["ru_f1", "ru_f2", "ru_m1", "ru_m5",
-          "fx_robot", "fx_demon", "fx_alien", "fx_cat", "fx_penguin", "fx_ghost"]
+          "fx_robot", "fx_demon", "fx_demoness", "fx_alien", "fx_cat",
+          "fx_penguin", "fx_ghost"]
 
 PHRASES = [
     "Ага?",
@@ -56,8 +57,13 @@ def main() -> int:
         ruaccent_mode="dictionary",
     )
 
+    # Аргументы — какие голоса пересобрать; без них все.
+    only = [a for a in sys.argv[1:] if a in VOICES]
+    voices = only or VOICES
     out: dict[str, list[dict]] = {}
-    for voice in VOICES:
+    if only and OUT.exists():
+        out = json.loads(OUT.read_text(encoding="utf-8"))
+    for voice in voices:
         items: list[dict] = []
         for i, text in enumerate(PHRASES):
             t0 = time.time()

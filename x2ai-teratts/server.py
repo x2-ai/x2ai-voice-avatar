@@ -101,6 +101,8 @@ SR = 44100.0
 FX = {
     "fx_robot": {"base": "ru_m1", "ring": 55.0, "mix": 0.55, "bits": 7},
     "fx_demon": {"base": "ru_m5", "pitch": 0.80, "drive": 0.45, "reverb": 0.30},
+    # Демонесса: женская артикуляция, но низко и с хрипотцой.
+    "fx_demoness": {"base": "ru_f1", "pitch": 0.88, "drive": 0.32, "reverb": 0.34},
     "fx_alien": {"base": "ru_f2", "pitch": 1.16, "vibrato": (5.0, 0.030)},
     "fx_cat": {"base": "ru_f1", "pitch": 1.34},
     "fx_penguin": {"base": "ru_m1", "pitch": 1.55, "vibrato": (7.0, 0.020)},
