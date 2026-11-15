@@ -6,6 +6,21 @@
 
 Всё работает офлайн: синтез — TeraTTSv2 (ONNX, CPU), без облака и без torch.
 
+![Персонажи: 4 голоса и 6 эффектов](docs/preview.png)
+
+## Установка за 5 шагов
+
+1. **TeraTTS**: модель `TeraSpace/TeraTTSv2` → `~/.config/opencode/teratts-model`,
+   зависимости → `~/.config/opencode/teratts-venv` (подробности ниже).
+2. **Сервер озвучки**: `cp x2ai-teratts/* ~/.config/opencode/x2ai-teratts/`,
+   `chmod +x` на клиенты, проверка — `echo "Привет" | x2ai-teratts-speak`.
+3. **Спрайты**: `python3 tools/build_sprites.py` — скачает модели
+   `livliv-dev/player` и соберёт кадры (в репозитории их нет, см. «Лицензии»).
+4. **Плагины**: `cp -r plugins/x2ai-tts-done.js plugins/x2ai-avatar ~/.config/opencode/plugins/`,
+   затем `python3 tools/build.py` — склеит `gui-experimental.cjs`.
+5. **Включить** в `~/.config/opencode/opencode.jsonc` (список `plugins`) и
+   перезапустить окно. Правый клик по персонажу — следующий голос.
+
 ## Что внутри
 
 | путь | что это |
@@ -15,6 +30,7 @@
 | `plugins/x2ai-avatar/gen-clicks.py` | генератор реплик на клик |
 | `tools/build.py` | собирает `gui-experimental.cjs` из шаблона + payload'ов |
 | `tools/build_sprites.py` | собирает кадры персонажей из моделей LivLiv |
+| `tools/make_preview.py` | рисует `docs/preview.png` (картинка выше) из `sprites.json` |
 | `x2ai-teratts/server.py` | тёплый TTS-демон на unix-сокете |
 | `x2ai-teratts/x2ai-teratts-speak` | клиент: `echo "текст" \| x2ai-teratts-speak` |
 | `x2ai-teratts/x2ai-teratts-set` | сменить голос по умолчанию |
