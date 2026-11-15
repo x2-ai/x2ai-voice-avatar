@@ -21,11 +21,23 @@ const PACKS = __SPRITES__;
 const CLICKS = __CLICKS__;
 
 const VOICES = ["ru_f1","ru_f2","ru_m1","ru_m5","fx_robot","fx_demon","fx_alien","fx_cat","fx_penguin","fx_ghost"];
-const NAMES = {
-  ru_f1: "Аня", ru_f2: "Мила", ru_m1: "Гриша", ru_m5: "Тимур",
-  fx_robot: "Робик", fx_demon: "Азазель", fx_alien: "Зета",
-  fx_cat: "Мурзик", fx_penguin: "Пико", fx_ghost: "Юки",
+const CHAR_NAMES = {
+  anime: {
+    ru_f1: "Аня", ru_f2: "Мила", ru_m1: "Гриша", ru_m5: "Тимур",
+    fx_robot: "Робик", fx_demon: "Азазель", fx_alien: "Зета",
+    fx_cat: "Мурзик", fx_penguin: "Пико", fx_ghost: "Юки",
+  },
+  pixel: {
+    ru_f1: "Тянка", fx_robot: "Робот", fx_demon: "Демон",
+    fx_alien: "Инопланетянин", ru_m1: "Программист",
+  },
 };
+
+// Имя зависит от пака: в пиксельном свои названия, в аниме — прежние.
+function nameFor(voice) {
+  const pack = CHAR_NAMES[activePack] || {};
+  return pack[voice] || CHAR_NAMES.anime[voice] || voice;
+}
 const HEIGHT = 224; // px на экране (спрайты 336 px)
 
 // Артикуляция: набор кадров рта в порядке «полуоткрыт → открыт → округлён → широко».
@@ -111,7 +123,7 @@ function createView(ctx) {
     if (!next || next === voice) return;
     voice = next;
     img.src = frame(voice, "closed");
-    root.title = `x2ai · ${NAMES[voice] || voice} · ${voice}`;
+    root.title = `x2ai · ${nameFor(voice)} · ${voice}`;
   };
 
   // Шестерёнка появляется при наведении: выбор пака персонажей.

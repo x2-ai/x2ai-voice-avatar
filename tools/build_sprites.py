@@ -211,12 +211,17 @@ SPECS = {
 # Пак "anime" собирается из моделей LivLiv (если для голоса нет своих кадров),
 # пак "pixel" — только из наших кадров. Обязательны closed и open,
 # остальные формы рта подставляются из open, blink — из closed.
-CUSTOM = Path(__file__).resolve().parent.parent / "custom"
+ROOT_DIR = Path(__file__).resolve().parent.parent
+CUSTOM = ROOT_DIR / "custom"        # свои кадры, в .gitignore
+SHIPPED = ROOT_DIR / "packs"        # кадры, которые едут вместе с репозиторием
 FALLBACK = {"half": "open", "round": "open", "wide": "open", "blink": "closed"}
 
 
 def load_custom(pack: str, voice: str) -> dict[str, str] | None:
+    # Сначала свой кадр, потом тот, что лежит в репозитории.
     folder = CUSTOM / pack / voice
+    if not folder.is_dir():
+        folder = SHIPPED / pack / voice
     if not folder.is_dir():
         return None
 
