@@ -25,9 +25,10 @@ def key_out(img: Image.Image) -> Image.Image:
     arr = np.asarray(img.convert("RGB")).astype(np.float32)
     dist = np.linalg.norm(arr - MAGENTA, axis=2)
     alpha = np.clip((dist - 18.0) / 90.0, 0.0, 1.0)
-    a = np.clip(alpha, 1e-3, 1.0)[..., None]
-    color = (arr - (1.0 - a) * MAGENTA) / a
-    color = np.clip(color, 0, 255)
+    # Цвет НЕ выпрямляем (unpremultiply): при малой альфе деление на неё
+    # выносит каналы за 255 и даёт одиночные белые пиксели на волосах.
+    # Розовую кайму убирает clean_edges.py / harden_alpha по кромке.
+    color = np.clip(arr, 0, 255)
     out = np.dstack([color, alpha * 255.0]).astype(np.uint8)
     return Image.fromarray(out, "RGBA")
 
