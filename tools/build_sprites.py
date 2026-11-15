@@ -177,52 +177,28 @@ def compose(model: dict, images: dict[str, Image.Image], spec: dict, state: str)
 
     decorate(canvas, spec, model)
 
-    head = model["anchors"]["head"]
     neck = model["anchors"]["neck_y"]
-    left = int(head["cx"] - 1.8 * head["rx"])
-    right = int(head["cx"] + 1.8 * head["rx"])
     top = int(model["anchors"]["top_y"] - 10)
     bottom = int(neck + 1.05 * (neck - model["anchors"]["top_y"]))
-    crop = canvas.crop((max(0, left), max(0, top), min(w, right), min(h, bottom)))
+    band = canvas.crop((0, max(0, top), w, min(h, bottom)))
+    box = band.getbbox()  # видимое содержимое: ничего не срезаем по бокам
+    if box is None:
+        box = (0, 0, band.width, band.height)
+    pad = 8
+    left = max(0, box[0] - pad)
+    right = min(w, box[2] + pad)
+    crop = canvas.crop((left, max(0, top), right, min(h, bottom)))
     ratio = HEIGHT / crop.height
     return crop.resize((int(crop.width * ratio), HEIGHT), Image.LANCZOS)
 
 
 SPECS = {
-    "fx_robot": {
-        "char": "d02",
-        "skin": (198, 208, 226),
-        "iris": (120, 240, 255),
-        "strength": 0.9,
-        "desat": True,
-        "eye_glow": True,
-        "extras": ["antenna"],
-    },
-    "fx_demon": {
-        "char": "v05",
-        "skin": (198, 92, 84),
-        "iris": (255, 208, 70),
-        "strength": 0.8,
-        "tint_mouth": True,
-        "mouth_strength": 0.55,
-        "mouth_color": (140, 56, 52),
-        "extras": [],
-    },
-    "fx_alien": {
-        "char": "f07",
-        "skin": (147, 209, 161),
-        "iris": (20, 24, 30),
-        "extras": ["antennae2"],
-    },
-    "fx_cat": {"char": "q03", "skin": None, "extras": []},
-    "fx_penguin": {"char": "p03", "skin": None, "extras": []},
-    "fx_ghost": {
-        "char": "v07",
-        "skin": (214, 228, 246),
-        "iris": (150, 214, 255),
-        "strength": 0.45,
-        "extras": [],
-    },
+    "fx_robot": {"char": "d02"},
+    "fx_demon": {"char": "v05"},
+    "fx_alien": {"char": "f07"},
+    "fx_cat": {"char": "q03"},
+    "fx_penguin": {"char": "p03"},
+    "fx_ghost": {"char": "v07"},
 }
 
 
