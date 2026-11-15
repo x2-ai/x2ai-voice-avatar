@@ -207,11 +207,52 @@ SPECS = {
     "fx_ghost": {"char": "v07"},
 }
 
+# Свои персонажи: custom/<голос>/{closed,half,open,round,wide,blink}.png
+# Если каталог есть — он главнее LivLiv-модели. Обязательны только closed и open,
+# остальные формы рта подставляются из open, blink — из closed.
+CUSTOM = Path(__file__).resolve().parent.parent / "custom"
+FALLBACK = {"half": "open", "round": "open", "wide": "open", "blink": "closed"}
+
+
+def load_custom(voice: str) -> dict[str, str] | None:
+    folder = CUSTOM / voice
+    if not folder.is_dir():
+        return None
+
+    meta = {}
+    if (folder / "meta.json").exists():
+        meta = json.loads((folder / "meta.json").read_text(encoding="utf-8"))
+    crop = meta.get("crop")
+
+    out: dict[str, str] = {}
+    for state in STATES:
+        path = folder / f"{state}.png"
+        if not path.exists():
+            alt = FALLBACK.get(state)
+            path = folder / f"{alt}.png" if alt else path
+        if not path.exists():
+            raise SystemExit(f"{folder}: нет {state}.png (и нет {FALLBACK.get(state)}.png)")
+        img = Image.open(path).convert("RGBA")
+        if crop:
+            img = img.crop(tuple(crop))
+        ratio = HEIGHT / img.height
+        if abs(ratio - 1) > 0.01:
+            img = img.resize((round(img.width * ratio), HEIGHT), Image.LANCZOS)
+        buf = io.BytesIO()
+        img.save(buf, "WEBP", quality=90, method=6)
+        out[state] = "data:image/webp;base64," + base64.b64encode(buf.getvalue()).decode()
+    return out
+
 
 def main() -> int:
     CACHE.mkdir(parents=True, exist_ok=True)
     out: dict[str, dict[str, str]] = {}
     for voice, spec in SPECS.items():
+        custom = load_custom(voice)
+        if custom:
+            out[voice] = custom
+            print(voice, "custom", len(custom["closed"]) // 1024, "КБ")
+            continue
         model, images = load_char(spec["char"])
         frames = {}
         for state in STATES:
