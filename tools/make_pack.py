@@ -47,6 +47,30 @@ def harden_alpha(img: Image.Image, threshold: int = 110, magenta_tol: int = 120)
     )
     keep = (a >= threshold) & (dist >= magenta_tol)
     arr[..., 3] = np.where(keep, 255, 0).astype(np.uint8)
+    return _despeckle(Image.fromarray(arr, "RGBA"))
+
+
+def _despeckle(img: Image.Image, max_neighbors: int = 2) -> Image.Image:
+    """Убирает одиночные розовые точки, пережившие вырезание фона.
+
+    Такие точки почти не связаны с остальным рисунком: у них максимум два
+    «розовых» соседа в окне 3×3. Румяна и прочие пятна — это десятки пикселей,
+    они не трогаются.
+    """
+    from numpy.lib.stride_tricks import sliding_window_view
+
+    arr = np.asarray(img).copy()
+    rgb = arr[..., :3].astype(np.int32)
+    a = arr[..., 3].astype(np.int32)
+    pink = (a > 0) & (rgb[..., 0] > 140) & (rgb[..., 2] > 140) & (rgb[..., 1] < 130)
+    if not pink.any():
+        return img
+    kernel = np.ones((3, 3), np.int32)
+    kernel[1, 1] = 0
+    window = sliding_window_view(np.pad(pink.astype(np.int32), 1), (3, 3))
+    lonely = pink & ((window * kernel).sum(axis=(2, 3)) <= max_neighbors)
+    if lonely.any():
+        arr[lonely] = 0
     return Image.fromarray(arr, "RGBA")
 
 
