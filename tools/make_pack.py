@@ -32,14 +32,21 @@ def key_out(img: Image.Image) -> Image.Image:
     return Image.fromarray(out, "RGBA")
 
 
-def harden_alpha(img: Image.Image, threshold: int = 110) -> Image.Image:
+def harden_alpha(img: Image.Image, threshold: int = 110, magenta_tol: int = 120) -> Image.Image:
     """Пиксель-арт: полупрозрачная кайма после вырезания фона даёт розовый ореол.
 
-    Поэтому альфу делаем двоичной: пиксель либо есть, либо нет.
+    Поэтому альфу делаем двоичной: пиксель либо есть, либо нет. Плюс гасим всё,
+    что осталось близким по цвету к мадженте, — иначе на волосах видны розовые
+    точки, у которых альфа уже была высокой.
     """
     arr = np.asarray(img).copy()
-    a = arr[..., 3]
-    arr[..., 3] = np.where(a >= threshold, 255, 0).astype(np.uint8)
+    a = arr[..., 3].astype(np.int32)
+    rgb = arr[..., :3].astype(np.int32)
+    dist = np.sqrt(
+        (rgb[..., 0] - 255) ** 2 + rgb[..., 1] ** 2 + (rgb[..., 2] - 255) ** 2
+    )
+    keep = (a >= threshold) & (dist >= magenta_tol)
+    arr[..., 3] = np.where(keep, 255, 0).astype(np.uint8)
     return Image.fromarray(arr, "RGBA")
 
 

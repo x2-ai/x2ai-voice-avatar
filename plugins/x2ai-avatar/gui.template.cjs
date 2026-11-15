@@ -98,6 +98,7 @@ function createView(ctx) {
     "left:10px",
     "bottom:2px",
     "pointer-events:auto",
+    "cursor:pointer",
     "display:flex",
     "align-items:flex-end",
     "line-height:0",
@@ -305,6 +306,13 @@ function createView(ctx) {
     ev.stopPropagation();
     togglePanel();
   };
+  // Клик мимо панели и мимо персонажа закрывает настройки.
+  const onDocDown = (ev) => {
+    if (!panelOpen) return;
+    if (panel.contains(ev.target) || box.contains(ev.target)) return;
+    togglePanel(false);
+  };
+  document.addEventListener("mousedown", onDocDown, true);
   box.onmouseenter = () => {
     gear.style.opacity = "1";
   };
@@ -583,6 +591,7 @@ function createView(ctx) {
     clearTimeout(speakTimer);
     clearInterval(sidePoll);
     clearInterval(bridgeTimer);
+    document.removeEventListener("mousedown", onDocDown, true);
     if (talkTimer) clearInterval(talkTimer);
     if (typeof unsub === "function") {
       try {
