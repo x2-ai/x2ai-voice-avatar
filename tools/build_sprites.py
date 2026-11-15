@@ -207,15 +207,16 @@ SPECS = {
     "fx_ghost": {"char": "v07"},
 }
 
-# Свои персонажи: custom/<голос>/{closed,half,open,round,wide,blink}.png
-# Если каталог есть — он главнее LivLiv-модели. Обязательны только closed и open,
+# Паки: custom/<пак>/<голос>/{closed,half,open,round,wide,blink}.png
+# Пак "anime" собирается из моделей LivLiv (если для голоса нет своих кадров),
+# пак "pixel" — только из наших кадров. Обязательны closed и open,
 # остальные формы рта подставляются из open, blink — из closed.
 CUSTOM = Path(__file__).resolve().parent.parent / "custom"
 FALLBACK = {"half": "open", "round": "open", "wide": "open", "blink": "closed"}
 
 
-def load_custom(voice: str) -> dict[str, str] | None:
-    folder = CUSTOM / voice
+def load_custom(pack: str, voice: str) -> dict[str, str] | None:
+    folder = CUSTOM / pack / voice
     if not folder.is_dir():
         return None
 
@@ -246,12 +247,13 @@ def load_custom(voice: str) -> dict[str, str] | None:
 
 def main() -> int:
     CACHE.mkdir(parents=True, exist_ok=True)
-    out: dict[str, dict[str, str]] = {}
+    packs: dict[str, dict[str, dict[str, str]]] = {"anime": {}, "pixel": {}}
+
     for voice, spec in SPECS.items():
-        custom = load_custom(voice)
+        custom = load_custom("anime", voice)
         if custom:
-            out[voice] = custom
-            print(voice, "custom", len(custom["closed"]) // 1024, "КБ")
+            packs["anime"][voice] = custom
+            print("anime", voice, "custom", len(custom["closed"]) // 1024, "КБ")
             continue
         model, images = load_char(spec["char"])
         frames = {}
@@ -263,9 +265,18 @@ def main() -> int:
             frames[state] = f"data:image/webp;base64,{data}"
             if state == "closed":
                 img.save(f"/tmp/x2ai-char/{voice}.png")
-        out[voice] = frames
-        print(voice, "ok", len(frames["closed"]) // 1024, "КБ")
-    OUT.write_text(json.dumps(out, ensure_ascii=False))
+        packs["anime"][voice] = frames
+        print("anime", voice, "ok", len(frames["closed"]) // 1024, "КБ")
+
+    pixel_dir = CUSTOM / "pixel"
+    if pixel_dir.is_dir():
+        for voice in SPECS:
+            custom = load_custom("pixel", voice)
+            if custom:
+                packs["pixel"][voice] = custom
+                print("pixel", voice, "custom", len(custom["closed"]) // 1024, "КБ")
+
+    OUT.write_text(json.dumps(packs, ensure_ascii=False))
     print("готово:", OUT, OUT.stat().st_size // 1024, "КБ")
     return 0
 

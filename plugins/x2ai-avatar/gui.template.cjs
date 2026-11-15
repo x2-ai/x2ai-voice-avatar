@@ -17,7 +17,7 @@ const { createEffect, onCleanup } = require("solid-js");
 // окно просто опрашивает /state и не зависит от main-процесса.
 const BRIDGE_URL = "http://127.0.0.1:47821";
 
-const SPRITES = __SPRITES__;
+const PACKS = __SPRITES__;
 const CLICKS = __CLICKS__;
 
 const VOICES = ["ru_f1","ru_f2","ru_m1","ru_m5","fx_robot","fx_demon","fx_alien","fx_cat","fx_penguin","fx_ghost"];
@@ -42,8 +42,30 @@ function voiceFor(sid) {
   return VOICES[Math.abs(Number(hash(sid)) | 0) % VOICES.length];
 }
 
+// Паки: наши кадры и скачанные по лицензии. Пак может быть неполным —
+// отсутствующий персонаж берётся из базового пака "anime".
+const PACK_NAMES = { anime: "Аниме", pixel: "Пиксельарт" };
+const PACK_KEY = "x2ai-avatar:pack";
+
+let activePack = "pixel";
+try {
+  const saved = localStorage.getItem(PACK_KEY);
+  if (saved && PACKS[saved]) activePack = saved;
+  else if (!PACKS.pixel || !Object.keys(PACKS.pixel).length) activePack = "anime";
+} catch (e) {}
+
+function setPack(name) {
+  if (!PACKS[name]) return;
+  activePack = name;
+  try {
+    localStorage.setItem(PACK_KEY, name);
+  } catch (e) {}
+}
+
 function frame(voice, state) {
-  const set = SPRITES[voice] || SPRITES.ru_f1;
+  const pack = PACKS[activePack] || {};
+  const base = PACKS.anime || {};
+  const set = pack[voice] || base[voice] || base.ru_f1 || Object.values(PACKS)[0].ru_f1;
   return set[state] || set.closed;
 }
 
@@ -90,6 +112,104 @@ function createView(ctx) {
     voice = next;
     img.src = frame(voice, "closed");
     root.title = `x2ai · ${NAMES[voice] || voice} · ${voice}`;
+  };
+
+  // Шестерёнка появляется при наведении: выбор пака персонажей.
+  const gear = document.createElement("button");
+  gear.type = "button";
+  gear.textContent = "⚙";
+  gear.title = "Настройки персонажа";
+  gear.style.cssText = [
+    "position:absolute",
+    "right:-4px",
+    "top:2px",
+    "width:22px",
+    "height:22px",
+    "padding:0",
+    "border-radius:50%",
+    "border:1px solid rgba(255,255,255,.25)",
+    "background:rgba(20,20,24,.78)",
+    "color:#ddd",
+    "font-size:13px",
+    "line-height:1",
+    "cursor:pointer",
+    "opacity:0",
+    "transition:opacity 120ms ease",
+  ].join(";");
+  box.appendChild(gear);
+
+  const panel = document.createElement("div");
+  panel.style.cssText = [
+    "position:absolute",
+    `bottom:${HEIGHT + 30}px`,
+    "left:0",
+    "width:236px",
+    "background:rgba(24,24,28,.97)",
+    "color:#e6e6e6",
+    "border:1px solid rgba(255,255,255,.12)",
+    "border-radius:10px",
+    "padding:10px",
+    "font:12px/1.45 -apple-system,system-ui,sans-serif",
+    "box-shadow:0 10px 30px rgba(0,0,0,.45)",
+    "display:none",
+  ].join(";");
+  box.appendChild(panel);
+
+  const renderPanel = () => {
+    panel.textContent = "";
+    const title = document.createElement("div");
+    title.textContent = "Пак персонажей";
+    title.style.cssText = "font-weight:600;margin-bottom:8px;opacity:.9";
+    panel.appendChild(title);
+    for (const name of Object.keys(PACKS)) {
+      const count = Object.keys(PACKS[name] || {}).length;
+      const row = document.createElement("button");
+      row.type = "button";
+      row.textContent = `${PACK_NAMES[name] || name} · ${count}/${VOICES.length}`;
+      const active = name === activePack;
+      row.style.cssText = [
+        "display:block",
+        "width:100%",
+        "text-align:left",
+        "margin:0 0 6px",
+        "padding:6px 8px",
+        "border-radius:7px",
+        "cursor:pointer",
+        "font:inherit",
+        "color:inherit",
+        `border:1px solid ${active ? "rgba(120,180,255,.75)" : "rgba(255,255,255,.12)"}`,
+        `background:${active ? "rgba(80,130,220,.22)" : "rgba(255,255,255,.04)"}`,
+      ].join(";");
+      row.onclick = (ev) => {
+        ev.stopPropagation();
+        setPack(name);
+        img.src = frame(voice, "closed");
+        renderPanel();
+      };
+      panel.appendChild(row);
+    }
+    const hint = document.createElement("div");
+    hint.textContent = "Правый клик — следующий персонаж";
+    hint.style.cssText = "opacity:.5;margin-top:2px;font-size:11px";
+    panel.appendChild(hint);
+  };
+
+  let panelOpen = false;
+  const togglePanel = (on) => {
+    panelOpen = on === undefined ? !panelOpen : on;
+    if (panelOpen) renderPanel();
+    panel.style.display = panelOpen ? "block" : "none";
+    gear.style.opacity = panelOpen ? "1" : "";
+  };
+  gear.onclick = (ev) => {
+    ev.stopPropagation();
+    togglePanel();
+  };
+  box.onmouseenter = () => {
+    gear.style.opacity = "1";
+  };
+  box.onmouseleave = () => {
+    if (!panelOpen) gear.style.opacity = "0";
   };
 
   // Персонаж показывается только в реальном чате: на Home и в черновике
