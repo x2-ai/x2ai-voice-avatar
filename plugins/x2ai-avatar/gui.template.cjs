@@ -9,38 +9,13 @@
 //
 // Пишем на чистом DOM: так же, как x2ai-reasoning-translate, без сборки.
 
-const { Plugin, Slot, createKeyed, Ipc } = require("@opencode/plugin/gui");
+const { Plugin, Slot, createKeyed } = require("@opencode/plugin/gui");
 const { createEffect, onCleanup } = require("solid-js");
 
-// Канал main ↔ окно: момент старта wav и ручной выбор персонажа.
-// Всё Ipc-хозяйство создаётся лениво и в try/catch: если экспериментальный
-// Ipc-API в этой сборке приложения недоступен, спрайт всё равно отрисуется.
-let AvatarIpc = null;
-let ipcTried = false;
-
-function avatarIpc() {
-  if (ipcTried) return AvatarIpc;
-  ipcTried = true;
-  try {
-    const { Schema } = require("effect");
-    const VoiceMap = Schema.Record({ key: Schema.String, value: Schema.String });
-    AvatarIpc = Ipc.define({
-      id: "x2ai-avatar.speaking",
-      methods: {
-        voices: { output: VoiceMap },
-        setVoice: { input: Schema.Struct({ sid: Schema.String, voice: Schema.String }) },
-        stop: {},
-      },
-      events: {
-        speaking: Schema.Struct({ ms: Schema.Number }),
-        voices: VoiceMap,
-      },
-    });
-  } catch (e) {
-    AvatarIpc = null;
-  }
-  return AvatarIpc;
-}
+// Канал «сервер → окно»: обычный HTTP-мост на 127.0.0.1, поднятый серверным
+// плагином x2ai-tts-done.js. Ipc в этой сборке приложения недоступен, поэтому
+// окно просто опрашивает /state и не зависит от main-процесса.
+const BRIDGE_URL = "http://127.0.0.1:47821";
 
 const SPRITES = __SPRITES__;
 const CLICKS = __CLICKS__;
@@ -220,29 +195,47 @@ function createView(ctx) {
     apply(resolveVoice(currentSid));
   };
 
-  let ipc = null;
-  try {
-    const spec = avatarIpc();
-    if (!spec) throw new Error("ipc unavailable");
-    ipc = ctx.main(spec);
-    ipc.on("speaking", (data) => {
-      stopClick();
-      startSpeaking(data && data.ms > 0 ? data.ms : 9000);
-    });
-    const adopt = (map) => {
-      voiceMap = map || {};
-      localMap = loadLocal();
-      for (const [sid, value] of Object.entries(voiceMap)) {
-        if (sid && typeof value === "string" && !localMap[sid]) localMap[sid] = value;
-      }
-      applyForSession(currentSid);
-    };
-    ipc.on("voices", adopt);
-    Promise.resolve(ipc.voices())
-      .then(adopt)
+  const bridge = (route, body) => {
+    const init = body
+      ? { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }
+      : undefined;
+    return fetch(BRIDGE_URL + route, init).then((r) => r.json());
+  };
+
+  const adopt = (map) => {
+    voiceMap = map || {};
+    localMap = loadLocal();
+    for (const [sid, value] of Object.entries(voiceMap)) {
+      if (sid && typeof value === "string" && !localMap[sid]) localMap[sid] = value;
+    }
+    applyForSession(currentSid);
+  };
+
+  let adoptedKey = "";
+  let bridgeSpeaking = false;
+  const pollBridge = () => {
+    bridge("/state")
+      .then((state) => {
+        if (!state) return;
+        const key = JSON.stringify(state.voices || {});
+        if (key !== adoptedKey) {
+          adoptedKey = key;
+          adopt(state.voices);
+        }
+        if (state.speaking) {
+          if (!bridgeSpeaking) {
+            bridgeSpeaking = true;
+            stopClick();
+            startSpeaking(state.ms > 0 ? state.ms : 9000);
+          }
+        } else {
+          bridgeSpeaking = false;
+        }
+      })
       .catch(() => {});
-  } catch (e) {
-  }
+  };
+  const bridgeTimer = setInterval(pollBridge, 250);
+  pollBridge();
 
   // Клик по персонажу: короткая заранее сгенерированная реплика его голосом.
   // Ждать TeraTTS не нужно — звук уже лежит внутри плагина.
@@ -261,11 +254,7 @@ function createView(ctx) {
   const stopAll = () => {
     stopClick();
     stopSpeaking();
-    if (ipc) {
-      try {
-        ipc.stop();
-      } catch (e) {}
-    }
+    bridge("/stop", { stop: true }).catch(() => {});
   };
 
   box.onclick = () => {
@@ -292,11 +281,7 @@ function createView(ctx) {
     const next = VOICES[(index + 1) % VOICES.length];
     apply(next);
     saveLocal(currentSid, next);
-    if (ipc && currentSid) {
-      try {
-        ipc.setVoice({ sid: currentSid, voice: next });
-      } catch (e) {}
-    }
+    if (currentSid) bridge("/voice", { sid: currentSid, voice: next }).catch(() => {});
   };
 
   // Моргание только в тишине, чтобы не спорить с артикуляцией.
@@ -318,10 +303,8 @@ function createView(ctx) {
   const onSpeak = (name) => (event) => {
     const id = (event && event.data && event.data.sessionID) || "no-sid";
     evCount++;
-    if (String(id).startsWith("ses_")) {
-      lastSid = id;
-      applyForSession(id);
-    }
+    // Событие может прийти из неактивного чата: спрайт активного не трогаем.
+    if (String(id).startsWith("ses_") && id === currentSid) applyForSession(id);
     // Рот НЕ двигаем по событию ответа: между концом ответа и стартом звука
     // проходит пересказ и синтез (бывает 10+ секунд, а на холодную модель
     // ещё дольше). Артикуляция идёт только по сигналу afplay через Ipc.
@@ -343,10 +326,7 @@ function createView(ctx) {
           offs.push(
             data.on("session.created", (event) => {
               const id = event && event.data && event.data.id;
-              if (String(id).startsWith("ses_")) {
-                lastSid = id;
-                applyForSession(id);
-              }
+              if (String(id).startsWith("ses_") && id === currentSid) applyForSession(id);
             }),
           );
         } catch (err) {
@@ -369,6 +349,7 @@ function createView(ctx) {
     clearTimeout(blinkTimer);
     clearTimeout(speakTimer);
     clearInterval(sidePoll);
+    clearInterval(bridgeTimer);
     if (talkTimer) clearInterval(talkTimer);
     if (typeof unsub === "function") {
       try {
@@ -380,78 +361,7 @@ function createView(ctx) {
   return root;
 }
 
-function watchTtsState(ctx) {
-  const fs = require("node:fs");
-  const os = require("node:os");
-  const path = require("node:path");
-  const net = require("node:net");
-  const file = path.join(os.homedir(), ".config/opencode/x2ai-teratts.state");
-  const mapFile = path.join(os.homedir(), ".config/opencode/x2ai-voices.json");
-  const sockFile = "/tmp/x2ai-teratts.sock";
-  const readMap = () => {
-    try {
-      const parsed = JSON.parse(fs.readFileSync(mapFile, "utf8"));
-      return parsed && typeof parsed === "object" ? parsed : {};
-    } catch (e) {
-      return {};
-    }
-  };
-  const writeMap = (map) => {
-    try {
-      fs.writeFileSync(mapFile, JSON.stringify(map, null, 2) + "\n");
-    } catch (e) {}
-  };
-  const tellTtsStop = () => {
-    try {
-      const conn = net.connect(sockFile, () => conn.write(JSON.stringify({ stop: true }) + "\n"));
-      conn.on("error", () => {});
-      conn.on("data", () => conn.end());
-      setTimeout(() => conn.destroy(), 700);
-    } catch (e) {}
-  };
-  let last = "";
-  let provider = null;
-  try {
-    const spec = avatarIpc();
-    if (!spec) return;
-    provider = ctx.provide(spec, {
-      voices: () => readMap(),
-      setVoice: ({ sid, voice }) => {
-        if (!sid || !voice) return;
-        const map = readMap();
-        map[sid] = voice;
-        writeMap(map);
-        provider.emit("voices", map);
-      },
-      stop: () => tellTtsStop(),
-    });
-  } catch (e) {
-    ctx.log.write("error", "x2ai-avatar ipc provide failed: " + e.message);
-    return;
-  }
-  const tick = () => {
-    let raw;
-    try {
-      raw = fs.readFileSync(file, "utf8").trim();
-    } catch (e) {
-      return;
-    }
-    if (!raw || raw === last) return;
-    last = raw;
-    let data;
-    try {
-      data = JSON.parse(raw);
-    } catch (e) {
-      return;
-    }
-    if (data && data.speaking) provider.emit("speaking", { ms: Number(data.ms) || 9000 });
-  };
-  tick();
-  setInterval(tick, 150);
-}
-
 module.exports = Plugin.define({
-  main: (ctx) => watchTtsState(ctx),
   i18n: { en: { title: "x2ai avatar" }, ru: { title: "Персонаж x2ai" } },
   setup(ctx) {
     ctx.add(Slot, {

@@ -534,10 +534,114 @@ function speak(text, sid, voice) {
   return speakSay(toSay);
 }
 
+
+// HTTP-мост для окна (плагин x2ai-avatar). Ipc в Desktop-плагинах этой сборки
+// недоступен, поэтому окно просто опрашивает 127.0.0.1:47821.
+//   GET  /state  -> { speaking, ms, voices }
+//   POST /voice  -> { sid, voice }  (ручной выбор персонажа правым кликом)
+//   POST /stop   -> заглушить текущую озвучку
+function startBridge() {
+  if (globalThis.__x2aiBridge) return globalThis.__x2aiBridge;
+  let http;
+  try {
+    http = require("node:http");
+  } catch (e) {
+    return null;
+  }
+  const port = Number(process.env.X2AI_BRIDGE_PORT || 47821);
+  const stateFile = `${process.env.HOME}/.config/opencode/x2ai-teratts.state`;
+  const voicesFile = `${process.env.HOME}/.config/opencode/x2ai-voices.json`;
+  const CORS = {
+    "access-control-allow-origin": "*",
+    "access-control-allow-headers": "content-type",
+    "access-control-allow-methods": "GET,POST,OPTIONS",
+    "content-type": "application/json",
+  };
+  const readJson = (file) => {
+    try {
+      return JSON.parse(fs.readFileSync(file, "utf8"));
+    } catch (e) {
+      return null;
+    }
+  };
+  const readVoices = () => {
+    const value = readJson(voicesFile);
+    return value && typeof value === "object" ? value : {};
+  };
+  const send = (res, code, payload) => {
+    res.writeHead(code, CORS);
+    res.end(JSON.stringify(payload));
+  };
+  const stopTts = () => {
+    try {
+      const net = require("node:net");
+      const socket = net.createConnection("/tmp/x2ai-teratts.sock");
+      socket.on("error", () => {});
+      socket.end(JSON.stringify({ stop: true }) + "\n");
+    } catch (e) {}
+  };
+
+  const server = http.createServer((req, res) => {
+    const route = String(req.url || "/").split("?")[0];
+    if (req.method === "OPTIONS") {
+      res.writeHead(204, CORS);
+      res.end();
+      return;
+    }
+    if (req.method === "GET" && route === "/state") {
+      const state = readJson(stateFile) || {};
+      const total = Number(state.ms) || 0;
+      const at = Number(state.at) || 0;
+      const left = Math.max(0, Math.round(at * 1000 + total - Date.now()));
+      send(res, 200, { speaking: left > 0, ms: left, voices: readVoices() });
+      return;
+    }
+    let body = "";
+    req.on("data", (chunk) => {
+      body += chunk;
+      if (body.length > 1e6) req.destroy();
+    });
+    req.on("end", () => {
+      let payload = {};
+      try {
+        payload = body ? JSON.parse(body) : {};
+      } catch (e) {}
+      if (req.method === "POST" && route === "/voice") {
+        if (payload.sid && payload.voice) {
+          const map = readVoices();
+          map[payload.sid] = payload.voice;
+          try {
+            fs.writeFileSync(voicesFile, JSON.stringify(map, null, 2));
+          } catch (e) {}
+        }
+        send(res, 200, { ok: true });
+        return;
+      }
+      if (req.method === "POST" && route === "/stop") {
+        stopTts();
+        send(res, 200, { ok: true });
+        return;
+      }
+      send(res, 404, { ok: false });
+    });
+  });
+  server.on("error", () => {});
+  try {
+    server.listen(port, "127.0.0.1");
+  } catch (e) {
+    return null;
+  }
+  globalThis.__x2aiBridge = server;
+  return server;
+}
+
 module.exports = {
   id: "x2ai-tts-done",
   _test: { agreeGender, fixBareVerbs, genderOf, effectiveVoice, teraVoice, llmSummary },
   async setup(ctx) {
+    try {
+      startBridge();
+    } catch (e) {}
     if (!enabled()) {
       log("SETUP: disabled");
       return;
