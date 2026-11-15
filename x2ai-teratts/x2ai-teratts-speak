@@ -1,0 +1,89 @@
+#!/bin/bash
+# x2ai-teratts-speak — озвучить текст локальным TeraTTSv2.
+# Текст читается со stdin. Поднимает тёплый сервер, если он не запущен,
+# и печатает ответ сервера JSON-строкой. Код выхода != 0 — озвучка не удалась.
+set -uo pipefail
+
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+VENV="$HOME/.config/opencode/teratts-venv/bin/python"
+SOCK="${TERATTS_SOCK:-/tmp/x2ai-teratts.sock}"
+LOG="${TERATTS_LOG:-$HOME/.config/opencode/x2ai-teratts.log}"
+WAIT="${TERATTS_WAIT:-120}"
+
+text="$(cat)"
+if [ -z "$(printf '%s' "$text" | tr -d '[:space:]')" ]; then
+  echo '{"ok":false,"error":"empty"}'
+  exit 1
+fi
+
+alive() {
+  [ -S "$SOCK" ] || return 1
+  "${TERATTS_CLIENT_PY:-/usr/bin/python3}" - "$SOCK" <<'PY' 2>/dev/null
+import socket, sys
+s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+s.settimeout(1)
+try:
+    s.connect(sys.argv[1])
+except Exception:
+    sys.exit(1)
+sys.exit(0)
+PY
+}
+
+if ! alive; then
+  if [ ! -x "$VENV" ]; then
+    echo '{"ok":false,"error":"venv missing"}'
+    exit 1
+  fi
+  rm -f "$SOCK"
+  "${TERATTS_CLIENT_PY:-/usr/bin/python3}" - "$VENV" "$DIR/server.py" "$LOG" <<'PY'
+import subprocess, sys
+venv, srv, log = sys.argv[1:4]
+with open(log, "ab") as fh:
+    subprocess.Popen(
+        [venv, srv],
+        stdin=subprocess.DEVNULL,
+        stdout=fh,
+        stderr=fh,
+        start_new_session=True,
+        close_fds=True,
+        cwd=srv.rsplit("/", 1)[0],
+    )
+PY
+  for _ in $(seq 1 "$WAIT"); do
+    alive && break
+    sleep 1
+  done
+  if ! alive; then
+    echo '{"ok":false,"error":"server did not start"}'
+    exit 1
+  fi
+fi
+
+X2AI_TTS_TEXT="$text" "${TERATTS_CLIENT_PY:-/usr/bin/python3}" - "$SOCK" <<'PY'
+import json, os, socket, sys
+sock = sys.argv[1]
+text = os.environ.get("X2AI_TTS_TEXT", "")
+
+req = json.dumps({"text": text, "voice": os.environ.get("X2AI_TTS_VOICE") or None}).encode() + b"\n"
+s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+s.settimeout(300)
+try:
+    s.connect(sock)
+    s.sendall(req)
+    buf = b""
+    while not buf.endswith(b"\n"):
+        chunk = s.recv(65536)
+        if not chunk:
+            break
+        buf += chunk
+except Exception as exc:
+    print(json.dumps({"ok": False, "error": str(exc)}))
+    sys.exit(1)
+line = buf.decode("utf-8", "replace").strip() or '{"ok":false}'
+print(line)
+try:
+    sys.exit(0 if json.loads(line).get("ok") else 1)
+except Exception:
+    sys.exit(1)
+PY
