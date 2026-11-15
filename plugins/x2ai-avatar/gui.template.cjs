@@ -193,6 +193,15 @@ function createView(ctx) {
   const applyForSession = (sid) => {
     if (sid) currentSid = sid;
     apply(resolveVoice(currentSid));
+    // Локальный выбор мог появиться раньше, чем мост: досылаем его на сервер,
+    // иначе TTS озвучит этот чат голосом по хешу.
+    if (currentSid && localMap[currentSid] && voiceMap[currentSid] !== localMap[currentSid]) {
+      const picked = localMap[currentSid];
+      voiceMap[currentSid] = picked;
+      try {
+        bridge("/voice", { sid: currentSid, voice: picked }).catch(() => {});
+      } catch (e) {}
+    }
   };
 
   const bridge = (route, body) => {
@@ -222,7 +231,10 @@ function createView(ctx) {
           adoptedKey = key;
           adopt(state.voices);
         }
-        if (state.speaking) {
+        // Губами двигает только тот чат, чья это озвучка: сервер пишет sid
+        // в state-файл, а окно сравнивает его с текущим чатом.
+        const mine = !state.sid || !currentSid || state.sid === currentSid;
+        if (state.speaking && mine) {
           if (!bridgeSpeaking) {
             bridgeSpeaking = true;
             stopClick();

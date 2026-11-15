@@ -203,8 +203,11 @@ def main() -> int:
 
     players: list[subprocess.Popen] = []
 
-    def announce_playback(audio_s: float) -> None:
-        """Сообщить персонажу в окне, что звук пошёл: файл читает GUI-плагин."""
+    def announce_playback(audio_s: float, sid: str = "") -> None:
+        """Сообщить персонажу в окне, что звук пошёл: файл читает GUI-плагин.
+
+        sid нужен, чтобы губами двигал только тот чат, чья это озвучка.
+        """
         try:
             STATE.write_text(
                 json.dumps(
@@ -212,6 +215,7 @@ def main() -> int:
                         "speaking": True,
                         "ms": int(audio_s * 1000),
                         "at": time.time(),
+                        "sid": sid,
                     }
                 ),
                 encoding="utf-8",
@@ -269,6 +273,7 @@ def main() -> int:
                     continue
                 if "<ru>" not in text and "<en>" not in text:
                     text = f"<ru>{text}</ru>"
+                sid = str(req.get("sid") or "")
                 voice = req.get("voice") or VOICE
                 scale = float(req.get("duration_scale", 1.0))
                 t0 = time.time()
@@ -288,7 +293,7 @@ def main() -> int:
                     stderr=subprocess.DEVNULL,
                 )
                 players.append(player)
-                announce_playback(audio_s)
+                announce_playback(audio_s, str(req.get("sid") or ""))
 
                 def _cleanup(p=player, f=wav):
                     p.wait()

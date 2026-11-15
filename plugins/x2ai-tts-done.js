@@ -502,6 +502,7 @@ function speakTera(text, sid, forced) {
     const voice = forced || teraVoice(sid);
     const env = { ...process.env };
     if (voice) env.X2AI_TTS_VOICE = voice;
+    if (sid) env.X2AI_TTS_SID = sid;
     delete env.X2AI_TTS_TEXT;
     log("TERA_VOICE:", voice || "(default)", sid || "");
     const p = spawn(TERATTS, [], { stdio: ["pipe", "ignore", "ignore"], detached: true, env });
@@ -541,7 +542,14 @@ function speak(text, sid, voice) {
 //   POST /voice  -> { sid, voice }  (ручной выбор персонажа правым кликом)
 //   POST /stop   -> заглушить текущую озвучку
 function startBridge() {
-  if (globalThis.__x2aiBridge) return globalThis.__x2aiBridge;
+  // После перезагрузки плагина старый сервер остаётся жить на порту и держит
+  // СТАРЫЙ код обработчиков. Закрываем его и поднимаем новый.
+  if (globalThis.__x2aiBridge) {
+    try {
+      globalThis.__x2aiBridge.close();
+    } catch (e) {}
+    globalThis.__x2aiBridge = null;
+  }
   let http;
   try {
     http = require("node:http");
@@ -593,7 +601,7 @@ function startBridge() {
       const total = Number(state.ms) || 0;
       const at = Number(state.at) || 0;
       const left = Math.max(0, Math.round(at * 1000 + total - Date.now()));
-      send(res, 200, { speaking: left > 0, ms: left, voices: readVoices() });
+      send(res, 200, { speaking: left > 0, ms: left, sid: state.sid || "", voices: readVoices() });
       return;
     }
     let body = "";
