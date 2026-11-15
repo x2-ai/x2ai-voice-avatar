@@ -248,10 +248,14 @@ function createView(ctx) {
         row.textContent = `${m.name}`;
         row.title = `${m.providerID}/${m.id}`;
         row.style.cssText = [
-          "display:block",
+          "display:flex",
+          "align-items:center",
+          "box-sizing:border-box",
           "width:100%",
+          "min-height:28px",
+          "line-height:1.5",
           "text-align:left",
-          "padding:5px 7px",
+          "padding:4px 8px",
           "border-radius:6px",
           "cursor:pointer",
           "font:inherit",
