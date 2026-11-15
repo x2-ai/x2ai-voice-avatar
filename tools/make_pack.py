@@ -32,6 +32,17 @@ def key_out(img: Image.Image) -> Image.Image:
     return Image.fromarray(out, "RGBA")
 
 
+def harden_alpha(img: Image.Image, threshold: int = 110) -> Image.Image:
+    """Пиксель-арт: полупрозрачная кайма после вырезания фона даёт розовый ореол.
+
+    Поэтому альфу делаем двоичной: пиксель либо есть, либо нет.
+    """
+    arr = np.asarray(img).copy()
+    a = arr[..., 3]
+    arr[..., 3] = np.where(a >= threshold, 255, 0).astype(np.uint8)
+    return Image.fromarray(arr, "RGBA")
+
+
 def bbox(img: Image.Image, pad: float = 0.05) -> tuple[int, int, int, int]:
     alpha = np.asarray(img)[..., 3]
     ys, xs = np.where(alpha > 8)
@@ -57,11 +68,14 @@ def main() -> None:
     if "--height" in sys.argv:
         height = int(sys.argv[sys.argv.index("--height") + 1])
     resample = Image.NEAREST if "--nearest" in sys.argv else Image.LANCZOS
+    harden = "--nearest" in sys.argv  # пиксель-арту нужны жёсткие края без полупрозрачной каймы
 
     files = {s: src / f"{s}.png" for s in STATES if (src / f"{s}.png").exists()}
     if "closed" not in files:
         raise SystemExit(f"нет {src}/closed.png — без закрытого рта не собрать")
     frames = {name: key_out(Image.open(p)) for name, p in files.items()}
+    if harden:
+        frames = {name: harden_alpha(img) for name, img in frames.items()}
 
     boxes = [bbox(img) for img in frames.values()]
     box = (
