@@ -185,7 +185,9 @@ def compose(model: dict, images: dict[str, Image.Image], spec: dict, state: str)
     if box is None:
         box = (0, 0, band.width, band.height)
     pad = 8
-    left = max(0, box[0] - pad)
+    # Асимметричный кроп: слева срезаем «за край экрана», справа показываем всё.
+    head = model["anchors"]["head"]
+    left = max(box[0], int(head["cx"] - 1.8 * head["rx"]))
     right = min(w, box[2] + pad)
     crop = canvas.crop((left, max(0, top), right, min(h, bottom)))
     ratio = HEIGHT / crop.height
@@ -193,6 +195,10 @@ def compose(model: dict, images: dict[str, Image.Image], spec: dict, state: str)
 
 
 SPECS = {
+    "ru_f1": {"char": "char06"},
+    "ru_f2": {"char": "f06"},
+    "ru_m1": {"char": "char07"},
+    "ru_m5": {"char": "w01"},
     "fx_robot": {"char": "d02"},
     "fx_demon": {"char": "v05"},
     "fx_alien": {"char": "f07"},

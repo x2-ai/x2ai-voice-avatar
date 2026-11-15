@@ -10,23 +10,38 @@
 // Пишем на чистом DOM: так же, как x2ai-reasoning-translate, без сборки.
 
 const { Plugin, Slot, createKeyed, Ipc } = require("@opencode/plugin/gui");
-const { Schema } = require("effect");
 const { createEffect, onCleanup } = require("solid-js");
 
 // Канал main ↔ окно: момент старта wav и ручной выбор персонажа.
-const VoiceMap = Schema.Record({ key: Schema.String, value: Schema.String });
-const AvatarIpc = Ipc.define({
-  id: "x2ai-avatar.speaking",
-  methods: {
-    voices: { output: VoiceMap },
-    setVoice: { input: Schema.Struct({ sid: Schema.String, voice: Schema.String }) },
-    stop: {},
-  },
-  events: {
-    speaking: Schema.Struct({ ms: Schema.Number }),
-    voices: VoiceMap,
-  },
-});
+// Всё Ipc-хозяйство создаётся лениво и в try/catch: если экспериментальный
+// Ipc-API в этой сборке приложения недоступен, спрайт всё равно отрисуется.
+let AvatarIpc = null;
+let ipcTried = false;
+
+function avatarIpc() {
+  if (ipcTried) return AvatarIpc;
+  ipcTried = true;
+  try {
+    const { Schema } = require("effect");
+    const VoiceMap = Schema.Record({ key: Schema.String, value: Schema.String });
+    AvatarIpc = Ipc.define({
+      id: "x2ai-avatar.speaking",
+      methods: {
+        voices: { output: VoiceMap },
+        setVoice: { input: Schema.Struct({ sid: Schema.String, voice: Schema.String }) },
+        stop: {},
+      },
+      events: {
+        speaking: Schema.Struct({ ms: Schema.Number }),
+        voices: VoiceMap,
+      },
+    });
+  } catch (e) {
+    AvatarIpc = null;
+  }
+  return AvatarIpc;
+}
+
 const SPRITES = __SPRITES__;
 const CLICKS = __CLICKS__;
 
@@ -154,7 +169,31 @@ function createView(ctx) {
   // main-процесс плагина читает его и пушит событие в окно.
   let voiceMap = {};
   let currentSid = "";
-  const resolveVoice = (sid) => (sid && voiceMap[sid]) || voiceFor(sid);
+
+  // Выбор персонажа храним ещё и в localStorage окна: он читается сразу,
+  // не дожидаясь ответа main-процесса, и переживает переключение вкладок.
+  const LOCAL_KEY = "x2ai-avatar:voices";
+  const loadLocal = () => {
+    try {
+      const raw = window.localStorage.getItem(LOCAL_KEY);
+      const parsed = raw ? JSON.parse(raw) : null;
+      return parsed && typeof parsed === "object" ? parsed : {};
+    } catch (e) {
+      return {};
+    }
+  };
+  const saveLocal = (sid, value) => {
+    if (!sid) return;
+    try {
+      const map = loadLocal();
+      map[sid] = value;
+      window.localStorage.setItem(LOCAL_KEY, JSON.stringify(map));
+    } catch (e) {}
+  };
+  let localMap = loadLocal();
+
+  const resolveVoice = (sid) =>
+    (sid && (localMap[sid] || voiceMap[sid])) || voiceFor(sid);
   const applyForSession = (sid) => {
     if (sid) currentSid = sid;
     apply(resolveVoice(currentSid));
@@ -162,20 +201,24 @@ function createView(ctx) {
 
   let ipc = null;
   try {
-    ipc = ctx.main(AvatarIpc);
+    const spec = avatarIpc();
+    if (!spec) throw new Error("ipc unavailable");
+    ipc = ctx.main(spec);
     ipc.on("speaking", (data) => {
       stopClick();
       startSpeaking(data && data.ms > 0 ? data.ms : 9000);
     });
-    ipc.on("voices", (map) => {
+    const adopt = (map) => {
       voiceMap = map || {};
+      localMap = loadLocal();
+      for (const [sid, value] of Object.entries(voiceMap)) {
+        if (sid && typeof value === "string" && !localMap[sid]) localMap[sid] = value;
+      }
       applyForSession(currentSid);
-    });
+    };
+    ipc.on("voices", adopt);
     Promise.resolve(ipc.voices())
-      .then((map) => {
-        voiceMap = map || {};
-        applyForSession(currentSid);
-      })
+      .then(adopt)
       .catch(() => {});
   } catch (e) {
   }
@@ -227,6 +270,7 @@ function createView(ctx) {
     const index = VOICES.indexOf(voice);
     const next = VOICES[(index + 1) % VOICES.length];
     apply(next);
+    saveLocal(currentSid, next);
     if (ipc && currentSid) {
       try {
         ipc.setVoice({ sid: currentSid, voice: next });
@@ -346,7 +390,9 @@ function watchTtsState(ctx) {
   let last = "";
   let provider = null;
   try {
-    provider = ctx.provide(AvatarIpc, {
+    const spec = avatarIpc();
+    if (!spec) return;
+    provider = ctx.provide(spec, {
       voices: () => readMap(),
       setVoice: ({ sid, voice }) => {
         if (!sid || !voice) return;
