@@ -29,7 +29,7 @@ const CHAR_NAMES = {
   },
   pixel: {
     ru_f1: "Тянка", fx_robot: "Робот", fx_demon: "Демон",
-    fx_alien: "Инопланетянин", ru_m1: "Программист",
+    fx_penguin: "Инопланетянин", ru_m1: "Программист",
   },
 };
 

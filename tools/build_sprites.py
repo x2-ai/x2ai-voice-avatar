@@ -273,13 +273,16 @@ def main() -> int:
         packs["anime"][voice] = frames
         print("anime", voice, "ok", len(frames["closed"]) // 1024, "КБ")
 
-    pixel_dir = CUSTOM / "pixel"
-    if pixel_dir.is_dir():
-        for voice in SPECS:
-            custom = load_custom("pixel", voice)
-            if custom:
-                packs["pixel"][voice] = custom
-                print("pixel", voice, "custom", len(custom["closed"]) // 1024, "КБ")
+    # Пак "pixel": голоса — те, что есть в custom/pixel или packs/pixel.
+    names = set()
+    for base in (CUSTOM / "pixel", SHIPPED / "pixel"):
+        if base.is_dir():
+            names.update(p.name for p in base.iterdir() if p.is_dir())
+    for voice in sorted(names):
+        custom = load_custom("pixel", voice)
+        if custom:
+            packs["pixel"][voice] = custom
+            print("pixel", voice, "custom", len(custom["closed"]) // 1024, "КБ")
 
     OUT.write_text(json.dumps(packs, ensure_ascii=False))
     print("готово:", OUT, OUT.stat().st_size // 1024, "КБ")
