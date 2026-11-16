@@ -53,6 +53,10 @@ def main() -> int:
                     entry[state] = uri(files[state]) if state in files else opened
             voices[voice_dir.name] = entry
         if voices:
+            # В пиксельном паке папка исторически называется fx_demon,
+            # а в интерфейсе персонаж — fx_demoness.
+            if pack_dir.name == "pixel" and "fx_demon" in voices:
+                voices["fx_demoness"] = voices.pop("fx_demon")
             packs[pack_dir.name] = voices
 
     # Аниме-пак не хранится в репозитории (чужие ассеты): если он уже собран
