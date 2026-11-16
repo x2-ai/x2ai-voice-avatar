@@ -175,7 +175,7 @@ function createView(ctx) {
   gear.title = "Настройки персонажа";
   gear.style.cssText = [
     "position:absolute",
-    "left:-8px",
+    "left:0",
     "top:2px",
     "width:22px",
     "height:22px",
@@ -955,6 +955,7 @@ function createView(ctx) {
     panelOpen = on === undefined ? !panelOpen : on;
     if (panelOpen) renderPanel();
     panel.style.display = panelOpen ? "block" : "none";
+    gear.style.display = panelOpen ? "none" : "";
     gear.style.opacity = panelOpen ? "1" : "";
   };
   gear.onclick = (ev) => {
