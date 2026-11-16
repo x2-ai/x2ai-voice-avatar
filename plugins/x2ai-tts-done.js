@@ -259,6 +259,34 @@ function readUser() {
 
 // Конец хода: эти события реально присылает десктопный сервис.
 const TRIGGERS = new Set(["session.execution.succeeded", "session.execution.interrupted"]);
+const FAILS = new Set(["session.execution.failed", "session.execution.error", "session.execution.errored"]);
+
+// Пинг долгой задачи: если инструмент работает дольше минуты, персонаж
+// напоминает о себе раз в 2.5 минуты — не чаще.
+const PING_AFTER_MS = 60_000;
+const PING_EVERY_MS = 150_000;
+const PING_PHRASES = ["Ещё работаю, почти.", "Продолжаю, не ушёл.", "Ещё пара минут."];
+const pings = new Map();
+
+function pingStop(sid) {
+  const t = pings.get(sid);
+  if (t) clearTimeout(t);
+  pings.delete(sid);
+}
+
+function pingStart(sid) {
+  if (!sid || pings.has(sid)) return;
+  const tick = () => {
+    const mode = readSpeech();
+    if (mode !== "silent" && !inQuietHours()) {
+      const phrase = PING_PHRASES[Math.floor(Math.random() * PING_PHRASES.length)];
+      log("PING:", sid, phrase);
+      speak(phrase, sid, effectiveVoice(sid), MAX_CHARS, null);
+    }
+    pings.set(sid, setTimeout(tick, PING_EVERY_MS));
+  };
+  pings.set(sid, setTimeout(tick, PING_AFTER_MS));
+}
 
 function enabled() {
   if (process.env.TTS_DONE === "0") return false;
@@ -555,7 +583,7 @@ function shouldUseName(sid) {
 }
 
 // Пересказ моделью (бесплатной, без сессии). Пустая строка = не получилось.
-async function llmSummary(raw, gender, user = readUser(), sid = "") {
+async function llmSummary(raw, gender, user = readUser(), sid = "", style = "") {
   if (!LLM_SUMMARY || !genText) return "";
   const src = stripCode(raw).slice(0, 6000).trim();
   if (src.length < 40) return "";
@@ -577,6 +605,10 @@ async function llmSummary(raw, gender, user = readUser(), sid = "") {
     f: `Пиши от лица ассистента. О себе (первое лицо, «я») говори в женском роде: «я проверила», «я сделала», «я нашла», «я уверена». ${ABOUT_USER}`,
     m: `Пиши от лица ассистента. О себе (первое лицо, «я») говори в мужском роде: «я проверил», «я сделал», «я нашёл», «я уверен». ${ABOUT_USER}`,
   };
+  const BRIEF_RULE =
+    style === "long"
+      ? "Текст длинный: оставь только итог — 1–2 коротких предложения, без перечислений деталей."
+      : "";
   const prompt = [
     "Сожми текст в 1–3 коротких предложения по-русски для озвучки вслух.",
     "Только суть: что сделано и зачем это нужно. Без путей, имён файлов, команд, кода, цифр, markdown и списков.",
@@ -586,6 +618,7 @@ async function llmSummary(raw, gender, user = readUser(), sid = "") {
     GENDER_RULE[gender] ||
       `Пиши безлично или в третьем лице, избегая форм прошедшего времени от первого лица. ${ABOUT_USER}`,
     ...(NAME_RULE ? [NAME_RULE] : []),
+    ...(BRIEF_RULE ? [BRIEF_RULE] : []),
     "",
     src,
   ].join("\n");
@@ -615,7 +648,7 @@ async function llmSummary(raw, gender, user = readUser(), sid = "") {
   }
 }
 
-function speakTera(text, sid, forced) {
+function speakTera(text, sid, forced, emotion) {
   try {
     if (!fs.existsSync(TERATTS)) return false;
   } catch (e) {
@@ -627,8 +660,10 @@ function speakTera(text, sid, forced) {
     if (voice) env.X2AI_TTS_VOICE = voice;
     if (sid) env.X2AI_TTS_SID = sid;
     env.X2AI_TTS_SCALE = String(readSpeed());
+    if (emotion) env.X2AI_TTS_EMOTION = emotion;
+    else delete env.X2AI_TTS_EMOTION;
     delete env.X2AI_TTS_TEXT;
-    log("TERA_VOICE:", voice || "(default)", sid || "");
+    log("TERA_VOICE:", voice || "(default)", sid || "", emotion ? `emotion=${emotion}` : "");
     const p = spawn(TERATTS, [], { stdio: ["pipe", "ignore", "ignore"], detached: true, env });
     p.on("error", (e) => log("TERA_ERR", e?.message));
     p.on("close", (code) => log("TERA_EXIT", code));
@@ -646,7 +681,7 @@ function speakTera(text, sid, forced) {
 // Последняя озвученная фраза — для кнопки «Повторить».
 let lastSpeak = null;
 
-function speak(text, sid, voice, maxChars = MAX_CHARS) {
+function speak(text, sid, voice, maxChars = MAX_CHARS, emotion = null) {
   const limit = Math.max(maxChars || MAX_CHARS, MAX_CHARS);
   let toSay = text;
   if (toSay.length > limit) {
@@ -656,11 +691,11 @@ function speak(text, sid, voice, maxChars = MAX_CHARS) {
   }
   toSay = toSay.replace(/\s+/g, " ").trim();
   if (!toSay) return;
-  lastSpeak = { text: toSay, sid: sid || "", voice: voice || "", max: limit };
+  lastSpeak = { text: toSay, sid: sid || "", voice: voice || "", max: limit, emotion };
   log("SPEAK:", toSay.slice(0, 100));
   if (ENGINE === "say") return speakSay(toSay);
   if (ENGINE === "teratts" || ENGINE === "auto") {
-    if (speakTera(toSay, sid, voice)) return;
+    if (speakTera(toSay, sid, voice, emotion)) return;
     if (ENGINE === "teratts") {
       log("TERA: unavailable, fallback piper");
     }
@@ -960,6 +995,16 @@ module.exports = {
           const type = ev?.type;
           const data = ev?.data || {};
 
+          // Диагностика: один раз за жизнь процесса пишем имя каждого события
+          // из «исполнительных», чтобы знать, на что можно подписываться.
+          if (/execution|message\.created|tool\./.test(String(type))) {
+            if (!globalThis.__x2aiEvSeen) globalThis.__x2aiEvSeen = new Set();
+            if (!globalThis.__x2aiEvSeen.has(type)) {
+              globalThis.__x2aiEvSeen.add(type);
+              log("EV:", type, JSON.stringify(Object.keys(data)).slice(0, 120));
+            }
+          }
+
           if (type === "session.text.ended") {
             const sid = data.sessionID;
             if (!sid || typeof data.text !== "string" || !data.text) continue;
@@ -968,7 +1013,29 @@ module.exports = {
             continue;
           }
 
+          // Пинг долгой задачи: старт инструмента — таймер, финиш — стоп.
+          if (type === "session.tool.called") {
+            pingStart(data.sessionID);
+            continue;
+          }
+          if (type === "session.tool.success" || type === "session.tool.error" || type === "session.tool.failed") {
+            pingStop(data.sessionID);
+            continue;
+          }
+
+          if (FAILS.has(type)) {
+            pingStop(data.sessionID);
+            const fsid = data.sessionID;
+            if (fsid && readSpeech() !== "silent" && !inQuietHours()) {
+              log("FAIL:", fsid);
+              speak("Что-то пошло не так. Посмотри лог.", fsid, effectiveVoice(fsid), MAX_CHARS, "down");
+            }
+            continue;
+          }
+
           if (!TRIGGERS.has(type)) continue;
+
+          pingStop(data.sessionID);
 
           const sid = data.sessionID;
           const raw = bufTake(sid);
@@ -1000,17 +1067,30 @@ module.exports = {
             log("SKIP: quiet hours");
             continue;
           }
-          const source =
-            mode === "full"
-              ? dedupeSentences(clean, 400).slice(0, 4000)
-              : (await llmSummary(raw, gender, undefined, sid)) || summarize(raw) || clean.slice(0, 300);
+          const LONG_TEXT = 3000;
+          const SHORT_TEXT = 220;
+          let source;
+          if (mode === "full") {
+            source = dedupeSentences(clean, 400).slice(0, 4000);
+          } else if (clean.length < SHORT_TEXT) {
+            // Короткий ответ не пересказываем — он и так короткий.
+            log("SHORT: read as is", clean.length);
+            source = clean.slice(0, 400);
+          } else {
+            const long = clean.length > LONG_TEXT;
+            source =
+              (await llmSummary(raw, gender, undefined, sid, long ? "long" : "")) ||
+              summarize(raw) ||
+              clean.slice(0, 300);
+            if (long) source = `Много деталей, коротко. ${source}`;
+          }
           const summary = agreeGender(source, gender);
           log("GENDER:", gender || "-", voice, "mode:", mode);
           if (cyrRatio(summary) < 0.5) {
             log("SKIP: not russian", summary.slice(0, 60));
             continue;
           }
-          speak(summary, sid, voice, mode === "full" ? FULL_MAX_CHARS : MAX_CHARS);
+          speak(summary, sid, voice, mode === "full" ? FULL_MAX_CHARS : MAX_CHARS, "up");
         }
       } catch (e) {
         log("SUBSCRIBE_END", e?.message);
