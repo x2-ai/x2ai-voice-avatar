@@ -1090,7 +1090,8 @@ function startBridge(ctx) {
           send(res, 200, { ok: false, reason: "muted" });
           return;
         }
-        speak(text, ssid, effectiveVoice(ssid), MAX_CHARS, null);
+        const emo = ["up", "down", "think"].includes(payload.emotion) ? payload.emotion : null;
+        speak(text, ssid, effectiveVoice(ssid), MAX_CHARS, emo);
         send(res, 200, { ok: true });
         return;
       }

@@ -1490,6 +1490,19 @@ function createView(ctx) {
           } catch (err) {
           }
         }
+        // Инструмент упал — персонаж на пару секунд грустнеет.
+        for (const name of ["session.tool.error", "session.tool.failed"]) {
+          try {
+            offs.push(
+              data.on(name, (event) => {
+                const id = (event && event.data && event.data.sessionID) || "";
+                if (id && currentSid && id !== currentSid) return;
+                sadFor(2500);
+              }),
+            );
+          } catch (err) {
+          }
+        }
         for (const name of [
           "session.tool.success",
           "session.tool.error",
