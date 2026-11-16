@@ -614,6 +614,13 @@ function startBridge(ctx) {
     res.end(JSON.stringify(payload));
   };
   const modelFile = `${process.env.HOME}/.config/opencode/x2ai-tts-model.json`;
+  const speechFile = `${process.env.HOME}/.config/opencode/x2ai-speech.json`;
+  const SPEECH_MODES = ["full", "summary", "silent"];
+  const readSpeech = () => {
+    const value = readJson(speechFile);
+    const mode = value && typeof value.mode === "string" ? value.mode : "";
+    return SPEECH_MODES.includes(mode) ? mode : "summary";
+  };
   const readModel = () => {
     const value = readJson(modelFile);
     return value && value.id ? value : null;
@@ -678,6 +685,10 @@ function startBridge(ctx) {
       send(res, 200, { voices: VOICE_LIST, charVoices: readCharVoices() });
       return;
     }
+    if (req.method === "GET" && route === "/speech") {
+      send(res, 200, { mode: readSpeech(), modes: SPEECH_MODES });
+      return;
+    }
     if (req.method === "GET" && route === "/models") {
       listModels()
         .then((out) => send(res, 200, { ...out, current: readModel() || SUM_MODEL_DEFAULT }))
@@ -727,6 +738,15 @@ function startBridge(ctx) {
           } catch (e) {}
         }
         send(res, 200, { ok: true, current: readModel() || SUM_MODEL_DEFAULT });
+        return;
+      }
+      if (req.method === "POST" && route === "/speech") {
+        if (SPEECH_MODES.includes(payload.mode)) {
+          try {
+            fs.writeFileSync(speechFile, JSON.stringify({ mode: payload.mode }, null, 2));
+          } catch (e) {}
+        }
+        send(res, 200, { ok: true, mode: readSpeech() });
         return;
       }
       if (req.method === "POST" && route === "/stop") {
@@ -807,11 +827,17 @@ module.exports = {
           }
           const voice = effectiveVoice(sid);
           const gender = genderOf(voice);
-          const summary = agreeGender(
-            dedupeSentences((await llmSummary(raw, gender)) || summarize(raw) || clean.slice(0, 300)),
-            gender
-          );
-          log("GENDER:", gender || "-", voice);
+          const mode = readSpeech();
+          if (mode === "silent") {
+            log("SKIP: silent mode");
+            continue;
+          }
+          const source =
+            mode === "full"
+              ? dedupeSentences(clean).slice(0, 4000)
+              : (await llmSummary(raw, gender)) || summarize(raw) || clean.slice(0, 300);
+          const summary = agreeGender(source, gender);
+          log("GENDER:", gender || "-", voice, "mode:", mode);
           if (cyrRatio(summary) < 0.5) {
             log("SKIP: not russian", summary.slice(0, 60));
             continue;

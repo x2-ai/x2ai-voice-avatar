@@ -179,6 +179,7 @@ function createView(ctx) {
   box.appendChild(panel);
 
   let voiceCatalog = null;
+  let speechMode = null; // "full" | "summary" | "silent"; null = ещё не загружен
 
   // Готовые клипы: одна реплика за раз, артикуляция идёт по длительности клипа.
   function pickClip(list) {
@@ -211,7 +212,7 @@ function createView(ctx) {
   };
 
   // Раскрывающиеся блоки настроек: по умолчанию свёрнуты.
-  const sectionOpen = { voice: false, model: false };
+  const sectionOpen = { pack: false, voice: false, speech: false, model: false };
   const collapsible = (titleText, key, parent) => {
     const wrap = document.createElement("div");
     wrap.style.cssText = `margin-top:${parent && parent !== panel ? 0 : 8}px`;
@@ -254,10 +255,7 @@ function createView(ctx) {
   };
 
   const renderPanel = () => {
-    panel.textContent = "";    const title = document.createElement("div");
-    title.textContent = "Пак персонажей";
-    title.style.cssText = "font-weight:600;margin-bottom:8px;opacity:.9";
-    panel.appendChild(title);
+    panel.textContent = "";
     const switchPack = (name) => {
       setPack(name);
       const list = packVoices();
@@ -272,12 +270,29 @@ function createView(ctx) {
       playClip(packClips && packClips[pick || voice]);
     };
 
+    // Общая рамка для настроек: видно, что блоки относятся к одному разделу.
+    const settings = document.createElement("div");
+    settings.style.cssText = [
+      "display:flex",
+      "flex-direction:column",
+      "gap:6px",
+      "box-sizing:border-box",
+      "margin-top:0",
+      "padding:6px",
+      "border:1px solid rgba(255,255,255,.12)",
+      "border-radius:9px",
+      "background:rgba(255,255,255,.02)",
+    ].join(";");
+    panel.appendChild(settings);
+
+    const pBody = collapsible("Пак персонажей", "pack", settings);
+
     const select = document.createElement("select");
     select.style.cssText = [
       "display:block",
       "box-sizing:border-box",
       "width:100%",
-      "margin:0 0 10px",
+      "margin:0",
       "padding:6px 8px",
       "border-radius:7px",
       "cursor:pointer",
@@ -300,7 +315,7 @@ function createView(ctx) {
       switchPack(select.value);
       renderPanel();
     };
-    panel.appendChild(select);
+    pBody.appendChild(select);
 
     const nextBtn = document.createElement("button");
     nextBtn.type = "button";
@@ -325,26 +340,11 @@ function createView(ctx) {
       nextCharacter();
       renderPanel();
     };
-    panel.appendChild(nextBtn);
+    settings.appendChild(nextBtn);
 
     const rule = document.createElement("hr");
     rule.style.cssText = "border:none;border-top:1px solid rgba(255,255,255,.12);margin:0 0 2px";
-    panel.appendChild(rule);
-
-    // Общая рамка для настроек: видно, что блоки относятся к одному разделу.
-    const settings = document.createElement("div");
-    settings.style.cssText = [
-      "display:flex",
-      "flex-direction:column",
-      "gap:6px",
-      "box-sizing:border-box",
-      "margin-top:8px",
-      "padding:6px",
-      "border:1px solid rgba(255,255,255,.12)",
-      "border-radius:9px",
-      "background:rgba(255,255,255,.02)",
-    ].join(";");
-    panel.appendChild(settings);
+    settings.appendChild(rule);
 
     const vBody = collapsible("Голос персонажа", "voice", settings);
 
@@ -432,6 +432,65 @@ function createView(ctx) {
       );
     }
 
+    // Режим озвучки: полное чтение ответа, пересказ или тишина.
+    const sBody = collapsible("Озвучка ответа", "speech", settings);
+    const sSelect = document.createElement("select");
+    sSelect.style.cssText = [
+      "display:block",
+      "box-sizing:border-box",
+      "width:100%",
+      "margin:0",
+      "padding:6px 8px",
+      "border-radius:7px",
+      "cursor:pointer",
+      "font:inherit",
+      "font-size:12px",
+      "color:inherit",
+      "border:1px solid rgba(255,255,255,.16)",
+      "background:rgba(255,255,255,.06)",
+    ].join(";");
+    const SPEECH_LABELS = [
+      ["full", "Полное прочтение ответа"],
+      ["summary", "Пересказ"],
+      ["silent", "Молчание"],
+    ];
+    for (const [value, text] of SPEECH_LABELS) {
+      const opt = document.createElement("option");
+      opt.value = value;
+      opt.textContent = text;
+      opt.selected = value === (speechMode || "summary");
+      sSelect.appendChild(opt);
+    }
+    sSelect.onchange = (ev) => {
+      ev.stopPropagation();
+      const mode = sSelect.value;
+      speechMode = mode;
+      bridge("/speech", { mode })
+        .then((out) => {
+          if (out && out.mode) speechMode = out.mode;
+          renderPanel();
+        })
+        .catch(() => renderPanel());
+    };
+    sBody.appendChild(sSelect);
+    if (speechMode === "silent") {
+      const note = document.createElement("div");
+      note.textContent = "озвучки не будет";
+      note.style.cssText = "font-size:11px;opacity:.55;margin-top:6px";
+      sBody.appendChild(note);
+    }
+    if (!speechMode) {
+      bridge("/speech")
+        .then((data) => {
+          speechMode = (data && data.mode) || "summary";
+          renderPanel();
+        })
+        .catch(() => {
+          speechMode = "summary";
+        });
+    }
+
+    if (speechMode === "summary") {
     const mBody = collapsible("Модель пересказа", "model", settings);
 
     const mList = document.createElement("div");
@@ -501,7 +560,7 @@ function createView(ctx) {
       .catch(() => {
         mNote.textContent = "мост недоступен";
       });
-
+    }
   };
 
   let panelOpen = false;
@@ -716,12 +775,10 @@ function createView(ctx) {
     playClip(pickClip(CLICKS[voice] || CLICKS.ru_f1));
   };
 
-  // Правый клик — следующий персонаж вместе с его голосом.
-  // Выбор запоминается за текущим чатом, чтобы озвучка говорила тем же голосом.
+  // Правый клик — настройки персонажа.
   box.oncontextmenu = (event) => {
     if (event) event.preventDefault();
-    nextCharacter();
-    if (panelOpen) renderPanel();
+    togglePanel(true);
   };
 
   // Моргание только в тишине, чтобы не спорить с артикуляцией.
