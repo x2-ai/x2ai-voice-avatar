@@ -70,7 +70,7 @@ try:
 except ValueError:
     scale = 1.0
 emotion = (os.environ.get("X2AI_TTS_EMOTION") or "").strip() or None
-req = json.dumps({"text": text, "voice": os.environ.get("X2AI_TTS_VOICE") or None, "sid": os.environ.get("X2AI_TTS_SID") or "", "duration_scale": scale, "emotion": emotion}).encode() + b"\n"
+req = json.dumps({"text": text, "voice": os.environ.get("X2AI_TTS_VOICE") or None, "sid": os.environ.get("X2AI_TTS_SID") or "", "duration_scale": scale, "emotion": emotion, "kind": (os.environ.get("X2AI_TTS_KIND") or "").strip() or None}).encode() + b"\n"
 s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
 s.settimeout(300)
 try:

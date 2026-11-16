@@ -1052,6 +1052,26 @@ function createView(ctx) {
   }
   box.appendChild(dots);
 
+  // Пузырь «думает»: показывается, когда озвучиваются рассуждения, а не ответ.
+  const bubble = document.createElement("div");
+  bubble.textContent = "…";
+  bubble.style.cssText = [
+    "position:absolute",
+    "right:-10px",
+    "top:-4px",
+    "display:none",
+    "padding:1px 5px 3px",
+    "border-radius:9px",
+    "background:rgba(140,175,255,.22)",
+    "border:1px solid rgba(150,185,255,.45)",
+    "font-size:10px",
+    "line-height:1",
+    "letter-spacing:1px",
+    "color:rgba(235,242,255,.9)",
+    "pointer-events:none",
+  ].join(";");
+  box.appendChild(bubble);
+
   zzz.style.cssText = [
     "position:absolute",
     "right:-4px",
@@ -1176,8 +1196,11 @@ function createView(ctx) {
   let blinkTimer = null;
   let speakTimer = null;
 
-  const startSpeaking = (ms) => {
+  const startSpeaking = (ms, kind) => {
     speaking = true;
+    const thinking = kind === "reason";
+    bubble.style.display = thinking ? "block" : "none";
+    box.style.filter = thinking ? "saturate(.85) brightness(1.02)" : "";
     if (moodState.value !== "awake") {
       if (moodTimer) clearTimeout(moodTimer);
       setMood("awake");
@@ -1191,11 +1214,13 @@ function createView(ctx) {
       img.src = frame(voice, state);
       talkStep++;
       box.style.transform = `translateY(${talkStep % 2 ? -1 : 0}px) rotate(${talkStep % 2 ? -0.12 : 0.06}deg)`;
-    }, 110);
+    }, thinking ? 170 : 110);
   };
 
   const stopSpeaking = () => {
     speaking = false;
+    bubble.style.display = "none";
+    box.style.filter = "";
     if (talkTimer) clearInterval(talkTimer);
     talkTimer = null;
     talkStep = 0;
@@ -1292,7 +1317,7 @@ function createView(ctx) {
             if (state.ms > 0) stats.ms += state.ms;
             saveStats();
             refreshBadge();
-            startSpeaking(state.ms > 0 ? state.ms : 9000);
+            startSpeaking(state.ms > 0 ? state.ms : 9000, state.kind || "");
           }
         } else {
           bridgeSpeaking = false;

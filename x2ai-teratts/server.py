@@ -211,6 +211,10 @@ def fx_spec(voice: str, emotion: str | None = None) -> dict | None:
     if emotion == "up":
         spec["pitch"] = float(spec.get("pitch", 1.0)) * 1.06
         spec["reverb"] = float(spec.get("reverb", 0.0)) * 0.9
+    elif emotion == "think":
+        spec["pitch"] = float(spec.get("pitch", 1.0)) * 0.96
+        spec["reverb"] = max(float(spec.get("reverb", 0.0)), 0.22)
+        spec["drive"] = min(0.5, float(spec.get("drive", 0.0)) * 0.6)
     elif emotion == "down":
         spec["pitch"] = float(spec.get("pitch", 1.0)) * 0.92
         spec["drive"] = min(1.0, float(spec.get("drive", 0.0)) + 0.06)
@@ -279,7 +283,7 @@ def main() -> int:
 
     players: list[subprocess.Popen] = []
 
-    def announce_playback(audio_s: float, sid: str = "") -> None:
+    def announce_playback(audio_s: float, sid: str = "", kind: str = "") -> None:
         """Сообщить персонажу в окне, что звук пошёл: файл читает GUI-плагин.
 
         sid нужен, чтобы губами двигал только тот чат, чья это озвучка.
@@ -292,6 +296,7 @@ def main() -> int:
                         "ms": int(audio_s * 1000),
                         "at": time.time(),
                         "sid": sid,
+                        "kind": kind,
                     }
                 ),
                 encoding="utf-8",
@@ -357,6 +362,8 @@ def main() -> int:
                     scale *= 0.96
                 elif emotion == "down":
                     scale *= 1.06
+                elif emotion == "think":
+                    scale *= 1.10
                 t0 = time.time()
                 audio = synth(tts, text, resolve_voice(voice), scale)
                 audio = apply_fx(voice, audio, emotion)
@@ -372,7 +379,11 @@ def main() -> int:
                     stderr=subprocess.DEVNULL,
                 )
                 players.append(player)
-                announce_playback(audio_s, str(req.get("sid") or ""))
+                announce_playback(
+                    audio_s,
+                    str(req.get("sid") or ""),
+                    str(req.get("kind") or ""),
+                )
 
                 def _cleanup(p=player, f=wav):
                     p.wait()

@@ -682,7 +682,7 @@ async function llmReason(raw, gender, translate, sid, user = readUser()) {
   }
 }
 
-function speakTera(text, sid, forced, emotion) {
+function speakTera(text, sid, forced, emotion, kind) {
   try {
     if (!fs.existsSync(TERATTS)) return false;
   } catch (e) {
@@ -696,6 +696,8 @@ function speakTera(text, sid, forced, emotion) {
     env.X2AI_TTS_SCALE = String(readSpeed());
     if (emotion) env.X2AI_TTS_EMOTION = emotion;
     else delete env.X2AI_TTS_EMOTION;
+    if (kind) env.X2AI_TTS_KIND = kind;
+    else delete env.X2AI_TTS_KIND;
     delete env.X2AI_TTS_TEXT;
     log("TERA_VOICE:", voice || "(default)", sid || "", emotion ? `emotion=${emotion}` : "");
     const p = spawn(TERATTS, [], { stdio: ["pipe", "ignore", "ignore"], detached: true, env });
@@ -715,7 +717,7 @@ function speakTera(text, sid, forced, emotion) {
 // Последняя озвученная фраза — для кнопки «Повторить».
 let lastSpeak = null;
 
-function speak(text, sid, voice, maxChars = MAX_CHARS, emotion = null) {
+function speak(text, sid, voice, maxChars = MAX_CHARS, emotion = null, kind = null) {
   const limit = Math.max(maxChars || MAX_CHARS, MAX_CHARS);
   let toSay = text;
   if (toSay.length > limit) {
@@ -725,11 +727,11 @@ function speak(text, sid, voice, maxChars = MAX_CHARS, emotion = null) {
   }
   toSay = toSay.replace(/\s+/g, " ").trim();
   if (!toSay) return;
-  lastSpeak = { text: toSay, sid: sid || "", voice: voice || "", max: limit, emotion };
+  lastSpeak = { text: toSay, sid: sid || "", voice: voice || "", max: limit, emotion, kind };
   log("SPEAK:", toSay.slice(0, 100));
   if (ENGINE === "say") return speakSay(toSay);
   if (ENGINE === "teratts" || ENGINE === "auto") {
-    if (speakTera(toSay, sid, voice, emotion)) return;
+    if (speakTera(toSay, sid, voice, emotion, kind)) return;
     if (ENGINE === "teratts") {
       log("TERA: unavailable, fallback piper");
     }
@@ -859,6 +861,7 @@ function startBridge(ctx) {
         speaking: left > 0,
         ms: left,
         sid: state.sid || "",
+        kind: state.kind || "",
         voices: readVoices(),
         charVoices: readCharVoices(),
       });
@@ -1004,7 +1007,7 @@ function startBridge(ctx) {
           send(res, 200, { ok: false, reason: "empty" });
           return;
         }
-        speak(lastSpeak.text, lastSpeak.sid, lastSpeak.voice, lastSpeak.max);
+        speak(lastSpeak.text, lastSpeak.sid, lastSpeak.voice, lastSpeak.max, lastSpeak.emotion, lastSpeak.kind);
         send(res, 200, { ok: true, chars: lastSpeak.text.length });
         return;
       }
@@ -1120,7 +1123,7 @@ module.exports = {
               continue;
             }
             log("REASON:", rsid, reason.mode, reason.translate ? "tr" : "-", out.length);
-            speak(out, rsid, rvoice, reason.mode === "brief" ? MAX_CHARS : FULL_MAX_CHARS, null);
+            speak(out, rsid, rvoice, reason.mode === "brief" ? MAX_CHARS : FULL_MAX_CHARS, "think", "reason");
             continue;
           }
 
