@@ -1373,9 +1373,9 @@ function createView(ctx) {
         plan.push({ frame: "closed", delay: dur });
         continue;
       }
-      plan.push({ frame: "half", delay: Math.max(30, Math.round(dur * 0.25)) });
-      plan.push({ frame: target, delay: Math.max(45, Math.round(dur * 0.5)) });
-      plan.push({ frame: "half", delay: Math.max(30, Math.round(dur * 0.25)) });
+      plan.push({ frame: "half", delay: Math.max(60, Math.round(dur * 0.25)) });
+      plan.push({ frame: target, delay: Math.max(70, Math.round(dur * 0.5)) });
+      plan.push({ frame: "half", delay: Math.max(60, Math.round(dur * 0.25)) });
     }
     return plan;
   };
@@ -1384,7 +1384,8 @@ function createView(ctx) {
   const runPlan = (plan, thinking) => {
     let i = 0;
     const step = () => {
-      if (!speaking || i >= plan.length) return;
+      if (!speaking) return;
+      if (i >= plan.length) i = 0; // план короче аудио — идём по кругу
       const item = plan[i++];
       img.src = frame(voice, item.frame);
       box.style.transform = `translateY(${i % 2 ? -1 : 0}px) rotate(${i % 2 ? -0.12 : 0.06}deg)`;
