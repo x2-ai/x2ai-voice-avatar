@@ -322,6 +322,18 @@ function createView(ctx) {
       }
     });
   };
+  // Прокрутка списка к выбранному пункту (после раскрытия блока).
+  const centerActive = (key) => {
+    requestAnimationFrame(() => {
+      const el = scrollEls[key];
+      if (!el || !el.isConnected) return;
+      const row = el.querySelector(".x2ai-active");
+      if (!row) return;
+      const top = row.offsetTop - (el.clientHeight - row.offsetHeight) / 2;
+      el.scrollTop = Math.max(0, top);
+      scrollMemory[key] = el.scrollTop;
+    });
+  };
   const collapsible = (titleText, key, parent) => {
     const wrap = document.createElement("div");
     wrap.style.cssText = `margin-top:${parent && parent !== panel ? 0 : 8}px`;
@@ -355,6 +367,7 @@ function createView(ctx) {
       ev.stopPropagation();
       sectionOpen[key] = !sectionOpen[key];
       renderPanel();
+      if (sectionOpen[key]) centerActive(key);
     };
     const body = document.createElement("div");
     // Отступ слева, чтобы содержимое читалось как подпункты блока.
@@ -413,6 +426,7 @@ function createView(ctx) {
       const paint = (on) => {
         row.style.border = `1px solid ${on ? "rgba(120,180,255,.75)" : "rgba(255,255,255,.1)"}`;
         row.style.background = on ? "rgba(80,130,220,.22)" : "rgba(255,255,255,.03)";
+        row.classList.toggle("x2ai-active", Boolean(on));
       };
       paint(!!active);
       row.setActive = paint;
@@ -887,6 +901,7 @@ function createView(ctx) {
       reasonRows.push({ mode: value, row });
       rList.appendChild(row);
     }
+    refreshReason();
     rBody.append(rList, rTrans);
 
     actRow.append(testBtn, replayBtn, stopBtn);
