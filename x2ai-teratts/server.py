@@ -20,6 +20,7 @@ import json
 import numpy as np
 import os
 import re
+import queue
 import socket
 import subprocess
 import sys
@@ -324,6 +325,42 @@ def main() -> int:
 
 
     players: list[subprocess.Popen] = []
+    # Очередь воспроизведения: разные чаты не перебивают друг друга,
+    # а ждут своей очереди. Ответы важнее реплик ожидания.
+    play_q: "queue.Queue[dict]" = queue.Queue(maxsize=6)
+    current: dict = {"proc": None}
+
+    def player_worker() -> None:
+        while True:
+            item = play_q.get()
+            if item is None:
+                return
+            wav = item["wav"]
+            try:
+                proc = subprocess.Popen(
+                    ["afplay", str(wav)],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+            except Exception as exc:  # noqa: BLE001
+                log(f"play error {exc}")
+                continue
+            current["proc"] = proc
+            announce_playback(item["audio_s"], item.get("sid", ""), item.get("kind", ""))
+            proc.wait()
+            current["proc"] = None
+            try:
+                wav.unlink()
+            except OSError:
+                pass
+            if ONESHOT and play_q.empty():
+                try:
+                    SOCK.unlink()
+                except OSError:
+                    pass
+                os._exit(0)
+
+    threading.Thread(target=player_worker, daemon=True).start()
 
     def announce_playback(audio_s: float, sid: str = "", kind: str = "") -> None:
         """Сообщить персонажу в окне, что звук пошёл: файл читает GUI-плагин.
@@ -386,7 +423,28 @@ def main() -> int:
                     raw += chunk
                 req = json.loads(raw.decode("utf-8") or "{}")
                 if req.get("stop"):
-                    stopped = stop_players()
+                    stopped = 0
+                    proc = current.get("proc")
+                    if proc is not None and proc.poll() is None:
+                        try:
+                            proc.terminate()
+                            stopped += 1
+                        except Exception:
+                            pass
+                    while True:
+                        try:
+                            it = play_q.get_nowait()
+                        except queue.Empty:
+                            break
+                        try:
+                            it["wav"].unlink()
+                        except OSError:
+                            pass
+                        stopped += 1
+                    try:
+                        STATE.write_text(json.dumps({"speaking": False, "ms": 0, "at": 0, "sid": ""}))
+                    except Exception:
+                        pass
                     log(f"stop {stopped}")
                     conn.sendall(json.dumps({"ok": True, "stopped": stopped}).encode() + b"\n")
                     continue
@@ -414,33 +472,47 @@ def main() -> int:
                 wav = Path(f"/tmp/x2ai-teratts-{os.getpid()}-{int(time.time() * 1000)}.wav")
                 teratts.write_wav(wav, audio)
                 audio_s = len(audio) / float(teratts.SAMPLE_RATE)
-                stop_players()
-                player = subprocess.Popen(
-                    ["afplay", str(wav)],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                )
-                players.append(player)
-                announce_playback(
-                    audio_s,
-                    str(req.get("sid") or ""),
-                    str(req.get("kind") or ""),
-                )
-
-                def _cleanup(p=player, f=wav):
-                    p.wait()
-                    try:
-                        f.unlink()
-                    except Exception:
-                        pass
-                    if ONESHOT:
+                kind = str(req.get("kind") or "")
+                # Рассуждения одного чата не копим: в очереди уже есть — пропускаем.
+                if kind == "reason":
+                    with play_q.mutex:
+                        pending = [i for i in play_q.queue if i.get("kind") == "reason" and i.get("sid") == sid]
+                    if pending:
                         try:
-                            SOCK.unlink()
+                            wav.unlink()
                         except OSError:
                             pass
-                        os._exit(0)
-
-                threading.Thread(target=_cleanup, daemon=True).start()
+                        log("reason already queued")
+                        conn.sendall(json.dumps({"ok": True, "queued": False}).encode() + b"\n")
+                        continue
+                item = {"wav": wav, "audio_s": audio_s, "sid": sid, "kind": kind}
+                try:
+                    play_q.put_nowait(item)
+                except queue.Full:
+                    if kind in ("reason", "ping"):
+                        # Напоминания не копим: пропускаем.
+                        try:
+                            wav.unlink()
+                        except OSError:
+                            pass
+                        log("queue full, drop", kind)
+                    else:
+                        # Ответ важнее: выбрасываем самое старое напоминание.
+                        try:
+                            old = play_q.get_nowait()
+                            try:
+                                old["wav"].unlink()
+                            except OSError:
+                                pass
+                        except queue.Empty:
+                            pass
+                        try:
+                            play_q.put_nowait(item)
+                        except queue.Full:
+                            try:
+                                wav.unlink()
+                            except OSError:
+                                pass
                 log(f"spoke {audio_s:.2f}s audio in {gen_ms:.0f}ms: {text[:60]}")
                 conn.sendall(
                     (
