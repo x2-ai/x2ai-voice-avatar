@@ -1108,7 +1108,12 @@ function startBridge(ctx) {
           return;
         }
         const emo = ["up", "down", "think"].includes(payload.emotion) ? payload.emotion : null;
-        speak(text, ssid, effectiveVoice(ssid), MAX_CHARS, emo);
+        // Окно присылает голос персонажа само: у фоновых чатов в файле привязок
+        // может не быть записи, и хеш-фолбэк давал случайный (иногда женский) голос.
+        const forced = typeof payload.voice === "string" && payload.voice ? payload.voice : "";
+        const voice = forced || effectiveVoice(ssid);
+        log("SAY:", ssid, voice || "(default)");
+        speak(text, ssid, voice, MAX_CHARS, emo);
         send(res, 200, { ok: true });
         return;
       }

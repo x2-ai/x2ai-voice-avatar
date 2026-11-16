@@ -1361,7 +1361,8 @@ function createView(ctx) {
   };
   // Старый вид мог оставить свои таймеры — гасим их при каждом новом рендере.
   pingReset();
-  PING.say = (text, sid) => bridge("/say", { text, sid }).catch(() => {});
+  PING.say = (text, sid) =>
+    bridge("/say", { text, sid, voice: charVoice(voiceOf(sid)) }).catch(() => {});
 
   const pingTimers = PING.timers;
   const pingDelays = PING.delays;
@@ -1400,7 +1401,7 @@ function createView(ctx) {
         const list = PING_PHRASES[voiceGender(charVoice(voiceOf(key)))] || PING_PHRASES.n;
         const phrase = list[Math.floor(Math.random() * list.length)];
         // Если что-то уже звучит — реплику не повторяем, просто считаем сказанной.
-        bridge("/say", { text: phrase, sid: key }).catch(() => {});
+        bridge("/say", { text: phrase, sid: key, voice: charVoice(voiceOf(key)) }).catch(() => {});
       }
       const next = Math.min(600000, Math.round((pingDelays.get(key) || 60000) * 1.6));
       pingDelays.set(key, next);
