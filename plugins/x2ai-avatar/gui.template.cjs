@@ -906,12 +906,37 @@ function createView(ctx) {
       "@keyframes x2ai-breathe{0%,100%{transform:translateY(0)}50%{transform:translateY(-2px)}}",
       "@keyframes x2ai-zzz{0%{opacity:0;transform:translate(0,0) scale(.7)}25%{opacity:.85}",
       "100%{opacity:0;transform:translate(9px,-24px) scale(1.15)}}",
+      "@keyframes x2ai-dot{0%,100%{opacity:.25;transform:translateY(0)}50%{opacity:1;transform:translateY(-2px)}}",
     ].join("");
     document.head.appendChild(st);
   } catch (e) {}
 
   const zzz = document.createElement("div");
   zzz.textContent = "z";
+  // Точки «синтезирую»: между концом ответа и стартом звука проходит до 30 с.
+  const dots = document.createElement("div");
+  dots.style.cssText = [
+    "position:absolute",
+    "right:-6px",
+    "bottom:-2px",
+    "display:none",
+    "gap:2px",
+    "pointer-events:none",
+  ].join(";");
+  for (let i = 0; i < 3; i++) {
+    const d = document.createElement("span");
+    d.style.cssText = [
+      "width:3px",
+      "height:3px",
+      "border-radius:50%",
+      "background:rgba(255,255,255,.85)",
+      "box-shadow:0 1px 2px rgba(0,0,0,.5)",
+      `animation:x2ai-dot 1.05s ease-in-out ${i * 0.16}s infinite`,
+    ].join(";");
+    dots.appendChild(d);
+  }
+  box.appendChild(dots);
+
   zzz.style.cssText = [
     "position:absolute",
     "right:-4px",
@@ -1012,6 +1037,20 @@ function createView(ctx) {
       if (moodState.value === "sad") setMood("awake");
       resetIdle();
     }, ms || 4200);
+  };
+
+  // --- Индикатор синтеза: точки, пока движок готовит звук ---
+  let synthTimer = null;
+  const stopSynth = () => {
+    if (synthTimer) clearTimeout(synthTimer);
+    synthTimer = null;
+    dots.style.display = "none";
+  };
+  const startSynth = () => {
+    dots.style.display = "flex";
+    if (synthTimer) clearTimeout(synthTimer);
+    // Страховка: если звук так и не пришёл (ошибка движка), точки гаснут.
+    synthTimer = setTimeout(stopSynth, 45000);
   };
 
   resetIdle();
@@ -1133,6 +1172,7 @@ function createView(ctx) {
           if (!bridgeSpeaking) {
             bridgeSpeaking = true;
             stopClick();
+            stopSynth();
             startSpeaking(state.ms > 0 ? state.ms : 9000);
           }
         } else {
@@ -1160,6 +1200,7 @@ function createView(ctx) {
   };
   const stopAll = () => {
     stopClick();
+    stopSynth();
     stopSpeaking();
     bridge("/stop", { stop: true }).catch(() => {});
   };
@@ -1197,6 +1238,7 @@ function createView(ctx) {
     const id = (event && event.data && event.data.sessionID) || "no-sid";
     evCount++;
     wake();
+    startSynth();
     // Событие может прийти из неактивного чата: спрайт активного не трогаем.
     if (String(id).startsWith("ses_") && id === currentSid) applyForSession(id);
     // Рот НЕ двигаем по событию ответа: между концом ответа и стартом звука

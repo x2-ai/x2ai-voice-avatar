@@ -199,11 +199,30 @@ def synth(tts, text: str, voice: str, scale: float):
     return np.concatenate(out)
 
 
-def apply_fx(voice: str, audio):
+def fx_spec(voice: str, emotion: str | None = None) -> dict | None:
+    """Параметры обработки голоса с поправкой на настроение.
+
+    up — успех: чуть выше и живее; down — ошибка: ниже, медленнее, с хрипотцой.
+    """
+    spec = FX.get(voice)
+    if not spec:
+        return None
+    spec = dict(spec)
+    if emotion == "up":
+        spec["pitch"] = float(spec.get("pitch", 1.0)) * 1.06
+        spec["reverb"] = float(spec.get("reverb", 0.0)) * 0.9
+    elif emotion == "down":
+        spec["pitch"] = float(spec.get("pitch", 1.0)) * 0.92
+        spec["drive"] = min(1.0, float(spec.get("drive", 0.0)) + 0.06)
+        spec["reverb"] = float(spec.get("reverb", 0.0)) * 1.1
+    return spec
+
+
+def apply_fx(voice: str, audio, emotion: str | None = None):
     """Прогоняет базовый голос через характерную обработку."""
     import numpy as np
 
-    spec = FX.get(voice)
+    spec = fx_spec(voice, emotion)
     if not spec:
         return audio
     y = np.asarray(audio, dtype=np.float32)
@@ -333,9 +352,14 @@ def main() -> int:
                 sid = str(req.get("sid") or "")
                 voice = req.get("voice") or VOICE
                 scale = float(req.get("duration_scale", 1.0))
+                emotion = str(req.get("emotion") or "").strip() or None
+                if emotion == "up":
+                    scale *= 0.96
+                elif emotion == "down":
+                    scale *= 1.06
                 t0 = time.time()
                 audio = synth(tts, text, resolve_voice(voice), scale)
-                audio = apply_fx(voice, audio)
+                audio = apply_fx(voice, audio, emotion)
                 audio = loudify(audio)
                 gen_ms = (time.time() - t0) * 1000
                 wav = Path(f"/tmp/x2ai-teratts-{os.getpid()}-{int(time.time() * 1000)}.wav")
