@@ -930,8 +930,11 @@ function speak(text, sid, voice, maxChars = MAX_CHARS, emotion = null, kind = nu
   }
   toSay = stripCode(toSay).replace(/\s+/g, " ").trim();
   if (!toSay) return;
-  // Страховка от английских обрывков: такое не озвучиваем.
-  if (cyrRatio(toSay) < 0.4 && toSay.length > 40) {
+  // Страховка от английских обрывков: блокируем только когда латиницы
+  // реально больше, чем кириллицы.
+  const cyrCount = (toSay.match(/[А-Яа-яЁё]/g) || []).length;
+  const latCount = (toSay.match(/[A-Za-z]/g) || []).length;
+  if (cyrCount < 20 && latCount > cyrCount) {
     log("SKIP: not russian", cyrRatio(toSay).toFixed(2), toSay.slice(0, 60));
     return;
   }
@@ -1305,15 +1308,9 @@ module.exports = {
     try {
       console.warn("[x2ai-tts-done] setup subscribed, voice=%s", pickVoice());
     } catch (e) {}
-    // Плагин перезагружается на каждом шаге: без этого старые копии
-    // продолжали слушать события и говорили старым кодом.
-    if (globalThis.__x2aiTtsAbort) {
-      try {
-        globalThis.__x2aiTtsAbort.abort();
-      } catch (e) {}
-    }
+    // Подписку НЕ глушим при перезагрузке: событие завершения хода могло
+    // прийти ровно в этот момент и терялось. Дубли гасятся дедупом по хешу.
     const ac = new AbortController();
-    globalThis.__x2aiTtsAbort = ac;
 
     (async () => {
       try {
