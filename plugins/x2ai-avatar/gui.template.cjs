@@ -1334,7 +1334,20 @@ function createView(ctx) {
 
   // Пинг долгой задачи: инструмент работает дольше минуты — персонаж
   // напоминает о себе своим голосом раз в 2.5 минуты.
-  const PING_PHRASES = ["Ещё работаю, почти.", "Продолжаю, не ушёл.", "Ещё пара минут."];
+  // Реплики пинга — по роду персонажа, чтобы «не ушла» не звучало мужским голосом.
+  const PING_PHRASES = {
+    f: ["Ещё работаю, почти.", "Продолжаю, не ушла.", "Ещё пара минут."],
+    m: ["Ещё работаю, почти.", "Продолжаю, не ушёл.", "Ещё пара минут."],
+    n: ["Ещё работаю, почти.", "Продолжаю работу.", "Ещё пара минут."],
+  };
+  const FEMALE_VOICES = ["fx_demoness"];
+  const MALE_VOICES = ["fx_demon"];
+  const voiceGender = (id) => {
+    const v = String(id || "");
+    if (/_f$/.test(v) || FEMALE_VOICES.includes(v)) return "f";
+    if (/_m$/.test(v) || MALE_VOICES.includes(v)) return "m";
+    return "n";
+  };
   let pingTimer = null;
   const pingStop = () => {
     if (pingTimer) clearTimeout(pingTimer);
@@ -1353,7 +1366,8 @@ function createView(ctx) {
         try {
           localStorage.setItem(KEY, String(Date.now()));
         } catch (e) {}
-        const phrase = PING_PHRASES[Math.floor(Math.random() * PING_PHRASES.length)];
+        const list = PING_PHRASES[voiceGender(charVoice(voice))] || PING_PHRASES.n;
+        const phrase = list[Math.floor(Math.random() * list.length)];
         bridge("/say", { text: phrase, sid: currentSid }).catch(() => {});
       }
       pingTimer = setTimeout(tick, 150000);
