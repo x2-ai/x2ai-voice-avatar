@@ -572,6 +572,25 @@ function shouldUseName(sid) {
   return true;
 }
 
+// Имя в рассуждениях: свой счётчик, отдельный от пересказа ответа.
+const R_NAME_GAP_MIN = 5;
+const R_NAME_GAP_MAX = 8;
+const R_NAME_COOLDOWN_MS = 10 * 60 * 1000;
+const reasonNameSkip = { left: 0 };
+let reasonNameLastAt = 0;
+
+function shouldUseReasonName() {
+  const now = Date.now();
+  if (reasonNameSkip.left > 0) {
+    reasonNameSkip.left--;
+    return false;
+  }
+  if (now - reasonNameLastAt < R_NAME_COOLDOWN_MS) return false;
+  reasonNameSkip.left = R_NAME_GAP_MIN + Math.floor(Math.random() * (R_NAME_GAP_MAX - R_NAME_GAP_MIN + 1));
+  reasonNameLastAt = now;
+  return true;
+}
+
 // Пересказ моделью (бесплатной, без сессии). Пустая строка = не получилось.
 async function llmSummary(raw, gender, user = readUser(), sid = "", style = "") {
   if (!LLM_SUMMARY || !genText) return "";
@@ -659,14 +678,21 @@ async function llmReason(raw, gender, translate, sid, user = readUser()) {
       : userGender === "m"
         ? "Если упоминаешь пользователя, говори о нём в мужском роде: «ты попросил», «ты прав»."
         : "Если упоминаешь пользователя, говори нейтрально, без форм прошедшего времени во втором лице.";
+  const userName = (user && user.name) || "";
+  const useName = Boolean(userName) && shouldUseReasonName();
+  const nameRule = useName
+    ? `Где речь о пользователе, называй его по имени: ${userName} (вместо слова «пользователь»), один раз и с правильным родом.`
+    : "";
   const prompt = [
     task,
     "Без вступлений вроде «вот краткое содержание». Только суть.",
     style,
     aboutUser,
+    ...(nameRule ? [nameRule] : []),
     "Текст:",
     src,
   ].join("\n");
+  if (userName) log("R_NAME:", useName ? "yes" : "no");
   try {
     const out = await Promise.race([
       genText({ model: sumModel(), prompt }),
