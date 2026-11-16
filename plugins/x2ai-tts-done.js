@@ -779,6 +779,9 @@ async function llmReason(raw, gender, translate, sid, user = readUser()) {
   }
 }
 
+// Дедуп рассуждений: одна и та же мысль не читается дважды.
+const reasonSeen = new Map();
+
 function speakTera(text, sid, forced, emotion, kind) {
   try {
     if (!fs.existsSync(TERATTS)) return false;
@@ -1217,8 +1220,8 @@ module.exports = {
               log("SKIP: reason muted");
               continue;
             }
-            const rkey = "r:" + hash(rtext);
-            if (alreadySpoken(rkey)) {
+            const rkey = hash(rtext);
+            if (Date.now() - (reasonSeen.get(rkey) || 0) < 120000) {
               log("SKIP: reason duplicate");
               continue;
             }
@@ -1229,14 +1232,16 @@ module.exports = {
               out = (await llmReason(rtext, rgender, reason.translate, rsid)) || summarize(rtext) || "";
             } else if (reason.translate) {
               out = (await translateRu(rtext.slice(0, 3000))) || "";
-            } else {
-              out = rtext.slice(0, 1200);
             }
+            // Модель не ответила — читаем хотя бы очищенный исходник, но не молчим.
+            if (!out) out = stripCode(rtext).slice(0, reason.mode === "brief" ? 300 : 1200);
             out = agreeGender(out, rgender).trim();
             if (!out) {
               log("SKIP: reason empty");
               continue;
             }
+            reasonSeen.set(rkey, Date.now());
+            if (reasonSeen.size > 500) reasonSeen.clear();
             log("REASON:", rsid, reason.mode, reason.translate ? "tr" : "-", out.length);
             speak(out, rsid, rvoice, reason.mode === "brief" ? MAX_CHARS : FULL_MAX_CHARS, "think", "reason");
             continue;
