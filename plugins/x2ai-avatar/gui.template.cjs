@@ -1351,6 +1351,11 @@ function createView(ctx) {
   };
   let pingTimer = null;
   let pingDelay = 60000; // растёт с каждой репликой, сбрасывается после ответа
+  // Когда в чате последний раз была активность: если агент простаивает, пинг молчит.
+  const activityAt = new Map();
+  const markActive = (sid) => {
+    if (sid) activityAt.set(sid, Date.now());
+  };
   const pingStop = () => {
     if (pingTimer) clearTimeout(pingTimer);
     pingTimer = null;
@@ -1360,6 +1365,11 @@ function createView(ctx) {
   const pingStart = (sid) => {
     if (pingTimer) return;
     const tick = () => {
+      // Агент простаивает дольше полутора минут — реплики прекращаем.
+      if (Date.now() - (activityAt.get(sid) || 0) > 90000) {
+        pingStop();
+        return;
+      }
       const KEY = `x2ai-avatar:ping:${sid || "any"}`;
       let last = 0;
       try {
@@ -1499,7 +1509,9 @@ function createView(ctx) {
             offs.push(
               data.on(name, (event) => {
                 const id = (event && event.data && event.data.sessionID) || "";
-                pingStart(id || currentSid);
+                const psid = id || currentSid;
+                markActive(psid);
+                pingStart(psid);
               }),
             );
           } catch (err) {
@@ -1511,6 +1523,7 @@ function createView(ctx) {
           try {
             offs.push(
               data.on(name, () => {
+                markActive(currentSid);
                 if (answerStartedAt > 0) {
                   lastAnswerMs = Date.now() - answerStartedAt;
                   answerStartedAt = 0;
@@ -1522,6 +1535,16 @@ function createView(ctx) {
           }
         }
         // Инструмент упал — персонаж на пару секунд грустнеет.
+        for (const name of ["session.tool.progress", "session.tool.input.started", "session.tool.input.ended"]) {
+          try {
+            offs.push(
+              data.on(name, (event) => {
+                markActive((event && event.data && event.data.sessionID) || "");
+              }),
+            );
+          } catch (err) {
+          }
+        }
         for (const name of ["session.tool.error", "session.tool.failed"]) {
           try {
             offs.push(
