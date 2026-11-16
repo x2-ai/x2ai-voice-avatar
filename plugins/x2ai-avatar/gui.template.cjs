@@ -217,12 +217,23 @@ function createView(ctx) {
   // Позиции прокрутки списков: панель перерисовывается целиком, поэтому
   // запоминаем offset и возвращаем его, иначе список прыгает наверх.
   const scrollMemory = { pack: 0, voice: 0, speech: 0, model: 0 };
+  const scrollEls = {};
   const keepScroll = (el, key) => {
-    el.scrollTop = scrollMemory[key] || 0;
+    scrollEls[key] = el;
     el.onscroll = () => {
       scrollMemory[key] = el.scrollTop;
     };
     return el;
+  };
+  // Возвращаем позицию уже после вставки в документ: до неё у элемента
+  // нет высоты, и scrollTop просто обнуляется.
+  const restoreScroll = () => {
+    requestAnimationFrame(() => {
+      for (const key of Object.keys(scrollEls)) {
+        const el = scrollEls[key];
+        if (el && el.isConnected && scrollMemory[key]) el.scrollTop = scrollMemory[key];
+      }
+    });
   };
   const collapsible = (titleText, key, parent) => {
     const wrap = document.createElement("div");
@@ -308,10 +319,15 @@ function createView(ctx) {
         "white-space:nowrap",
         "overflow:hidden",
         "text-overflow:ellipsis",
-        `border:1px solid ${active ? "rgba(120,180,255,.75)" : "rgba(255,255,255,.1)"}`,
-        `background:${active ? "rgba(80,130,220,.22)" : "rgba(255,255,255,.03)"}`,
         extra || "",
       ].join(";");
+      // Подсветка выбранного меняется на месте, без перерисовки панели.
+      const paint = (on) => {
+        row.style.border = `1px solid ${on ? "rgba(120,180,255,.75)" : "rgba(255,255,255,.1)"}`;
+        row.style.background = on ? "rgba(80,130,220,.22)" : "rgba(255,255,255,.03)";
+      };
+      paint(!!active);
+      row.setActive = paint;
       row.onclick = (ev) => {
         ev.stopPropagation();
         onClick();
@@ -392,6 +408,14 @@ function createView(ctx) {
     vList.style.cssText = "max-height:132px;overflow-y:auto;display:flex;flex-direction:column;gap:4px";
     vBody.appendChild(vList);
 
+    // Строки списка голосов: подсветку обновляем на месте, панель не перерисовываем.
+    const voiceRows = [];
+    const refreshVoiceSelection = () => {
+      const cur = charVoices[voice] || voice;
+      vCur.textContent = `сейчас: ${labelOf(cur)}`;
+      for (const item of voiceRows) item.row.setActive(item.id ? item.id === cur : !charVoices[voice]);
+    };
+
     const bindVoice = (id) => {
       // Пример голоса звучит сразу, не дожидаясь ответа моста.
       playClip((LINES.samples && (LINES.samples[id] || LINES.samples[voice])) || null);
@@ -399,7 +423,7 @@ function createView(ctx) {
         .then((out) => {
           charVoices = (out && out.charVoices) || {};
           if (currentSid) bridge("/voice", { sid: currentSid, voice: charVoice(voice) }).catch(() => {});
-          renderPanel();
+          refreshVoiceSelection();
         })
         .catch(() => {});
     };
@@ -417,16 +441,18 @@ function createView(ctx) {
         .catch(() => {});
     } else {
       for (const v of voiceCatalog) {
-        vList.appendChild(vRow(v.label, v.id === curVoice, () => bindVoice(v.id)));
+        const row = vRow(v.label, v.id === curVoice, () => bindVoice(v.id));
+        voiceRows.push({ id: v.id, row });
+        vList.appendChild(row);
       }
-      vList.appendChild(
-        vRow(
-          "По умолчанию",
-          !charVoices[voice],
-          () => bindVoice(null),
-          "margin-top:2px;opacity:.85;justify-content:center",
-        ),
+      const defRow = vRow(
+        "По умолчанию",
+        !charVoices[voice],
+        () => bindVoice(null),
+        "margin-top:2px;opacity:.85;justify-content:center",
       );
+      voiceRows.push({ id: null, row: defRow });
+      vList.appendChild(defRow);
     }
 
     // Режим озвучки: полное чтение ответа, пересказ или тишина.
@@ -436,51 +462,21 @@ function createView(ctx) {
       ["summary", "Пересказ"],
       ["silent", "Молчание"],
     ];
-    const setSpeech = (mode) => {
-      speechMode = mode;
-      bridge("/speech", { mode })
-        .then((out) => {
-          if (out && out.mode) speechMode = out.mode;
-          renderPanel();
-        })
-        .catch(() => renderPanel());
-    };
-    const sList = keepScroll(document.createElement("div"), "speech");
-    sList.style.cssText = "max-height:132px;overflow-y:auto;display:flex;flex-direction:column;gap:4px";
-    for (const [value, text] of SPEECH_LABELS) {
-      sList.appendChild(vRow(text, value === (speechMode || "summary"), () => setSpeech(value)));
-    }
-    sBody.appendChild(sList);
-    if (speechMode === "silent") {
-      const note = document.createElement("div");
-      note.textContent = "озвучки не будет";
-      note.style.cssText = "font-size:11px;opacity:.55;margin-top:6px";
-      sBody.appendChild(note);
-    }
-    if (!speechMode) {
-      bridge("/speech")
-        .then((data) => {
-          speechMode = (data && data.mode) || "summary";
-          renderPanel();
-        })
-        .catch(() => {
-          speechMode = "summary";
-        });
-    }
-
-    if (speechMode === "summary") {
+    // Блок модели строится всегда, а виден только в режиме пересказа:
+    // так переключение режима не требует перерисовки всей панели.
     const mBody = collapsible("Модель пересказа", "model", settings);
-
+    const mWrap = mBody.parentNode;
     const mList = keepScroll(document.createElement("div"), "model");
     mList.style.cssText = "max-height:150px;overflow-y:auto;display:flex;flex-direction:column;gap:4px";
-    const mNote = document.createElement("div");
-    mNote.textContent = "загружаю…";
-    mNote.style.cssText = "opacity:.5;font-size:11px";
-    mList.appendChild(mNote);
     mBody.appendChild(mList);
+
+    const modelRows = [];
+    let modelsLoaded = false;
+    let modelsLoading = false;
 
     const renderModels = (data) => {
       mList.textContent = "";
+      modelRows.length = 0;
       const models = (data && data.models) || [];
       const current = (data && data.current) || {};
       const free = models.filter((m) => m.free);
@@ -493,37 +489,13 @@ function createView(ctx) {
         return;
       }
       for (const m of shown) {
-        const row = document.createElement("button");
-        row.type = "button";
         const active = m.providerID === current.providerID && m.id === current.id;
-        row.textContent = `${m.name}`;
+        const row = vRow(m.name, active, () => {
+          for (const item of modelRows) item.row.setActive(item.model === m);
+          bridge("/model", { providerID: m.providerID, id: m.id }).catch(() => {});
+        });
         row.title = `${m.providerID}/${m.id}`;
-        row.style.cssText = [
-          "display:flex",
-          "align-items:center",
-          "box-sizing:border-box",
-          "width:100%",
-          "min-height:28px",
-          "line-height:1.5",
-          "text-align:left",
-          "padding:4px 8px",
-          "border-radius:6px",
-          "cursor:pointer",
-          "font:inherit",
-          "font-size:11px",
-          "color:inherit",
-          "white-space:nowrap",
-          "overflow:hidden",
-          "text-overflow:ellipsis",
-          `border:1px solid ${active ? "rgba(120,180,255,.75)" : "rgba(255,255,255,.1)"}`,
-          `background:${active ? "rgba(80,130,220,.22)" : "rgba(255,255,255,.03)"}`,
-        ].join(";");
-        row.onclick = (ev) => {
-          ev.stopPropagation();
-          bridge("/model", { providerID: m.providerID, id: m.id })
-            .then(() => renderPanel())
-            .catch(() => {});
-        };
+        modelRows.push({ model: m, row });
         mList.appendChild(row);
       }
       if (free.length > shown.length) {
@@ -533,12 +505,78 @@ function createView(ctx) {
         mList.appendChild(more);
       }
     };
-    bridge("/models")
-      .then(renderModels)
-      .catch(() => {
-        mNote.textContent = "мост недоступен";
-      });
+
+    const loadModels = () => {
+      if (modelsLoaded || modelsLoading) return;
+      modelsLoading = true;
+      mList.textContent = "";
+      const note = document.createElement("div");
+      note.textContent = "загружаю…";
+      note.style.cssText = "opacity:.5;font-size:11px";
+      mList.appendChild(note);
+      bridge("/models")
+        .then((data) => {
+          modelsLoaded = true;
+          modelsLoading = false;
+          renderModels(data);
+        })
+        .catch(() => {
+          modelsLoading = false;
+          note.textContent = "мост недоступен";
+        });
+    };
+
+    const sList = keepScroll(document.createElement("div"), "speech");
+    sList.style.cssText = "max-height:132px;overflow-y:auto;display:flex;flex-direction:column;gap:4px";
+    const speechRows = [];
+    const speechNote = document.createElement("div");
+    speechNote.textContent = "озвучки не будет";
+    speechNote.style.cssText = "font-size:11px;opacity:.55;margin-top:6px";
+
+    const refreshSpeech = () => {
+      const cur = speechMode || "summary";
+      for (const item of speechRows) item.row.setActive(item.mode === cur);
+      speechNote.style.display = cur === "silent" ? "block" : "none";
+      mWrap.style.display = cur === "summary" ? "block" : "none";
+      if (cur === "summary") loadModels();
+    };
+
+    const setSpeech = (mode) => {
+      speechMode = mode;
+      refreshSpeech();
+      bridge("/speech", { mode })
+        .then((out) => {
+          if (out && out.mode) {
+            speechMode = out.mode;
+            refreshSpeech();
+          }
+        })
+        .catch(() => {});
+    };
+
+    for (const [value, text] of SPEECH_LABELS) {
+      const row = vRow(text, value === (speechMode || "summary"), () => setSpeech(value));
+      speechRows.push({ mode: value, row });
+      sList.appendChild(row);
     }
+    sBody.appendChild(sList);
+    sBody.appendChild(speechNote);
+
+    if (!speechMode) {
+      bridge("/speech")
+        .then((data) => {
+          speechMode = (data && data.mode) || "summary";
+          refreshSpeech();
+        })
+        .catch(() => {
+          speechMode = "summary";
+          refreshSpeech();
+        });
+    } else {
+      refreshSpeech();
+    }
+
+    restoreScroll();
   };
 
   let panelOpen = false;
