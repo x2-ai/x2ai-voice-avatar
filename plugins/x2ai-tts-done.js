@@ -1090,6 +1090,13 @@ function startBridge(ctx) {
           send(res, 200, { ok: false, reason: "muted" });
           return;
         }
+        // Уже что-то играет — не перебиваем: пусть окно подождёт.
+        const cur = readJson(stateFile) || {};
+        const left = Number(cur.at || 0) * 1000 + Number(cur.ms || 0) - Date.now();
+        if (left > 0) {
+          send(res, 200, { ok: false, reason: "busy", wait: Math.round(left) });
+          return;
+        }
         const emo = ["up", "down", "think"].includes(payload.emotion) ? payload.emotion : null;
         speak(text, ssid, effectiveVoice(ssid), MAX_CHARS, emo);
         send(res, 200, { ok: true });

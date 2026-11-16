@@ -1240,6 +1240,7 @@ function createView(ctx) {
   // Персонаж и голос — разные вещи: по умолчанию голос персонажа совпадает
   // с его id, но в настройках можно привязать любой другой голос.
   const charVoice = (id) => (id && charVoices[id]) || id;
+  const voiceOf = (id) => (voiceMap && voiceMap[id]) || id;
 
   // Выбор персонажа храним ещё и в localStorage окна: он читается сразу,
   // не дожидаясь ответа main-процесса, и переживает переключение вкладок.
@@ -1353,10 +1354,10 @@ function createView(ctx) {
     if (pingTimer) clearTimeout(pingTimer);
     pingTimer = null;
   };
-  const pingStart = () => {
+  // Пинг говорит голосом ТОГО чата, где идёт работа, а не активной вкладки.
+  const pingStart = (sid) => {
     if (pingTimer) return;
     const tick = () => {
-      // Слот может рендериться дважды — пингуем один раз на окно (localStorage общий).
       const KEY = "x2ai-avatar:ping";
       let last = 0;
       try {
@@ -1366,13 +1367,26 @@ function createView(ctx) {
         try {
           localStorage.setItem(KEY, String(Date.now()));
         } catch (e) {}
-        const list = PING_PHRASES[voiceGender(charVoice(voice))] || PING_PHRASES.n;
+        const list = PING_PHRASES[voiceGender(charVoice(sid ? voiceOf(sid) : voice))] || PING_PHRASES.n;
         const phrase = list[Math.floor(Math.random() * list.length)];
-        bridge("/say", { text: phrase, sid: currentSid }).catch(() => {});
+        sayWhenFree(phrase, sid);
       }
       pingTimer = setTimeout(tick, 150000);
     };
     pingTimer = setTimeout(tick, 60000);
+  };
+
+  // Если что-то уже звучит — не перебиваем, ждём своей очереди.
+  const sayWhenFree = (text, sid, attempt) => {
+    const n = attempt || 0;
+    bridge("/say", { text, sid })
+      .then((out) => {
+        if (out && out.ok === false && out.reason === "busy" && n < 40) {
+          const wait = Math.min(15000, Math.max(3000, Number(out.wait) || 6000));
+          setTimeout(() => sayWhenFree(text, sid, n + 1), wait + 400);
+        }
+      })
+      .catch(() => {});
   };
 
   // Клик по персонажу: короткая заранее сгенерированная реплика его голосом.
@@ -1482,8 +1496,7 @@ function createView(ctx) {
             offs.push(
               data.on(name, (event) => {
                 const id = (event && event.data && event.data.sessionID) || "";
-                if (id && currentSid && id !== currentSid) return;
-                pingStart();
+                pingStart(id || currentSid);
               }),
             );
           } catch (err) {
