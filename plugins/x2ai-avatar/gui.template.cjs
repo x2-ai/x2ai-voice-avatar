@@ -136,6 +136,20 @@ function createView(ctx) {
   ].join(";");
   box.appendChild(img);
 
+  // Бейдж: сколько ответов озвучено и сколько шёл последний.
+  const badge = document.createElement("div");
+  badge.style.cssText = [
+    "margin-left:5px",
+    "align-self:flex-end",
+    "font-size:10px",
+    "line-height:1",
+    "opacity:.55",
+    "white-space:nowrap",
+    "pointer-events:auto",
+    "text-shadow:0 1px 2px rgba(0,0,0,.55)",
+  ].join(";");
+  box.appendChild(badge);
+
   let evCount = 0;
   let lastSid = "";
 
@@ -246,7 +260,30 @@ function createView(ctx) {
   };
 
   // Раскрывающиеся блоки настроек: по умолчанию свёрнуты.
-  const sectionOpen = { pack: false, voice: false, char: false, speech: false, model: false, user: false };
+  const sectionOpen = { pack: false, voice: false, char: false, speech: false, model: false, user: false, stats: false };
+
+  // Статистика: сколько ответов озвучено и сколько всего речи. Живёт в localStorage.
+  const STATS_KEY = "x2ai-avatar:stats";
+  const loadStats = () => {
+    try {
+      const raw = JSON.parse(localStorage.getItem(STATS_KEY) || "{}");
+      return { count: Number(raw.count) || 0, ms: Number(raw.ms) || 0 };
+    } catch (e) {
+      return { count: 0, ms: 0 };
+    }
+  };
+  const stats = loadStats();
+  const saveStats = () => {
+    try {
+      localStorage.setItem(STATS_KEY, JSON.stringify(stats));
+    } catch (e) {}
+  };
+  let lastAnswerMs = 0;
+  const refreshBadge = () => {
+    const mins = stats.ms > 0 ? Math.round(stats.ms / 60000) : 0;
+    badge.textContent = lastAnswerMs > 0 ? `${stats.count} · ${Math.round(lastAnswerMs / 1000)}с` : `${stats.count}`;
+    badge.title = `Озвучено ответов: ${stats.count} · речи: ${mins} мин`;
+  };
 
   // Позиции прокрутки списков: панель перерисовывается целиком, поэтому
   // запоминаем offset и возвращаем его, иначе список прыгает наверх.
@@ -830,6 +867,30 @@ function createView(ctx) {
       }
     }
 
+    // Статистика: счётчик ответов и минут речи, сброс.
+    const stBody = collapsible("Статистика", "stats", settings);
+    const stText = document.createElement("div");
+    stText.style.cssText = "font-size:11px;line-height:1.5;opacity:.8";
+    const stReset = document.createElement("button");
+    stReset.type = "button";
+    stReset.textContent = "Сбросить";
+    stReset.style.cssText =
+      "margin-top:6px;border:1px solid rgba(255,255,255,.16);background:rgba(255,255,255,.04);color:inherit;border-radius:7px;padding:3px 9px;font-size:11px;cursor:pointer;align-self:flex-start";
+    const refreshStats = () => {
+      const mins = Math.floor(stats.ms / 60000);
+      const secs = Math.round((stats.ms % 60000) / 1000);
+      stText.textContent = `Озвучено ответов: ${stats.count} · всего речи: ${mins} мин ${secs} с`;
+    };
+    stReset.onclick = () => {
+      stats.count = 0;
+      stats.ms = 0;
+      saveStats();
+      refreshStats();
+      refreshBadge();
+    };
+    refreshStats();
+    stBody.append(stText, stReset);
+
     restoreScroll();
   };
 
@@ -1173,6 +1234,10 @@ function createView(ctx) {
             bridgeSpeaking = true;
             stopClick();
             stopSynth();
+            stats.count += 1;
+            if (state.ms > 0) stats.ms += state.ms;
+            saveStats();
+            refreshBadge();
             startSpeaking(state.ms > 0 ? state.ms : 9000);
           }
         } else {
@@ -1181,6 +1246,7 @@ function createView(ctx) {
       })
       .catch(() => {});
   };
+  refreshBadge();
   const bridgeTimer = setInterval(pollBridge, 250);
   pollBridge();
 
@@ -1302,6 +1368,19 @@ function createView(ctx) {
           } catch (err) {
           }
         }
+        let answerStartedAt = 0;
+        for (const name of ["session.execution.started"]) {
+          try {
+            offs.push(
+              data.on(name, (event) => {
+                const id = (event && event.data && event.data.sessionID) || "";
+                if (id && currentSid && id !== currentSid) return;
+                answerStartedAt = Date.now();
+              }),
+            );
+          } catch (err) {
+          }
+        }
         for (const name of ["session.tool.called"]) {
           try {
             offs.push(
@@ -1309,6 +1388,22 @@ function createView(ctx) {
                 const id = (event && event.data && event.data.sessionID) || "";
                 if (id && currentSid && id !== currentSid) return;
                 pingStart();
+              }),
+            );
+          } catch (err) {
+          }
+        }
+        for (const name of [
+          "session.execution.succeeded",
+        ]) {
+          try {
+            offs.push(
+              data.on(name, () => {
+                if (answerStartedAt > 0) {
+                  lastAnswerMs = Date.now() - answerStartedAt;
+                  answerStartedAt = 0;
+                  refreshBadge();
+                }
               }),
             );
           } catch (err) {
