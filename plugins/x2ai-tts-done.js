@@ -712,7 +712,7 @@ function startBridge(ctx) {
       return;
     }
     if (req.method === "GET" && route === "/speech") {
-      send(res, 200, { mode: readSpeech(), modes: SPEECH_MODES });
+      send(res, 200, { mode: readSpeech(), modes: SPEECH_MODES, speed: readSpeed() });
       return;
     }
     if (req.method === "GET" && route === "/models") {
@@ -767,14 +767,24 @@ function startBridge(ctx) {
         return;
       }
       if (req.method === "POST" && route === "/speech") {
-        if (SPEECH_MODES.includes(payload.mode)) {
-          try {
-            fs.writeFileSync(SPEECH_FILE, JSON.stringify({ mode: payload.mode }, null, 2));
-          } catch (e) {
-            log("SPEECH_WRITE_ERR", String(e));
-          }
+        const next = { mode: readSpeech(), speed: readSpeed() };
+        if (SPEECH_MODES.includes(payload.mode)) next.mode = payload.mode;
+        const sp = Number(payload.speed);
+        if (Number.isFinite(sp) && sp >= 0.7 && sp <= 1.8) {
+          next.speed = Math.round(sp * 100) / 100;
         }
-        send(res, 200, { ok: true, mode: readSpeech() });
+        try {
+          fs.writeFileSync(SPEECH_FILE, JSON.stringify(next, null, 2));
+        } catch (e) {
+          log("SPEECH_WRITE_ERR", String(e));
+        }
+        send(res, 200, { ok: true, mode: readSpeech(), speed: readSpeed() });
+        return;
+      }
+      if (req.method === "POST" && route === "/test") {
+        // Пробная фраза текущим голосом и с текущей скоростью.
+        const ok = speakTera("Проверка озвучки. Раз, два, три.", payload.sid || "", payload.voice || null);
+        send(res, 200, { ok });
         return;
       }
       if (req.method === "POST" && route === "/stop") {

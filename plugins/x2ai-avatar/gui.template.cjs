@@ -44,6 +44,18 @@ function nameFor(voice) {
 }
 const HEIGHT = 224; // px на экране (спрайты 336 px)
 
+// Размер персонажа настраивается в панели и живёт в localStorage окна.
+const HEIGHT_KEY = "x2ai-avatar:height";
+const HEIGHT_MIN = 120;
+const HEIGHT_MAX = 420;
+let charHeight = HEIGHT;
+try {
+  const savedHeight = Number(window.localStorage.getItem(HEIGHT_KEY));
+  if (Number.isFinite(savedHeight) && savedHeight >= HEIGHT_MIN && savedHeight <= HEIGHT_MAX) {
+    charHeight = savedHeight;
+  }
+} catch (e) {}
+
 // Артикуляция: набор кадров рта в порядке «полуоткрыт → открыт → округлён → широко».
 const TALK = ["half", "open", "round", "wide", "open", "half"];
 
@@ -116,7 +128,7 @@ function createView(ctx) {
   img.alt = "";
   img.draggable = false;
   img.style.cssText = [
-    `height:${HEIGHT}px`,
+    `height:${charHeight}px`,
     "width:auto",
     "display:block",
     "filter:drop-shadow(0 2px 6px rgba(0,0,0,.28))",
@@ -164,7 +176,7 @@ function createView(ctx) {
   const panel = document.createElement("div");
   panel.style.cssText = [
     "position:absolute",
-    `bottom:${HEIGHT + 30}px`,
+    `bottom:${charHeight + 30}px`,
     "left:0",
     "width:236px",
     "background:rgba(24,24,28,.97)",
@@ -180,6 +192,19 @@ function createView(ctx) {
 
   let voiceCatalog = null;
   let speechMode = null; // "full" | "summary" | "silent"; null = ещё не загружен
+  let speechSpeed = null; // 0.7–1.8; null = ещё не загружена
+
+  // Размер персонажа: высота картинки и отступ панели над ним.
+  const setHeight = (value) => {
+    const h = Math.round(Math.min(HEIGHT_MAX, Math.max(HEIGHT_MIN, Number(value) || HEIGHT)));
+    charHeight = h;
+    img.style.height = `${h}px`;
+    panel.style.bottom = `${h + 30}px`;
+    try {
+      window.localStorage.setItem(HEIGHT_KEY, String(h));
+    } catch (e) {}
+    return h;
+  };
 
   // Готовые клипы: одна реплика за раз, артикуляция идёт по длительности клипа.
   function pickClip(list) {
@@ -212,7 +237,7 @@ function createView(ctx) {
   };
 
   // Раскрывающиеся блоки настроек: по умолчанию свёрнуты.
-  const sectionOpen = { pack: false, voice: false, speech: false, model: false };
+  const sectionOpen = { pack: false, voice: false, char: false, speech: false, model: false };
 
   // Позиции прокрутки списков: панель перерисовывается целиком, поэтому
   // запоминаем offset и возвращаем его, иначе список прыгает наверх.
@@ -456,6 +481,26 @@ function createView(ctx) {
       vList.appendChild(defRow);
     }
 
+    // Размер персонажа: ползунок меняет картинку сразу, без перерисовки панели.
+    const hBody = collapsible("Размер персонажа", "char", settings);
+    const hRow = document.createElement("div");
+    hRow.style.cssText = "display:flex;align-items:center;gap:8px";
+    const hInput = document.createElement("input");
+    hInput.type = "range";
+    hInput.min = String(HEIGHT_MIN);
+    hInput.max = String(HEIGHT_MAX);
+    hInput.step = "4";
+    hInput.value = String(charHeight);
+    hInput.style.cssText = "flex:1;accent-color:#5b8dee;cursor:pointer";
+    const hVal = document.createElement("span");
+    hVal.textContent = `${charHeight} px`;
+    hVal.style.cssText = "font-size:11px;opacity:.7;width:48px;text-align:right";
+    hInput.oninput = () => {
+      hVal.textContent = `${setHeight(hInput.value)} px`;
+    };
+    hRow.append(hInput, hVal);
+    hBody.appendChild(hRow);
+
     // Режим озвучки: полное чтение ответа, пересказ или тишина.
     const sBody = collapsible("Озвучка ответа", "speech", settings);
     const SPEECH_LABELS = [
@@ -563,18 +608,90 @@ function createView(ctx) {
     sBody.appendChild(sList);
     sBody.appendChild(speechNote);
 
+    // Скорость речи: 0.7 — медленно, 1.8 — быстро. Применяется к следующей озвучке.
+    const spRow = document.createElement("div");
+    spRow.style.cssText = "display:flex;align-items:center;gap:8px;margin-top:8px";
+    const spInput = document.createElement("input");
+    spInput.type = "range";
+    spInput.min = "0.7";
+    spInput.max = "1.8";
+    spInput.step = "0.05";
+    spInput.value = String(speechSpeed || 1);
+    spInput.style.cssText = "flex:1;accent-color:#5b8dee;cursor:pointer";
+    const spVal = document.createElement("span");
+    spVal.style.cssText = "font-size:11px;opacity:.7;width:48px;text-align:right";
+    spVal.textContent = `${(speechSpeed || 1).toFixed(2)}×`;
+    spInput.oninput = () => {
+      speechSpeed = Number(spInput.value);
+      spVal.textContent = `${speechSpeed.toFixed(2)}×`;
+    };
+    // Пишем на отпускании ползунка, чтобы не долбить мост на каждый пиксель.
+    spInput.onchange = () => {
+      bridge("/speech", { speed: speechSpeed }).catch(() => {});
+    };
+    spRow.append(spInput, spVal);
+    sBody.appendChild(spRow);
+
+    // Кнопки: проверить скорость своим голосом и заглушить текущую озвучку.
+    const actRow = document.createElement("div");
+    actRow.style.cssText = "display:flex;gap:6px;margin-top:8px";
+    const actBtn = (text, title) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.textContent = text;
+      btn.title = title;
+      btn.style.cssText = [
+        "flex:1",
+        "padding:5px 8px",
+        "border-radius:7px",
+        "cursor:pointer",
+        "font:inherit",
+        "font-size:11px",
+        "color:inherit",
+        "text-align:center",
+        "border:1px solid rgba(255,255,255,.16)",
+        "background:rgba(255,255,255,.05)",
+      ].join(";");
+      btn.onclick = (ev) => {
+        ev.stopPropagation();
+        btn.onclickAction && btn.onclickAction();
+      };
+      return btn;
+    };
+    const testBtn = actBtn("▶ Проверить", "Озвучить пробную фразу текущим голосом и скоростью");
+    testBtn.onclickAction = () => {
+      bridge("/test", { voice: charVoice(voice), sid: currentSid }).catch(() => {});
+    };
+    const stopBtn = actBtn("■ Стоп", "Заглушить текущую озвучку");
+    stopBtn.onclickAction = () => {
+      bridge("/stop", {}).catch(() => {});
+      stopAll();
+    };
+    actRow.append(testBtn, stopBtn);
+    sBody.appendChild(actRow);
+
+    const applySpeechState = (data) => {
+      speechMode = (data && data.mode) || "summary";
+      const sp = Number(data && data.speed);
+      if (Number.isFinite(sp) && sp >= 0.7 && sp <= 1.8) {
+        speechSpeed = sp;
+        spInput.value = String(sp);
+        spVal.textContent = `${sp.toFixed(2)}×`;
+      }
+      refreshSpeech();
+    };
+
     if (!speechMode) {
       bridge("/speech")
-        .then((data) => {
-          speechMode = (data && data.mode) || "summary";
-          refreshSpeech();
-        })
-        .catch(() => {
-          speechMode = "summary";
-          refreshSpeech();
-        });
+        .then(applySpeechState)
+        .catch(() => applySpeechState({ mode: "summary" }));
     } else {
       refreshSpeech();
+      if (!speechSpeed) {
+        bridge("/speech")
+          .then(applySpeechState)
+          .catch(() => {});
+      }
     }
 
     restoreScroll();
