@@ -1349,14 +1349,11 @@ function createView(ctx) {
     ю: "round",
     я: "wide",
   };
-  // Согласные не захлопывают рот: взрывные (п, б, т, д, к, г) закрывают
-  // на мгновение, остальные держат полуоткрытый кадр — так плавнее.
-  const PLOSIVE = /[пбтдкг]/;
-  const frameFor = (ch) => VOWEL_FRAME[ch] || (PLOSIVE.test(ch) ? "closed" : "half");
+  // Без сглаживания: согласные закрывают рот, гласные держат свою форму.
+  const frameFor = (ch) => VOWEL_FRAME[ch] || "closed";
   const charWeight = (ch) => {
     if (VOWEL_FRAME[ch]) return 1.7;
-    if (PLOSIVE.test(ch)) return 0.55;
-    return /[а-яё]/.test(ch) ? 0.85 : 0.4;
+    return /[а-яё]/.test(ch) ? 0.9 : 0.45;
   };
 
   const buildTalkPlan = (text, ms) => {
@@ -1503,6 +1500,7 @@ function createView(ctx) {
 
   let adoptedKey = "";
   let bridgeSpeaking = false;
+  let lastSpeakAt = 0;
   const pollBridge = () => {
     bridge("/state")
       .then((state) => {
@@ -1518,8 +1516,10 @@ function createView(ctx) {
         const mine = !state.sid || !currentSid || state.sid === currentSid;
         if (state.speaking && mine) {
           if (moodState.value === "sleeping") wake();
-          if (!bridgeSpeaking) {
+          const at = Number(state.at) || 0;
+          if (!bridgeSpeaking || (at && at !== lastSpeakAt)) {
             bridgeSpeaking = true;
+            lastSpeakAt = at;
             stopClick();
             stopSynth();
             stats.count += 1;
@@ -1638,7 +1638,11 @@ function createView(ctx) {
     // Пока персонаж говорит, клик его замолкает; в тишине — просто реплика.
     const wasSpeaking = speaking;
     stopAll();
-    if (!wasSpeaking) playClip(pickClip(CLICKS[charVoice(voice)] || CLICKS.ru_f1));
+    if (!wasSpeaking) {
+      const clip = pickClip(CLICKS[charVoice(voice)] || CLICKS.ru_f1);
+      playClip(clip);
+      if (clip && clip.text) startSpeaking(clip.ms || 1200, "", clip.text);
+    }
   };
 
   // Правый клик — настройки персонажа.
