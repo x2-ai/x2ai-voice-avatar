@@ -188,6 +188,20 @@ const BUF = `${process.env.HOME}/.config/opencode/x2ai-tts-done.buf`;
 const BUF_TTL = 10 * 60 * 1000;
 const OFF_FILE = `${process.env.HOME}/.config/opencode/x2ai-tts-done.disabled`;
 
+// Режим озвучки ответа: full (читать целиком) | summary (пересказ) | silent (молчать).
+// Файл общий с панелью персонажа, поэтому читаем его на каждый ответ.
+const SPEECH_FILE = `${process.env.HOME}/.config/opencode/x2ai-speech.json`;
+const SPEECH_MODES = ["full", "summary", "silent"];
+function readSpeech() {
+  try {
+    const value = JSON.parse(fs.readFileSync(SPEECH_FILE, "utf8"));
+    const mode = value && typeof value.mode === "string" ? value.mode : "";
+    return SPEECH_MODES.includes(mode) ? mode : "summary";
+  } catch (e) {
+    return "summary";
+  }
+}
+
 // Конец хода: эти события реально присылает десктопный сервис.
 const TRIGGERS = new Set(["session.execution.succeeded", "session.execution.interrupted"]);
 
@@ -614,13 +628,6 @@ function startBridge(ctx) {
     res.end(JSON.stringify(payload));
   };
   const modelFile = `${process.env.HOME}/.config/opencode/x2ai-tts-model.json`;
-  const speechFile = `${process.env.HOME}/.config/opencode/x2ai-speech.json`;
-  const SPEECH_MODES = ["full", "summary", "silent"];
-  const readSpeech = () => {
-    const value = readJson(speechFile);
-    const mode = value && typeof value.mode === "string" ? value.mode : "";
-    return SPEECH_MODES.includes(mode) ? mode : "summary";
-  };
   const readModel = () => {
     const value = readJson(modelFile);
     return value && value.id ? value : null;

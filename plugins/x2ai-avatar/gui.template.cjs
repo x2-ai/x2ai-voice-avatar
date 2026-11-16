@@ -270,7 +270,8 @@ function createView(ctx) {
       renderPanel();
     };
     const body = document.createElement("div");
-    body.style.cssText = `display:${sectionOpen[key] ? "block" : "none"};margin-top:6px`;
+    // Отступ слева, чтобы содержимое читалось как подпункты блока.
+    body.style.cssText = `display:${sectionOpen[key] ? "block" : "none"};margin-top:6px;padding-left:10px`;
     wrap.append(head, body);
     (parent || panel).appendChild(wrap);
     return body;
