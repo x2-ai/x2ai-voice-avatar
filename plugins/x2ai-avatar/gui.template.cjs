@@ -191,9 +191,9 @@ function createView(ctx) {
 
   // Раскрывающиеся блоки настроек: по умолчанию свёрнуты.
   const sectionOpen = { voice: false, model: false };
-  const collapsible = (titleText, key) => {
+  const collapsible = (titleText, key, parent) => {
     const wrap = document.createElement("div");
-    wrap.style.cssText = "margin-top:8px";
+    wrap.style.cssText = `margin-top:${parent && parent !== panel ? 0 : 8}px`;
     const head = document.createElement("button");
     head.type = "button";
     head.style.cssText = [
@@ -228,7 +228,7 @@ function createView(ctx) {
     const body = document.createElement("div");
     body.style.cssText = `display:${sectionOpen[key] ? "block" : "none"};margin-top:6px`;
     wrap.append(head, body);
-    panel.appendChild(wrap);
+    (parent || panel).appendChild(wrap);
     return body;
   };
 
@@ -237,55 +237,64 @@ function createView(ctx) {
     title.textContent = "Пак персонажей";
     title.style.cssText = "font-weight:600;margin-bottom:8px;opacity:.9";
     panel.appendChild(title);
-    for (const name of Object.keys(PACKS)) {
-      const count = Object.keys(PACKS[name] || {}).length;
-      const row = document.createElement("button");
-      row.type = "button";
-      row.textContent = `${PACK_NAMES[name] || name} · ${count}`;
-      const active = name === activePack;
-      row.style.cssText = [
-        "display:block",
-        "width:100%",
-        "text-align:left",
-        "margin:0 0 6px",
-        "padding:6px 8px",
-        "border-radius:7px",
-        "cursor:pointer",
-        "font:inherit",
-        "color:inherit",
-        `border:1px solid ${active ? "rgba(120,180,255,.75)" : "rgba(255,255,255,.12)"}`,
-        `background:${active ? "rgba(80,130,220,.22)" : "rgba(255,255,255,.04)"}`,
-      ].join(";");
-      row.onclick = (ev) => {
-        ev.stopPropagation();
-        setPack(name);
-        const list = packVoices();
-        const pick = list.includes(voice) ? voice : list[0];
-        if (pick) {
-          apply(pick, true);
-          saveLocal(currentSid, pick);
-          if (currentSid) bridge("/voice", { sid: currentSid, voice: charVoice(pick) }).catch(() => {});
-        }
-        renderPanel();
-      };
-      panel.appendChild(row);
-    }
-    const nextBtn = document.createElement("button");
-    nextBtn.type = "button";
-    nextBtn.textContent = "Следующий персонаж из пака";
-    nextBtn.style.cssText = [
+    const switchPack = (name) => {
+      setPack(name);
+      const list = packVoices();
+      const pick = list.includes(voice) ? voice : list[0];
+      if (pick) {
+        apply(pick, true);
+        saveLocal(currentSid, pick);
+        if (currentSid) bridge("/voice", { sid: currentSid, voice: charVoice(pick) }).catch(() => {});
+      }
+    };
+
+    const select = document.createElement("select");
+    select.style.cssText = [
       "display:block",
+      "box-sizing:border-box",
       "width:100%",
-      "margin:0 0 4px",
+      "margin:0 0 10px",
       "padding:6px 8px",
       "border-radius:7px",
       "cursor:pointer",
       "font:inherit",
-      "font-size:11px",
+      "font-size:12px",
+      "color:inherit",
+      "border:1px solid rgba(255,255,255,.16)",
+      "background:rgba(255,255,255,.06)",
+    ].join(";");
+    for (const name of Object.keys(PACKS)) {
+      const count = Object.keys(PACKS[name] || {}).length;
+      const opt = document.createElement("option");
+      opt.value = name;
+      opt.textContent = `${PACK_NAMES[name] || name} · ${count}`;
+      opt.selected = name === activePack;
+      select.appendChild(opt);
+    }
+    select.onchange = (ev) => {
+      ev.stopPropagation();
+      switchPack(select.value);
+      renderPanel();
+    };
+    panel.appendChild(select);
+
+    const nextBtn = document.createElement("button");
+    nextBtn.type = "button";
+    nextBtn.textContent = "↻ Следующий персонаж из пака";
+    nextBtn.style.cssText = [
+      "display:block",
+      "width:100%",
+      "margin:0 0 10px",
+      "padding:7px 8px",
+      "border-radius:7px",
+      "cursor:pointer",
+      "font:inherit",
+      "font-size:12px",
+      "font-weight:600",
       "color:inherit",
       "text-align:center",
-      "border:1px solid rgba(255,255,255,.16)",
-      "background:rgba(255,255,255,.07)",
+      "border:1px solid rgba(120,180,255,.6)",
+      "background:rgba(80,130,220,.18)",
     ].join(";");
     nextBtn.onclick = (ev) => {
       ev.stopPropagation();
@@ -294,7 +303,26 @@ function createView(ctx) {
     };
     panel.appendChild(nextBtn);
 
-    const vBody = collapsible("Голос персонажа", "voice");
+    const rule = document.createElement("hr");
+    rule.style.cssText = "border:none;border-top:1px solid rgba(255,255,255,.12);margin:0 0 2px";
+    panel.appendChild(rule);
+
+    // Общая рамка для настроек: видно, что блоки относятся к одному разделу.
+    const settings = document.createElement("div");
+    settings.style.cssText = [
+      "display:flex",
+      "flex-direction:column",
+      "gap:6px",
+      "box-sizing:border-box",
+      "margin-top:8px",
+      "padding:6px",
+      "border:1px solid rgba(255,255,255,.12)",
+      "border-radius:9px",
+      "background:rgba(255,255,255,.02)",
+    ].join(";");
+    panel.appendChild(settings);
+
+    const vBody = collapsible("Голос персонажа", "voice", settings);
 
     const labelOf = (id) => {
       const found = (voiceCatalog || []).find((v) => v.id === id);
@@ -378,7 +406,7 @@ function createView(ctx) {
       );
     }
 
-    const mBody = collapsible("Модель пересказа", "model");
+    const mBody = collapsible("Модель пересказа", "model", settings);
 
     const mList = document.createElement("div");
     mList.style.cssText = "max-height:150px;overflow-y:auto;display:flex;flex-direction:column;gap:4px";

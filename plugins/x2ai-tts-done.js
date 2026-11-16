@@ -606,7 +606,7 @@ function startBridge(ctx) {
     { id: "fx_demoness", label: "Демонесса — женский, низкий, хриплый", kind: "effect" },
     { id: "fx_alien", label: "Пришелец — вибрато", kind: "effect" },
     { id: "fx_cat", label: "Кот — питч вверх", kind: "effect" },
-    { id: "fx_penguin", label: "Пингвин — высокий писк", kind: "effect" },
+    { id: "fx_penguin", label: "Пришелец — высокий писк", kind: "effect" },
     { id: "fx_ghost", label: "Призрак — реверб", kind: "effect" },
   ];
   const send = (res, code, payload) => {
