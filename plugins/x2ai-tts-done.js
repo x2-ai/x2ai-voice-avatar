@@ -352,6 +352,12 @@ function decorate(text) {
 function stripCode(text) {
   if (!text) return "";
   let t = text;
+  // Теги и всё их содержимое — вон: это разметка, а не речь.
+  const BLOCK_TAGS =
+    "code|pre|script|style|details|summary|tool|tools|tool_call|file|files|path|bash|command|cmd|output|result|json|xml|html|patch|diff|thinking|reasoning|system|context|antml";
+  t = t.replace(new RegExp(`<(${BLOCK_TAGS})\\b[^>]*>[\\s\\S]*?<\\/\\1>`, "gi"), " ");
+  t = t.replace(new RegExp(`<(${BLOCK_TAGS})\\b[^>]*/>`, "gi"), " ");
+  t = t.replace(/<\/?[a-z][\w:.-]*\b[^>]*>/gi, " ");
   t = t.replace(/```[\s\S]*?```/g, " ");
   t = t.replace(/`[^`]+`/g, " ");
   t = t.replace(/^([+-].*)$/gm, " ");
