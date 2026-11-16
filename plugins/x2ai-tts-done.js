@@ -178,6 +178,7 @@ const LLM_SUMMARY = true;
 const LLM_TIMEOUT = 12000;
 let genText = null;
 const MAX_CHARS = 400;
+const FULL_MAX_CHARS = 4000;
 const MIN_CHARS = 15;
 const DEBUG = true;
 
@@ -547,8 +548,9 @@ function speakTera(text, sid, forced) {
   }
 }
 
-function speak(text, sid, voice) {
-  const toSay = (text.length > MAX_CHARS ? text.slice(0, MAX_CHARS) : text).replace(/\s+/g, " ").trim();
+function speak(text, sid, voice, maxChars = MAX_CHARS) {
+  const limit = Math.max(maxChars || MAX_CHARS, MAX_CHARS);
+  const toSay = (text.length > limit ? text.slice(0, limit) : text).replace(/\s+/g, " ").trim();
   if (!toSay) return;
   log("SPEAK:", toSay.slice(0, 100));
   if (ENGINE === "say") return speakSay(toSay);
@@ -851,7 +853,7 @@ module.exports = {
             log("SKIP: not russian", summary.slice(0, 60));
             continue;
           }
-          speak(summary, sid, voice);
+          speak(summary, sid, voice, mode === "full" ? FULL_MAX_CHARS : MAX_CHARS);
         }
       } catch (e) {
         log("SUBSCRIBE_END", e?.message);
