@@ -932,7 +932,7 @@ function speak(text, sid, voice, maxChars = MAX_CHARS, emotion = null, kind = nu
   if (!toSay) return;
   // Страховка от английских обрывков: такое не озвучиваем.
   if (cyrRatio(toSay) < 0.4 && toSay.length > 40) {
-    log("SKIP: not russian", toSay.slice(0, 60));
+    log("SKIP: not russian", cyrRatio(toSay).toFixed(2), toSay.slice(0, 60));
     return;
   }
   lastSpeak = { text: toSay, sid: sid || "", voice: voice || "", max: limit, emotion, kind };
