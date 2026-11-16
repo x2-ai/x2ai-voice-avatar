@@ -284,12 +284,41 @@ function createView(ctx) {
   }
 
   // Следующий персонаж пака вместе с его голосом: и по кнопке, и по правому клику.
+  // Смена персонажа с анимацией: старый ныряет вниз, новый выныривает сверху.
+  let swapping = false;
+  const animateSwap = (next) => {
+    if (swapping || next === voice) {
+      apply(next);
+      return;
+    }
+    swapping = true;
+    const h = Math.max(80, img.offsetHeight || charHeight);
+    img.style.transition = "transform 170ms ease-in, opacity 170ms ease-in";
+    img.style.transform = `translateY(${Math.round(h * 0.9)}px)`;
+    img.style.opacity = "0";
+    setTimeout(() => {
+      apply(next);
+      img.style.transition = "none";
+      img.style.transform = `translateY(${-Math.round(h * 0.75)}px)`;
+      img.style.opacity = "0";
+      requestAnimationFrame(() => {
+        img.style.transition = "transform 230ms cubic-bezier(.2,.85,.25,1), opacity 200ms ease-out";
+        img.style.transform = "";
+        img.style.opacity = "1";
+        setTimeout(() => {
+          img.style.transition = "";
+          swapping = false;
+        }, 260);
+      });
+    }, 175);
+  };
+
   const nextCharacter = () => {
     stopAll();
     const list = packVoices();
     const index = list.indexOf(voice);
     const next = list[(index + 1) % list.length] || voice;
-    apply(next);
+    animateSwap(next);
     saveLocal(currentSid, next);
     if (currentSid) bridge("/voice", { sid: currentSid, voice: charVoice(next) }).catch(() => {});
     playClip(pickClip(LINES.lines && LINES.lines[next]));
