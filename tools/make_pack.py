@@ -33,6 +33,43 @@ def key_out(img: Image.Image) -> Image.Image:
     return Image.fromarray(out, "RGBA")
 
 
+def key_out_flood(img: Image.Image, tol: float = 70.0) -> Image.Image:
+    """Вырезает фон заливкой от краёв, а не по цвету во всём кадре.
+
+    Так фиолетовые пиксели зрачков не считаются фоном: они не связаны
+    с внешней областью мадженты.
+    """
+    arr = np.asarray(img.convert("RGB")).astype(np.float32)
+    h, w = arr.shape[:2]
+    dist = np.linalg.norm(arr - MAGENTA, axis=2)
+    candidate = dist < tol
+    bg = np.zeros((h, w), dtype=bool)
+    stack = []
+    for x in range(w):
+        for y in (0, h - 1):
+            if candidate[y, x] and not bg[y, x]:
+                bg[y, x] = True
+                stack.append((y, x))
+    for y in range(h):
+        for x in (0, w - 1):
+            if candidate[y, x] and not bg[y, x]:
+                bg[y, x] = True
+                stack.append((y, x))
+    while stack:
+        cy, cx = stack.pop()
+        for dy, dx in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+            ny, nx = cy + dy, cx + dx
+            if 0 <= ny < h and 0 <= nx < w and candidate[ny, nx] and not bg[ny, nx]:
+                bg[ny, nx] = True
+                stack.append((ny, nx))
+    # Остатки мадженты внутри силуэта (щели между волосами и капюшоном)
+    # тоже убираем: настоящая маджента в арте не встречается, а фиолетовые
+    # зрачки от неё далеко по цвету.
+    bg |= dist < 40.0
+    out = np.dstack([np.clip(arr, 0, 255), np.where(bg, 0, 255)]).astype(np.uint8)
+    return Image.fromarray(out, "RGBA")
+
+
 def harden_alpha(img: Image.Image, threshold: int = 110, magenta_tol: int = 120) -> Image.Image:
     """Пиксель-арт: полупрозрачная кайма после вырезания фона даёт розовый ореол.
 
@@ -106,8 +143,12 @@ def main() -> None:
     files = {s: src / f"{s}.png" for s in STATES if (src / f"{s}.png").exists()}
     if "closed" not in files:
         raise SystemExit(f"нет {src}/closed.png — без закрытого рта не собрать")
-    frames = {name: key_out(Image.open(p)) for name, p in files.items()}
-    if harden:
+    flood = "--flood" in sys.argv
+    frames = {
+        name: (key_out_flood(Image.open(p)) if flood else key_out(Image.open(p)))
+        for name, p in files.items()
+    }
+    if harden and not flood:
         frames = {name: harden_alpha(img) for name, img in frames.items()}
 
     boxes = [bbox(img) for img in frames.values()]
