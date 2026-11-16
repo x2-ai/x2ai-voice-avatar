@@ -139,13 +139,18 @@ function createView(ctx) {
   let evCount = 0;
   let lastSid = "";
 
+  // Настроение персонажа: awake | sad | sleeping. Храним в объекте, чтобы
+  // функции, объявленные выше, могли читать его без TDZ.
+  const moodState = { value: "awake" };
+
   let voice = "ru_f1";
   img.src = frame(voice, "closed");
 
   const apply = (next, force) => {
     if (!next || (next === voice && !force)) return;
     voice = next;
-    img.src = frame(voice, "closed");
+    img.src = frame(voice, moodState.value === "awake" ? "closed" : "blink");
+    if (moodState.value !== "awake") setMood(moodState.value, true);
     root.title = `x2ai · ${nameFor(voice)} · ${voice}`;
   };
 
@@ -763,6 +768,123 @@ function createView(ctx) {
   // side.opened() не всегда реактивен — подстраховываемся дешёвым опросом.
   const sidePoll = setInterval(refreshVisibility, 500);
 
+  // --- Настроение: сон при простое, грусть при ошибке, звук пробуждения ---
+  try {
+    const st = document.createElement("style");
+    st.textContent = [
+      "@keyframes x2ai-breathe{0%,100%{transform:translateY(0)}50%{transform:translateY(-2px)}}",
+      "@keyframes x2ai-zzz{0%{opacity:0;transform:translate(0,0) scale(.7)}25%{opacity:.85}",
+      "100%{opacity:0;transform:translate(9px,-24px) scale(1.15)}}",
+    ].join("");
+    document.head.appendChild(st);
+  } catch (e) {}
+
+  const zzz = document.createElement("div");
+  zzz.textContent = "z";
+  zzz.style.cssText = [
+    "position:absolute",
+    "right:-4px",
+    "top:-2px",
+    "font-size:13px",
+    "line-height:1",
+    "color:rgba(255,255,255,.8)",
+    "text-shadow:0 1px 3px rgba(0,0,0,.55)",
+    "opacity:0",
+    "pointer-events:none",
+  ].join(";");
+  box.appendChild(zzz);
+
+  const IDLE_MS = 3 * 60 * 1000;
+  const SHADOW = "drop-shadow(0 2px 6px rgba(0,0,0,.28))";
+  let moodTimer = null;
+  let idleTimer = null;
+
+  // Короткий мягкий сигнал пробуждения: два синуса, без внешних файлов.
+  let audioCtx = null;
+  const wakeBlip = () => {
+    try {
+      audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+      const now = audioCtx.currentTime;
+      for (const [offset, freq] of [[0, 620], [0.09, 900]]) {
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = "sine";
+        osc.frequency.value = freq;
+        gain.gain.setValueAtTime(0.0001, now + offset);
+        gain.gain.exponentialRampToValueAtTime(0.07, now + offset + 0.012);
+        gain.gain.exponentialRampToValueAtTime(0.0001, now + offset + 0.17);
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        osc.start(now + offset);
+        osc.stop(now + offset + 0.2);
+      }
+    } catch (e) {}
+  };
+
+  const setMood = (next, quiet) => {
+    const prev = moodState.value;
+    moodState.value = next;
+    if (next === "sleeping") {
+      if (!quiet) img.src = frame(voice, "blink");
+      img.style.filter = `${SHADOW} saturate(.7) brightness(.9)`;
+      box.style.animation = "x2ai-breathe 3.6s ease-in-out infinite";
+      zzz.style.animation = "x2ai-zzz 2.6s ease-out infinite";
+      zzz.style.opacity = "0";
+      root.title = `x2ai · ${nameFor(voice)} · спит`;
+    } else if (next === "sad") {
+      if (!quiet) img.src = frame(voice, "blink");
+      img.style.filter = `${SHADOW} grayscale(.55) brightness(.88)`;
+      box.style.animation = "";
+      box.style.transform = "translateY(2px) rotate(-2deg)";
+      zzz.style.animation = "";
+      zzz.style.opacity = "0";
+      root.title = `x2ai · ${nameFor(voice)} · расстроен`;
+    } else {
+      if (!quiet) img.src = frame(voice, "closed");
+      img.style.filter = SHADOW;
+      box.style.animation = "";
+      box.style.transform = "";
+      zzz.style.animation = "";
+      zzz.style.opacity = "0";
+      root.title = `x2ai · ${nameFor(voice)} · ${voice}`;
+    }
+    return prev;
+  };
+
+  const resetIdle = () => {
+    if (idleTimer) clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => {
+      if (speaking || panelOpen || moodState.value === "sad") {
+        resetIdle();
+        return;
+      }
+      setMood("sleeping");
+    }, IDLE_MS);
+  };
+
+  // Любая активность будит персонажа; из сна — со звуком.
+  const wake = () => {
+    const wasAsleep = moodState.value === "sleeping";
+    if (moodState.value !== "awake") {
+      if (moodTimer) clearTimeout(moodTimer);
+      setMood("awake");
+    }
+    if (wasAsleep) wakeBlip();
+    resetIdle();
+  };
+
+  const sadFor = (ms) => {
+    wake();
+    setMood("sad");
+    if (moodTimer) clearTimeout(moodTimer);
+    moodTimer = setTimeout(() => {
+      if (moodState.value === "sad") setMood("awake");
+      resetIdle();
+    }, ms || 4200);
+  };
+
+  resetIdle();
+
   let speaking = false;
   let talkTimer = null;
   let talkStep = 0;
@@ -771,6 +893,11 @@ function createView(ctx) {
 
   const startSpeaking = (ms) => {
     speaking = true;
+    if (moodState.value !== "awake") {
+      if (moodTimer) clearTimeout(moodTimer);
+      setMood("awake");
+    }
+    resetIdle();
     if (talkTimer) clearInterval(talkTimer);
     if (speakTimer) clearTimeout(speakTimer);
     speakTimer = setTimeout(stopSpeaking, (ms > 0 ? ms : 9000) + 500);
@@ -789,6 +916,7 @@ function createView(ctx) {
     talkStep = 0;
     box.style.transform = "";
     img.src = frame(voice, "closed");
+    resetIdle();
   };
 
   // Главный канал: TeraTTS пишет state-файл ровно в момент старта afplay,
@@ -870,6 +998,7 @@ function createView(ctx) {
         // в state-файл, а окно сравнивает его с текущим чатом.
         const mine = !state.sid || !currentSid || state.sid === currentSid;
         if (state.speaking && mine) {
+          if (moodState.value === "sleeping") wake();
           if (!bridgeSpeaking) {
             bridgeSpeaking = true;
             stopClick();
@@ -934,6 +1063,7 @@ function createView(ctx) {
   const onSpeak = (name) => (event) => {
     const id = (event && event.data && event.data.sessionID) || "no-sid";
     evCount++;
+    wake();
     // Событие может прийти из неактивного чата: спрайт активного не трогаем.
     if (String(id).startsWith("ses_") && id === currentSid) applyForSession(id);
     // Рот НЕ двигаем по событию ответа: между концом ответа и стартом звука
@@ -968,6 +1098,18 @@ function createView(ctx) {
           } catch (err) {
           }
         }
+        for (const name of ["session.execution.failed", "session.execution.error", "session.execution.errored"]) {
+          try {
+            offs.push(
+              data.on(name, (event) => {
+                const id = (event && event.data && event.data.sessionID) || "";
+                if (String(id).startsWith("ses_") && id !== currentSid) return;
+                sadFor(4200);
+              }),
+            );
+          } catch (err) {
+          }
+        }
         onCleanup(() => {
           for (const off of offs) if (typeof off === "function") off();
         });
@@ -978,6 +1120,8 @@ function createView(ctx) {
 
   root.destroy = () => {
     clearTimeout(blinkTimer);
+    clearTimeout(idleTimer);
+    clearTimeout(moodTimer);
     clearTimeout(speakTimer);
     clearInterval(sidePoll);
     clearInterval(bridgeTimer);
