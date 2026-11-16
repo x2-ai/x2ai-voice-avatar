@@ -24,7 +24,7 @@ const LINES = __LINES__;
 
 const VOICES = ["ru_f1","ru_f2","ru_m1","ru_m5","fx_robot","fx_demoness","fx_alien","fx_cat","fx_penguin","fx_ghost"];
 // Мужской «демон» остался голосом в меню, но спрайт у него тот же — демонесса.
-const SPRITE_ALIAS = { fx_demon: "fx_demoness" };
+const SPRITE_ALIAS = {};
 const CHAR_NAMES = {
   anime: {
     ru_f1: "Аня", ru_f2: "Мила", ru_m1: "Гриша", ru_m5: "Тимур",
@@ -32,8 +32,8 @@ const CHAR_NAMES = {
     fx_cat: "Мурзик", fx_penguin: "Пико", fx_ghost: "Юки",
   },
   pixel: {
-    ru_f1: "Тянка", fx_robot: "Робот", fx_demoness: "Демонесса",
-    fx_penguin: "Инопланетянин", ru_m1: "Программист",
+    px_ru_f1: "Тянка", px_fx_robot: "Робот", px_fx_demoness: "Демонесса",
+    px_fx_penguin: "Инопланетянин", px_ru_m1: "Программист",
   },
 };
 
@@ -339,7 +339,8 @@ function createView(ctx) {
     animateSwap(next);
     saveLocal(currentSid, next);
     if (currentSid) bridge("/voice", { sid: currentSid, voice: charVoice(next) }).catch(() => {});
-    playClip(pickClip(LINES.lines && LINES.lines[next]));
+    // Реплики есть по голосу, а не по id персонажа.
+    playClip(pickClip(LINES.lines && (LINES.lines[charVoice(next)] || LINES.lines[next])));
     return next;
   };
 
@@ -1375,7 +1376,15 @@ function createView(ctx) {
   let currentSid = "";
   // Персонаж и голос — разные вещи: по умолчанию голос персонажа совпадает
   // с его id, но в настройках можно привязать любой другой голос.
-  const charVoice = (id) => (id && charVoices[id]) || id;
+  // Пиксельные персонажи имеют свои id, но говорят общим голосом.
+  const VOICE_ALIAS = {
+    px_ru_f1: "ru_f1",
+    px_ru_m1: "ru_m1",
+    px_fx_robot: "fx_robot",
+    px_fx_penguin: "fx_penguin",
+    px_fx_demoness: "fx_demoness",
+  };
+  const charVoice = (id) => (id && (charVoices[id] || VOICE_ALIAS[id])) || id;
   const voiceOf = (id) => (voiceMap && voiceMap[id]) || id;
 
   // Выбор персонажа храним ещё и в localStorage окна: он читается сразу,
@@ -1569,7 +1578,7 @@ function createView(ctx) {
     // Пока персонаж говорит, клик его замолкает; в тишине — просто реплика.
     const wasSpeaking = speaking;
     stopAll();
-    if (!wasSpeaking) playClip(pickClip(CLICKS[voice] || CLICKS.ru_f1));
+    if (!wasSpeaking) playClip(pickClip(CLICKS[charVoice(voice)] || CLICKS.ru_f1));
   };
 
   // Правый клик — настройки персонажа.
