@@ -258,7 +258,52 @@ def resolve_voice(voice: str) -> str:
     return spec["base"] if spec else voice
 
 
+def _socket_alive(path: Path) -> bool:
+    """Есть ли уже живой сервер на этом сокете."""
+    probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    probe.settimeout(1.0)
+    try:
+        probe.connect(str(path))
+        return True
+    except OSError:
+        return False
+    finally:
+        try:
+            probe.close()
+        except OSError:
+            pass
+
+
+LOCK = Path("/tmp/x2ai-teratts.lock")
+
+
 def main() -> int:
+    # Один сервер на сокет: файловая блокировка атомарна и не даёт гонки
+    # при одновременном запуске из нескольких запросов озвучки.
+    lock_handle = open(LOCK, "w")
+    try:
+        import fcntl
+
+        fcntl.flock(lock_handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        log("already running, exit")
+        return 0
+
+    # Сокет занимаем сразу: пока грузится модель, второй запуск уже
+    # не сможет занять тот же сокет и выйдет, не съев ещё 800 МБ.
+    try:
+        SOCK.unlink()
+    except FileNotFoundError:
+        pass
+    srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        srv.bind(str(SOCK))
+    except OSError:
+        log("socket busy, exit")
+        return 0
+    srv.listen(8)
+    srv.settimeout(IDLE)
+
     sys.path.insert(0, str(ROOT))
     import teratts  # noqa: PLC0415
 
@@ -267,19 +312,14 @@ def main() -> int:
         ROOT,
         model="distilled",
         provider="CPUExecutionProvider",
+        # Не отдаём движку все 16 потоков: иначе синтез занимает все ядра
+        # и ноут встаёт. 4 потоков хватает с запасом.
+        threads=int(os.environ.get("X2AI_TTS_THREADS") or 4),
         russian_stress=True,
         ruaccent_mode=ACCENT,
     )
     log(f"loaded in {time.time() - started:.1f}s voice={VOICE} accent={ACCENT}")
 
-    try:
-        SOCK.unlink()
-    except FileNotFoundError:
-        pass
-    srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    srv.bind(str(SOCK))
-    srv.listen(4)
-    srv.settimeout(IDLE)
 
     players: list[subprocess.Popen] = []
 
