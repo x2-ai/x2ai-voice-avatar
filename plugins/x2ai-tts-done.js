@@ -740,12 +740,13 @@ async function llmReason(raw, gender, translate, sid, user = readUser()) {
         : "Если упоминаешь пользователя, говори нейтрально, без форм прошедшего времени во втором лице.";
   const userName = (user && user.name) || "";
   const useName = Boolean(userName) && shouldUseReasonName();
-  const nameRule = useName
-    ? `Где речь о пользователе, называй его по имени: ${userName} (вместо слова «пользователь»), один раз и с правильным родом.`
-    : "";
+  const nameRule = userName
+    ? `Где речь о пользователе, называй его по имени: ${userName} (вместо слов «пользователь», «user»), один раз и с правильным родом.`
+    : "Слова «user» и «пользователь» заменяй на «пользователь» только по-русски, без английских вставок.";
   const prompt = [
     task,
     "Без вступлений вроде «вот краткое содержание». Только суть.",
+    "Весь ответ — только по-русски: никаких английских слов и обрывков вроде «user asks».",
     "Код, команды и пути к файлам не произноси.",
     style,
     aboutUser,
@@ -759,8 +760,17 @@ async function llmReason(raw, gender, translate, sid, user = readUser()) {
       genText({ model: sumModel(), prompt }),
       new Promise((r) => setTimeout(() => r(null), LLM_TIMEOUT)),
     ]);
-    const text = String(out?.text || "").replace(/\s+/g, " ").trim();
+    let text = String(out?.text || "").replace(/\s+/g, " ").trim();
     if (!text) return "";
+    // Модель иногда оставляет английские обрывки — добиваем переводом.
+    if (/[A-Za-z]{2,}/.test(text) && cyrRatio(text) < 0.9) {
+      log("REASON: latin left, translating");
+      const ru = await translateRu(text);
+      if (ru) text = ru;
+    }
+    if (userName && /\b(user|пользователь)\b/i.test(text)) {
+      text = text.replace(/\b(user|пользователь)\b/gi, userName);
+    }
     log("REASON_LLM:", text.slice(0, 120));
     return text.slice(0, 400);
   } catch (e) {

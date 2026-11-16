@@ -1350,15 +1350,17 @@ function createView(ctx) {
     return "n";
   };
   let pingTimer = null;
+  let pingDelay = 60000; // растёт с каждой репликой, сбрасывается после ответа
   const pingStop = () => {
     if (pingTimer) clearTimeout(pingTimer);
     pingTimer = null;
+    pingDelay = 60000;
   };
   // Пинг говорит голосом ТОГО чата, где идёт работа, а не активной вкладки.
   const pingStart = (sid) => {
     if (pingTimer) return;
     const tick = () => {
-      const KEY = "x2ai-avatar:ping";
+      const KEY = `x2ai-avatar:ping:${sid || "any"}`;
       let last = 0;
       try {
         last = Number(localStorage.getItem(KEY) || 0) || 0;
@@ -1371,9 +1373,10 @@ function createView(ctx) {
         const phrase = list[Math.floor(Math.random() * list.length)];
         sayWhenFree(phrase, sid);
       }
-      pingTimer = setTimeout(tick, 150000);
+      pingDelay = Math.min(600000, Math.round(pingDelay * 1.6));
+      pingTimer = setTimeout(tick, pingDelay);
     };
-    pingTimer = setTimeout(tick, 60000);
+    pingTimer = setTimeout(tick, pingDelay);
   };
 
   // Если что-то уже звучит — не перебиваем, ждём своей очереди.
