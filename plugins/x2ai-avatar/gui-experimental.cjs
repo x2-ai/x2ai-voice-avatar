@@ -1349,7 +1349,15 @@ function createView(ctx) {
     ю: "round",
     я: "wide",
   };
-  const charWeight = (ch) => (VOWEL_FRAME[ch] ? 1.7 : /[а-яё]/.test(ch) ? 0.9 : 0.5);
+  // Согласные не захлопывают рот: взрывные (п, б, т, д, к, г) закрывают
+  // на мгновение, остальные держат полуоткрытый кадр — так плавнее.
+  const PLOSIVE = /[пбтдкг]/;
+  const frameFor = (ch) => VOWEL_FRAME[ch] || (PLOSIVE.test(ch) ? "closed" : "half");
+  const charWeight = (ch) => {
+    if (VOWEL_FRAME[ch]) return 1.7;
+    if (PLOSIVE.test(ch)) return 0.55;
+    return /[а-яё]/.test(ch) ? 0.85 : 0.4;
+  };
 
   const buildTalkPlan = (text, ms) => {
     const chars = String(text || "")
@@ -1359,8 +1367,8 @@ function createView(ctx) {
     if (!chars.length) return null;
     const total = chars.reduce((acc, ch) => acc + charWeight(ch), 0) || 1;
     return chars.map((ch) => ({
-      frame: VOWEL_FRAME[ch] || "closed",
-      delay: Math.max(45, Math.round((ms * charWeight(ch)) / total)),
+      frame: frameFor(ch),
+      delay: Math.max(55, Math.round((ms * charWeight(ch)) / total)),
     }));
   };
 
