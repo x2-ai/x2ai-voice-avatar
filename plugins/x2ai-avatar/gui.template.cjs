@@ -637,18 +637,20 @@ function createView(ctx) {
       modelRows.length = 0;
       const models = (data && data.models) || [];
       const current = (data && data.current) || {};
-      const free = models.filter((m) => m.free);
+      // Порядок приходит с моста: локальные, затем бесплатные.
+      const free = models.filter((m) => m.local || m.free);
       const shown = free.slice(0, 40);
       if (!shown.length) {
         const empty = document.createElement("div");
-        empty.textContent = data && data.error ? "не удалось получить список" : "бесплатных моделей нет";
+        empty.textContent =
+          data && data.error ? "не удалось получить список" : "локальных и бесплатных моделей нет";
         empty.style.cssText = "opacity:.5;font-size:11px";
         mList.appendChild(empty);
         return;
       }
       for (const m of shown) {
         const active = m.providerID === current.providerID && m.id === current.id;
-        const row = vRow(m.name, active, () => {
+        const row = vRow(m.local ? `${m.name} · локальная` : m.name, active, () => {
           for (const item of modelRows) item.row.setActive(item.model === m);
           bridge("/model", { providerID: m.providerID, id: m.id }).catch(() => {});
         });
@@ -658,7 +660,7 @@ function createView(ctx) {
       }
       if (free.length > shown.length) {
         const more = document.createElement("div");
-        more.textContent = `и ещё ${free.length - shown.length} бесплатных`;
+        more.textContent = `и ещё ${free.length - shown.length}`;
         more.style.cssText = "opacity:.45;font-size:10px;padding:2px 7px";
         mList.appendChild(more);
       }

@@ -161,6 +161,8 @@ function teraVoice(sid) {
 
 // Пересказ через бесплатную модель OpenCode: без сессии, истории и инструментов.
 const SUM_MODEL_DEFAULT = { providerID: "opencode-go", id: "iceman-contributor-free" };
+// Провайдеры локального инференса: их модели ставим в начало списка.
+const LOCAL_PROVIDERS = /ollama|lmstudio|lm-studio|llamacpp|llama-cpp|vllm|localai|gpt4all|kobold|jan|text-generation-webui|mlx|local/i;
 // Модель пересказа меняется в настройках персонажа (панель шестерёнки):
 // выбор лежит в x2ai-tts-model.json, иначе берём бесплатную по умолчанию.
 const sumModel = () => {
@@ -849,13 +851,18 @@ function startBridge(ctx) {
         const cost = (Array.isArray(m.cost) ? m.cost[0] : m.cost) || {};
         const input = Number(cost.input) || 0;
         const output = Number(cost.output) || 0;
+        const provider = String(m.providerID || m.provider || "");
         models.push({
-          providerID: m.providerID || m.provider || "",
+          providerID: provider,
           id: m.modelID || m.id,
           name: m.name || m.modelID || m.id,
           free: input === 0 && output === 0,
+          local: Boolean(m.local) || LOCAL_PROVIDERS.test(provider),
         });
       }
+      // Локальные — первыми, затем бесплатные, затем платные.
+      const rank = (m) => (m.local ? 0 : m.free ? 1 : 2);
+      models.sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name, "ru"));
       return { models, source: "model.list" };
     } catch (e) {
       return { models: [], source: "error", error: e && e.message ? e.message : String(e) };
