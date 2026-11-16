@@ -374,7 +374,10 @@ function createView(ctx) {
     head.append(caret, label);
     head.onclick = (ev) => {
       ev.stopPropagation();
-      sectionOpen[key] = !sectionOpen[key];
+      // Аккордеон: открыт всегда только один блок, иначе меню разрастается.
+      const wasOpen = sectionOpen[key];
+      for (const k of Object.keys(sectionOpen)) sectionOpen[k] = false;
+      sectionOpen[key] = !wasOpen;
       renderPanel();
       if (sectionOpen[key]) centerActive(key);
     };
