@@ -495,11 +495,35 @@ async function translateRu(text) {
   }
 }
 
-// Счётчик пересказов: по нему решаем, звать ли пользователя по имени.
-let nameTick = 3; // следующий пересказ — без имени
+// Когда звать пользователя по имени: первое сообщение в чате — всегда,
+// дальше пауза 4–6 пересказов без имени и не чаще одного раза в 10 минут.
+const NAME_GAP_MIN = 4;
+const NAME_GAP_MAX = 6;
+const NAME_COOLDOWN_MS = 10 * 60 * 1000;
+const nameGreeted = new Set();
+let nameSkip = 0;
+let nameLastAt = 0;
+
+function shouldUseName(sid) {
+  const now = Date.now();
+  if (sid && !nameGreeted.has(sid)) {
+    nameGreeted.add(sid);
+    nameSkip = NAME_GAP_MIN + Math.floor(Math.random() * (NAME_GAP_MAX - NAME_GAP_MIN + 1));
+    nameLastAt = now;
+    return true;
+  }
+  if (nameSkip > 0) {
+    nameSkip--;
+    return false;
+  }
+  if (now - nameLastAt < NAME_COOLDOWN_MS) return false;
+  nameSkip = NAME_GAP_MIN + Math.floor(Math.random() * (NAME_GAP_MAX - NAME_GAP_MIN + 1));
+  nameLastAt = now;
+  return true;
+}
 
 // Пересказ моделью (бесплатной, без сессии). Пустая строка = не получилось.
-async function llmSummary(raw, gender, user = readUser()) {
+async function llmSummary(raw, gender, user = readUser(), sid = "") {
   if (!LLM_SUMMARY || !genText) return "";
   const src = stripCode(raw).slice(0, 6000).trim();
   if (src.length < 40) return "";
@@ -512,9 +536,7 @@ async function llmSummary(raw, gender, user = readUser()) {
       : userGender === "m"
         ? "Пользователь — мужчина. Обращаясь к нему, используй мужской род: «ты проверил», «ты попросил», «ты прав», «ты уверен»."
         : "Род пользователя не указан: обращайся к нему нейтрально, избегая форм прошедшего времени во втором лице.";
-  // Имя — редкое обращение, не в каждом пересказе: раз в четыре.
-  nameTick = (nameTick + 1) % 4;
-  const useName = Boolean(userName) && nameTick === 0;
+  const useName = Boolean(userName) && shouldUseName(sid);
   if (userName) log("NAME:", useName ? "yes" : "no");
   const NAME_RULE = useName
     ? `Один раз, в самом начале, обратись к пользователю по имени: ${userName}. Дальше имя не повторяй.`
@@ -923,7 +945,7 @@ module.exports = {
           const source =
             mode === "full"
               ? dedupeSentences(clean, 400).slice(0, 4000)
-              : (await llmSummary(raw, gender)) || summarize(raw) || clean.slice(0, 300);
+              : (await llmSummary(raw, gender, undefined, sid)) || summarize(raw) || clean.slice(0, 300);
           const summary = agreeGender(source, gender);
           log("GENDER:", gender || "-", voice, "mode:", mode);
           if (cyrRatio(summary) < 0.5) {
