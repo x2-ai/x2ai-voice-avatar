@@ -212,6 +212,12 @@ function createView(ctx) {
   let voiceCatalog = null;
   let speechMode = null; // "full" | "summary" | "silent"; null = ещё не загружен
   let speechSpeed = null; // 0.7–1.8; null = ещё не загружена
+  let reasonState = null; // { mode: off|brief|full, translate: bool }
+  const REASON_LABELS = [
+    ["off", "Выключено"],
+    ["brief", "Кратко"],
+    ["full", "Полностью"],
+  ];
   // Обращение к пользователю: имя (пустое = не использовать) и род ("", "m", "f").
   let userName = "";
   let userGender = "";
@@ -260,7 +266,7 @@ function createView(ctx) {
   };
 
   // Раскрывающиеся блоки настроек: по умолчанию свёрнуты.
-  const sectionOpen = { pack: false, voice: false, char: false, speech: false, model: false, user: false, stats: false };
+  const sectionOpen = { pack: false, voice: false, char: false, speech: false, model: false, user: false, stats: false, reason: false };
 
   // Статистика: сколько ответов озвучено и сколько всего речи. Живёт в localStorage.
   const STATS_KEY = "x2ai-avatar:stats";
@@ -554,9 +560,8 @@ function createView(ctx) {
       ["summary", "Пересказ"],
       ["silent", "Молчание"],
     ];
-    // Блок модели строится всегда, а виден только в режиме пересказа:
-    // так переключение режима не требует перерисовки всей панели.
-    const mBody = collapsible("Модель пересказа", "model", settings);
+    // Вспомогательная модель: одна на пересказ, перевод и рассуждения.
+    const mBody = collapsible("Вспомогательная модель", "model", settings);
     const mWrap = mBody.parentNode;
     const mList = keepScroll(document.createElement("div"), "model");
     mList.style.cssText = "max-height:150px;overflow-y:auto;display:flex;flex-direction:column;gap:4px";
@@ -690,8 +695,7 @@ function createView(ctx) {
       const cur = speechMode || "summary";
       for (const item of speechRows) item.row.setActive(item.mode === cur);
       speechNote.style.display = cur === "silent" ? "block" : "none";
-      mWrap.style.display = cur === "summary" ? "block" : "none";
-      if (cur === "summary") loadModels();
+      loadModels();
     };
 
     const setSpeech = (mode) => {
@@ -831,6 +835,48 @@ function createView(ctx) {
     refreshQuiet();
     sBody.appendChild(qBox);
 
+    // Рассуждения модели: озвучиваем «мысли» отдельно от ответа.
+    const rBody = collapsible("Рассуждения", "reason", settings);
+    const rList = keepScroll(document.createElement("div"), "reason");
+    rList.style.cssText = "max-height:132px;overflow-y:auto;display:flex;flex-direction:column;gap:4px";
+    const reasonRows = [];
+    const rTrans = document.createElement("div");
+    rTrans.style.cssText = "display:flex;margin-top:6px";
+    const rTransRow = vRow("Переводить на русский", false, () => {
+      const next = !(reasonState && reasonState.translate);
+      setReason({ translate: next });
+    });
+    rTransRow.style.flex = "1";
+    rTrans.appendChild(rTransRow);
+
+    const refreshReason = () => {
+      const st = reasonState || { mode: "off", translate: true };
+      for (const item of reasonRows) item.row.setActive(item.mode === st.mode);
+      rTransRow.setActive(Boolean(st.translate));
+      rList.style.opacity = st.mode === "off" ? ".5" : "1";
+    };
+
+    const setReason = (patch) => {
+      const cur = reasonState || { mode: "off", translate: true };
+      reasonState = { ...cur, ...patch };
+      refreshReason();
+      bridge("/speech", { reason: reasonState })
+        .then((out) => {
+          if (out && out.reason) {
+            reasonState = out.reason;
+            refreshReason();
+          }
+        })
+        .catch(() => {});
+    };
+
+    for (const [value, text] of REASON_LABELS) {
+      const row = vRow(text, false, () => setReason({ mode: value }));
+      reasonRows.push({ mode: value, row });
+      rList.appendChild(row);
+    }
+    rBody.append(rList, rTrans);
+
     actRow.append(testBtn, replayBtn, stopBtn);
     sBody.appendChild(actRow);
 
@@ -841,6 +887,14 @@ function createView(ctx) {
         speechSpeed = sp;
         spInput.value = String(sp);
         spVal.textContent = `${sp.toFixed(2)}×`;
+      }
+      const rs = data && data.reason;
+      if (rs && typeof rs === "object") {
+        reasonState = {
+          mode: REASON_LABELS.some(([m]) => m === rs.mode) ? rs.mode : "off",
+          translate: rs.translate === undefined ? true : Boolean(rs.translate),
+        };
+        refreshReason();
       }
       const q = data && data.quiet;
       if (q && typeof q === "object") {

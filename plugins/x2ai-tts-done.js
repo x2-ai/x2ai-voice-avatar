@@ -231,6 +231,23 @@ function readQuiet() {
     return { ...QUIET_DEFAULT };
   }
 }
+// Озвучка рассуждений: off | brief | full, плюс перевод на русский.
+const REASON_MODES = ["off", "brief", "full"];
+const REASON_DEFAULT = { mode: "off", translate: true };
+function readReason() {
+  try {
+    const raw = JSON.parse(fs.readFileSync(SPEECH_FILE, "utf8"));
+    const r = raw && raw.reason;
+    if (!r || typeof r !== "object") return { ...REASON_DEFAULT };
+    return {
+      mode: REASON_MODES.includes(r.mode) ? r.mode : REASON_DEFAULT.mode,
+      translate: r.translate === undefined ? REASON_DEFAULT.translate : Boolean(r.translate),
+    };
+  } catch (e) {
+    return { ...REASON_DEFAULT };
+  }
+}
+
 function inQuietHours() {
   const q = readQuiet();
   if (!q.on) return false;
@@ -621,6 +638,36 @@ async function llmSummary(raw, gender, user = readUser(), sid = "", style = "") 
   }
 }
 
+// Рассуждения модели: одним запросом — перевод (если нужно) и сжатие (если «кратко»).
+async function llmReason(raw, gender, translate, sid) {
+  if (!genText) return "";
+  const src = String(raw || "").replace(/\s+/g, " ").trim().slice(0, 6000);
+  if (src.length < 30) return "";
+  const task = translate
+    ? "Переведи рассуждение модели на русский и сожми его в 1–2 коротких предложения для озвучки вслух."
+    : "Сожми рассуждение модели в 1–2 коротких предложения по-русски для озвучки вслух.";
+  const style =
+    gender === "f"
+      ? "О себе говори в женском роде: «я проверила», «я подумала»."
+      : gender === "m"
+        ? "О себе говори в мужском роде: «я проверил», «я подумал»."
+        : "Пиши безлично.";
+  const prompt = [task, "Без вступлений вроде «вот краткое содержание». Только суть.", style, "Текст:", src].join("\n");
+  try {
+    const out = await Promise.race([
+      genText({ model: sumModel(), prompt }),
+      new Promise((r) => setTimeout(() => r(null), LLM_TIMEOUT)),
+    ]);
+    const text = String(out?.text || "").replace(/\s+/g, " ").trim();
+    if (!text) return "";
+    log("REASON_LLM:", text.slice(0, 120));
+    return text.slice(0, 400);
+  } catch (e) {
+    log("REASON_ERR", e?.message);
+    return "";
+  }
+}
+
 function speakTera(text, sid, forced, emotion) {
   try {
     if (!fs.existsSync(TERATTS)) return false;
@@ -808,7 +855,13 @@ function startBridge(ctx) {
       return;
     }
     if (req.method === "GET" && route === "/speech") {
-      send(res, 200, { mode: readSpeech(), modes: SPEECH_MODES, speed: readSpeed(), quiet: readQuiet() });
+      send(res, 200, {
+        mode: readSpeech(),
+        modes: SPEECH_MODES,
+        speed: readSpeed(),
+        quiet: readQuiet(),
+        reason: readReason(),
+      });
       return;
     }
     if (req.method === "GET" && route === "/user") {
@@ -883,11 +936,24 @@ function startBridge(ctx) {
         return;
       }
       if (req.method === "POST" && route === "/speech") {
-        const next = { mode: readSpeech(), speed: readSpeed(), quiet: readQuiet() };
+        const next = {
+          mode: readSpeech(),
+          speed: readSpeed(),
+          quiet: readQuiet(),
+          reason: readReason(),
+        };
         if (SPEECH_MODES.includes(payload.mode)) next.mode = payload.mode;
         const sp = Number(payload.speed);
         if (Number.isFinite(sp) && sp >= 0.7 && sp <= 1.8) {
           next.speed = Math.round(sp * 100) / 100;
+        }
+        if (payload.reason && typeof payload.reason === "object") {
+          const cur = next.reason || readReason();
+          next.reason = {
+            mode: REASON_MODES.includes(payload.reason.mode) ? payload.reason.mode : cur.mode,
+            translate:
+              payload.reason.translate === undefined ? cur.translate : Boolean(payload.reason.translate),
+          };
         }
         if (payload.quiet && typeof payload.quiet === "object") {
           next.quiet = {
@@ -1007,6 +1073,40 @@ module.exports = {
               log("FAIL:", fsid);
               speak("Что-то пошло не так. Посмотри лог.", fsid, effectiveVoice(fsid), MAX_CHARS, "down");
             }
+            continue;
+          }
+
+          if (type === "session.reasoning.ended") {
+            const rsid = data.sessionID;
+            const rtext = String(data.text || "").trim();
+            const reason = readReason();
+            if (!rsid || !rtext || reason.mode === "off") continue;
+            if (readSpeech() === "silent" || inQuietHours()) {
+              log("SKIP: reason muted");
+              continue;
+            }
+            const rkey = "r:" + hash(rtext);
+            if (alreadySpoken(rkey)) {
+              log("SKIP: reason duplicate");
+              continue;
+            }
+            const rvoice = effectiveVoice(rsid);
+            const rgender = genderOf(rvoice);
+            let out = "";
+            if (reason.mode === "brief") {
+              out = (await llmReason(rtext, rgender, reason.translate, rsid)) || summarize(rtext) || "";
+            } else if (reason.translate) {
+              out = (await translateRu(rtext.slice(0, 3000))) || "";
+            } else {
+              out = rtext.slice(0, 1200);
+            }
+            out = agreeGender(out, rgender).trim();
+            if (!out) {
+              log("SKIP: reason empty");
+              continue;
+            }
+            log("REASON:", rsid, reason.mode, reason.translate ? "tr" : "-", out.length);
+            speak(out, rsid, rvoice, reason.mode === "brief" ? MAX_CHARS : FULL_MAX_CHARS, null);
             continue;
           }
 
