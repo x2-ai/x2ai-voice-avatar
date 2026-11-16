@@ -210,6 +210,18 @@ function createView(ctx) {
   ].join(";");
   box.appendChild(gear);
 
+  // Вторая кнопка — сменить персонажа (то же, что кнопка в панели).
+  const swapBtn = document.createElement("button");
+  swapBtn.type = "button";
+  swapBtn.textContent = "↻";
+  swapBtn.title = "Следующий персонаж из пака";
+  swapBtn.style.cssText = gear.style.cssText.replace("top:2px", "top:28px");
+  swapBtn.onclick = (ev) => {
+    ev.stopPropagation();
+    nextCharacter();
+  };
+  box.appendChild(swapBtn);
+
   const panel = document.createElement("div");
   panel.style.cssText = [
     "position:absolute",
@@ -1052,6 +1064,8 @@ function createView(ctx) {
     panel.style.display = panelOpen ? "block" : "none";
     gear.style.display = panelOpen ? "none" : "";
     gear.style.opacity = panelOpen ? "1" : "";
+    swapBtn.style.display = panelOpen ? "none" : "";
+    swapBtn.style.opacity = panelOpen ? "1" : "";
   };
   gear.onclick = (ev) => {
     ev.stopPropagation();
@@ -1066,9 +1080,13 @@ function createView(ctx) {
   document.addEventListener("mousedown", onDocDown, true);
   box.onmouseenter = () => {
     gear.style.opacity = "1";
+    swapBtn.style.opacity = "1";
   };
   box.onmouseleave = () => {
-    if (!panelOpen) gear.style.opacity = "0";
+    if (!panelOpen) {
+      gear.style.opacity = "0";
+      swapBtn.style.opacity = "0";
+    }
   };
 
   // Персонаж показывается только в реальном чате: на Home и в черновике
