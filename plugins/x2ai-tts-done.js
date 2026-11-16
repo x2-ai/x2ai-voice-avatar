@@ -424,7 +424,7 @@ function summarize(raw) {
 }
 
 // Убирает повторы и почти-повторы предложений.
-function dedupeSentences(text) {
+function dedupeSentences(text, maxSentences = 3) {
   const norm = (s) =>
     s
       .toLowerCase()
@@ -432,16 +432,17 @@ function dedupeSentences(text) {
       .replace(/\s+/g, " ")
       .trim();
   const out = [];
+  const norms = [];
   for (const raw of String(text).split(/(?<=[.!?…])\s+/)) {
     const s = raw.trim();
     const n = norm(s);
     if (n.length < 3) continue;
-    const dup = out.some((o) => {
-      const on = norm(o);
-      return on === n || on.includes(n) || n.includes(on);
-    });
-    if (!dup) out.push(s);
-    if (out.length >= 3) break;
+    const dup = norms.some((on) => on === n || on.includes(n) || n.includes(on));
+    if (!dup) {
+      out.push(s);
+      norms.push(n);
+    }
+    if (out.length >= maxSentences) break;
   }
   return out.join(" ");
 }
@@ -550,7 +551,13 @@ function speakTera(text, sid, forced) {
 
 function speak(text, sid, voice, maxChars = MAX_CHARS) {
   const limit = Math.max(maxChars || MAX_CHARS, MAX_CHARS);
-  const toSay = (text.length > limit ? text.slice(0, limit) : text).replace(/\s+/g, " ").trim();
+  let toSay = text;
+  if (toSay.length > limit) {
+    const cut = toSay.slice(0, limit);
+    const m = cut.match(/[\s\S]*[.!?…]/);
+    toSay = m ? m[0] : cut;
+  }
+  toSay = toSay.replace(/\s+/g, " ").trim();
   if (!toSay) return;
   log("SPEAK:", toSay.slice(0, 100));
   if (ENGINE === "say") return speakSay(toSay);
@@ -845,7 +852,7 @@ module.exports = {
           }
           const source =
             mode === "full"
-              ? dedupeSentences(clean).slice(0, 4000)
+              ? dedupeSentences(clean, 400).slice(0, 4000)
               : (await llmSummary(raw, gender)) || summarize(raw) || clean.slice(0, 300);
           const summary = agreeGender(source, gender);
           log("GENDER:", gender || "-", voice, "mode:", mode);
