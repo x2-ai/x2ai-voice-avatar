@@ -1,2 +1,5 @@
 __pycache__/
 *.pyc
+# Аниме-пак — чужие ассеты (LivLiv), в репозиторий не кладём.
+sprites.json
+custom/
