@@ -1,6 +1,2 @@
-clicks.json
-sprites.json
-plugins/x2ai-avatar/gui-experimental.cjs
 __pycache__/
 *.pyc
-custom/
