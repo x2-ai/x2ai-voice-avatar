@@ -591,31 +591,296 @@ function dedupeSentences(text, maxSentences = 3) {
 // Если модель ответила не по-русски — один раз просим перевод.
 async function translateRu(text) {
   if (!genText) return "";
-  const src = text.slice(0, 3000);
+  try {
+    const out = await Promise.race([
+      genText({
+        model: sumModel(),
+        prompt: `Переведи на русский язык, сохранив смысл. Только перевод, без пояснений:\n\n${text.slice(0, 3000)}`,
+      }),
+      new Promise((r) => setTimeout(() => r(null), LLM_TIMEOUT)),
+    ]);
+    const t = String(out?.text || "")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (cyrRatio(t) < 0.5) {
+      log("TR: still not russian");
+      return "";
+    }
+    log("TR:", t.slice(0, 100));
+    return t;
+  } catch (e) {
+    log("TR_ERR", e?.message);
+    return "";
+  }
+}
+
+// Когда звать пользователя по имени: первое сообщение в чате — всегда,
+// дальше пауза 4–6 пересказов без имени и не чаще одного раза в 10 минут.
+const NAME_GAP_MIN = 4;
+const NAME_GAP_MAX = 6;
+const NAME_COOLDOWN_MS = 10 * 60 * 1000;
+const nameGreeted = new Set();
+let nameSkip = 0;
+let nameLastAt = 0;
+
+function shouldUseName(sid) {
+  const now = Date.now();
+  if (sid && !nameGreeted.has(sid)) {
+    nameGreeted.add(sid);
+    nameSkip = NAME_GAP_MIN + Math.floor(Math.random() * (NAME_GAP_MAX - NAME_GAP_MIN + 1));
+    nameLastAt = now;
+    return true;
+  }
+  if (nameSkip > 0) {
+    nameSkip--;
+    return false;
+  }
+  if (now - nameLastAt < NAME_COOLDOWN_MS) return false;
+  nameSkip = NAME_GAP_MIN + Math.floor(Math.random() * (NAME_GAP_MAX - NAME_GAP_MIN + 1));
+  nameLastAt = now;
+  return true;
+}
+
+// Имя в рассуждениях: свой счётчик, отдельный от пересказа ответа.
+const R_NAME_GAP_MIN = 5;
+const R_NAME_GAP_MAX = 8;
+const R_NAME_COOLDOWN_MS = 10 * 60 * 1000;
+const reasonNameSkip = { left: 0 };
+let reasonNameLastAt = 0;
+
+function shouldUseReasonName() {
+  const now = Date.now();
+  if (reasonNameSkip.left > 0) {
+    reasonNameSkip.left--;
+    return false;
+  }
+  if (now - reasonNameLastAt < R_NAME_COOLDOWN_MS) return false;
+  reasonNameSkip.left = R_NAME_GAP_MIN + Math.floor(Math.random() * (R_NAME_GAP_MAX - R_NAME_GAP_MIN + 1));
+  reasonNameLastAt = now;
+  return true;
+}
+
+// Пересказ моделью (бесплатной, без сессии). Пустая строка = не получилось.
+async function llmSummary(raw, gender, user = readUser(), sid = "", style = "") {
+  if (!LLM_SUMMARY || !genText) return "";
+  const src = stripCode(raw).slice(0, 6000).trim();
+  if (src.length < 40) return "";
+  // Род ассистента (голос) и род пользователя — разные вещи: первый про «я», второй про «ты».
+  const userName = (user && user.name) || "";
+  const userGender = (user && user.gender) || "";
+  const ABOUT_USER =
+    userGender === "f"
+      ? "Пользователь — женщина. Обращаясь к ней, используй женский род: «ты проверила», «ты попросила», «ты права», «ты уверена»."
+      : userGender === "m"
+        ? "Пользователь — мужчина. Обращаясь к нему, используй мужской род: «ты проверил», «ты попросил», «ты прав», «ты уверен»."
+        : "Род пользователя не указан: обращайся к нему нейтрально, избегая форм прошедшего времени во втором лице.";
+  const useName = Boolean(userName) && shouldUseName(sid);
+  if (userName) log("NAME:", useName ? "yes" : "no");
+  const NAME_RULE = useName
+    ? `Один раз, в самом начале, обратись к пользователю по имени: ${userName}. Дальше имя не повторяй.`
+    : "Не называй пользователя по имени, обращайся без него.";
+  const GENDER_RULE = {
+    f: `Пиши от лица ассистента. О себе (первое лицо, «я») говори в женском роде: «я проверила», «я сделала», «я нашла», «я уверена». Всегда ставь местоимение «я» перед таким глаголом: «я оставила имя», а не «оставил имя». ${ABOUT_USER}`,
+    m: `Пиши от лица ассистента. О себе (первое лицо, «я») говори в мужском роде: «я проверил», «я сделал», «я нашёл», «я уверен». Всегда ставь местоимение «я» перед таким глаголом: «я оставил имя», а не «оставила имя». ${ABOUT_USER}`,
+  };
+  const BRIEF_RULE =
+    style === "long"
+      ? "Текст длинный: оставь только итог — 1–2 коротких предложения, без перечислений деталей."
+      : "";
   const prompt = [
-    "Переведи текст на русский язык.",
-    "Ответь только переводом, без пояснений и без исходного текста.",
-    "Если текст уже по-русски, верни его без изменений.",
+    "Сожми текст в 1–3 коротких предложения по-русски для озвучки вслух.",
+    "Код, команды, пути к файлам, имена переменных и ссылки не произноси — только суть.",
+    "Только суть: что сделано и зачем это нужно. Без путей, имён файлов, команд, кода, цифр, markdown и списков.",
+    "Пиши связной прозой, без вступлений вроде «в этом ответе».",
+    "Пиши только по-русски. Английские слова и термины переводи, латиницу оставляй только в крайнем случае.",
+    "Каждое предложение — новая мысль. Не повторяй одну и ту же фразу разными словами.",
+    GENDER_RULE[gender] ||
+      `Пиши безлично или в третьем лице, избегая форм прошедшего времени от первого лица. ${ABOUT_USER}`,
+    ...(NAME_RULE ? [NAME_RULE] : []),
+    ...(BRIEF_RULE ? [BRIEF_RULE] : []),
     "",
     src,
   ].join("\n");
-  const models = [sumModel(), { providerID: "opencode-go", id: "beam-free" }, { providerID: "opencode", id: "beam-free" }];
-  let best = "";
-  for (const model of models) {
-    try {
-      const out = await Promise.race([
-        genText({ model, prompt }),
-        new Promise((r) => setTimeout(() => r(null), Math.max(LLM_TIMEOUT, 20000))),
-      ]);
-      const candidate = String(out?.text || "").replace(/\s+/g, " ").trim();
-      if (!candidate) continue;
-      if (cyrRatio(candidate) > cyrRatio(best)) best = candidate;
-      if (cyrRatio(candidate) >= 0.5) return candidate;
-    } catch (e) {
-      log("TRANSLATE_ERR", e?.message);
+  try {
+    const out = await Promise.race([
+      genText({ model: sumModel(), prompt }),
+      new Promise((r) => setTimeout(() => r(null), LLM_TIMEOUT)),
+    ]);
+    let text = String(out?.text || "")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (!text) {
+      log("LLM: empty");
+      return "";
     }
+    if (cyrRatio(text) < 0.5) {
+      log("LLM: not russian, translating");
+      const ru = await translateRu(text);
+      if (!ru) return "";
+      text = ru;
+    }
+    log("LLM:", text.slice(0, 120));
+    return dedupeSentences(text).slice(0, 400);
+  } catch (e) {
+    log("LLM_ERR", e?.message);
+    return "";
   }
-  return cyrRatio(best) >= 0.5 ? best : "";
+}
+
+// Рассуждения модели: одним запросом — перевод (если нужно) и сжатие (если «кратко»).
+async function llmReason(raw, gender, translate, sid, user = readUser()) {
+  if (!genText) return "";
+  const src = stripCode(String(raw || "")).replace(/\s+/g, " ").trim().slice(0, 6000);
+  if (src.length < 30) return "";
+  const task = translate
+    ? "Переведи рассуждение модели на русский и сожми его в 1–2 коротких предложения для озвучки вслух."
+    : "Сожми рассуждение модели в 1–2 коротких предложения по-русски для озвучки вслух.";
+  const style =
+    gender === "f"
+      ? "О себе говори в женском роде: «я проверила», «я подумала», всегда с местоимением «я»."
+      : gender === "m"
+        ? "О себе говори в мужском роде: «я проверил», «я подумал», всегда с местоимением «я»."
+        : "Пиши безлично.";
+  const userGender = (user && user.gender) || "";
+  const aboutUser =
+    userGender === "f"
+      ? "Если упоминаешь пользователя, говори о ней в женском роде: «ты попросила», «ты права»."
+      : userGender === "m"
+        ? "Если упоминаешь пользователя, говори о нём в мужском роде: «ты попросил», «ты прав»."
+        : "Если упоминаешь пользователя, говори нейтрально, без форм прошедшего времени во втором лице.";
+  const userName = (user && user.name) || "";
+  const useName = Boolean(userName) && shouldUseReasonName();
+  const nameRule = userName
+    ? `Где речь о пользователе, называй его по имени: ${userName} (вместо слов «пользователь», «user»), один раз и с правильным родом.`
+    : "Слова «user» и «пользователь» заменяй на «пользователь» только по-русски, без английских вставок.";
+  const prompt = [
+    task,
+    "Без вступлений вроде «вот краткое содержание». Только суть.",
+    "Весь ответ — только по-русски: никаких английских слов и обрывков вроде «user asks».",
+    "Код, команды и пути к файлам не произноси.",
+    style,
+    aboutUser,
+    ...(nameRule ? [nameRule] : []),
+    "Текст:",
+    src,
+  ].join("\n");
+  if (userName) log("R_NAME:", useName ? "yes" : "no");
+  try {
+    const out = await Promise.race([
+      genText({ model: sumModel(), prompt }),
+      new Promise((r) => setTimeout(() => r(null), Math.max(LLM_TIMEOUT, 25000))),
+    ]);
+    let text = String(out?.text || "").replace(/\s+/g, " ").trim();
+    if (!text) return "";
+    // Модель иногда оставляет английские обрывки — добиваем переводом.
+    if (/[A-Za-z]{2,}/.test(text) && cyrRatio(text) < 0.9) {
+      log("REASON: latin left, translating");
+      const ru = await translateRu(text);
+      if (ru) text = ru;
+    }
+    if (userName && /\b(user|пользователь)\b/i.test(text)) {
+      text = text.replace(/\b(user|пользователь)\b/gi, userName);
+    }
+    log("REASON_LLM:", text.slice(0, 120));
+    return text.slice(0, 400);
+  } catch (e) {
+    log("REASON_ERR", e?.message);
+    return "";
+  }
+}
+
+// Дедуп рассуждений: одна и та же мысль не читается дважды.
+// Файл общий для всех копий плагина — иначе каждая читает своё.
+const reasonSeen = new Map();
+const REASON_MARK = "/tmp/x2ai-reason.mark";
+
+// Захват мысли через файл: копии плагина не должны читать одно и то же.
+const REASON_CLAIMS = "/tmp/x2ai-reason-claims";
+function claimReason(key) {
+  try {
+    fs.mkdirSync(REASON_CLAIMS, { recursive: true });
+  } catch (e) {}
+  const file = `${REASON_CLAIMS}/${key}`;
+  try {
+    fs.writeFileSync(file, String(Date.now()), { flag: "wx" });
+    return true;
+  } catch (e) {
+    try {
+      const at = Number(fs.readFileSync(file, "utf8")) || 0;
+      if (Date.now() - at > 180000) {
+        fs.writeFileSync(file, String(Date.now()));
+        return true;
+      }
+    } catch (e2) {}
+    return false;
+  }
+}
+
+function reasonSpokenRecently(key) {
+  try {
+    const raw = fs.readFileSync(REASON_MARK, "utf8").split("\n");
+    return raw[1] === key && Date.now() - Number(raw[0]) < 180000;
+  } catch (e) {
+    return false;
+  }
+}
+
+function markReasonSpoken(key) {
+  try {
+    fs.writeFileSync(REASON_MARK, `${Date.now()}\n${key}`);
+  } catch (e) {}
+}
+
+// Озвучка рассуждений: вызывается после паузы в потоке, чтобы не перечитывать куски.
+const reasonTimers = new Map();
+
+async function speakReason(rsid, rtext) {
+  const reason = readReason();
+  if (reason.mode === "off") return;
+  if (readSpeech() === "silent" || inQuietHours()) {
+    log("SKIP: reason muted");
+    return;
+  }
+  const norm = String(rtext).replace(/\s+/g, " ").trim().slice(0, 400);
+  const rkey = hash(norm);
+  if (!claimReason(rkey) || Date.now() - (reasonSeen.get(rkey) || 0) < 180000) {
+    log("SKIP: reason duplicate");
+    return;
+  }
+  const rvoice = effectiveVoice(rsid);
+  const rgender = genderOf(rvoice);
+  let out = "";
+  if (reason.mode === "brief") {
+    out = (await llmReason(rtext, rgender, reason.translate, rsid)) || summarize(rtext) || "";
+  } else if (reason.translate) {
+    out = (await translateRu(rtext.slice(0, 3000))) || "";
+  }
+  // Модель не ответила: пробуем хотя бы перевод, иначе читаем очищенный исходник.
+  if (!out && reason.translate) {
+    out = (await translateRu(stripCode(rtext).slice(0, 1500))) || "";
+    if (out) log("REASON: fallback translate");
+  }
+  if (reason.translate && out && cyrRatio(out) < 0.5) {
+    const retry = await translateRu(out);
+    out = retry || "";
+  }
+  if (!out) {
+    if (reason.translate) {
+      log("SKIP: reason not translated");
+      return;
+    }
+    out = stripCode(rtext).slice(0, reason.mode === "brief" ? 300 : 1200);
+  }
+  out = agreeGender(out, rgender).trim();
+  if (!out) {
+    log("SKIP: reason empty");
+    return;
+  }
+  reasonSeen.set(rkey, Date.now());
+  markReasonSpoken(rkey);
+  if (reasonSeen.size > 500) reasonSeen.clear();
+  log("REASON:", rsid, reason.mode, reason.translate ? "tr" : "-", out.length);
+  speak(out, rsid, rvoice, reason.mode === "brief" ? MAX_CHARS : FULL_MAX_CHARS, "think", "reason");
 }
 
 function speakTera(text, sid, forced, emotion, kind) {
@@ -665,6 +930,11 @@ function speak(text, sid, voice, maxChars = MAX_CHARS, emotion = null, kind = nu
   }
   toSay = stripCode(toSay).replace(/\s+/g, " ").trim();
   if (!toSay) return;
+  // Страховка от английских обрывков: такое не озвучиваем.
+  if (cyrRatio(toSay) < 0.4 && toSay.length > 40) {
+    log("SKIP: not russian", toSay.slice(0, 60));
+    return;
+  }
   lastSpeak = { text: toSay, sid: sid || "", voice: voice || "", max: limit, emotion, kind };
   log("SPEAK:", toSay.slice(0, 100));
   if (ENGINE === "say") return speakSay(toSay);
@@ -1034,7 +1304,15 @@ module.exports = {
     try {
       console.warn("[x2ai-tts-done] setup subscribed, voice=%s", pickVoice());
     } catch (e) {}
+    // Плагин перезагружается на каждом шаге: без этого старые копии
+    // продолжали слушать события и говорили старым кодом.
+    if (globalThis.__x2aiTtsAbort) {
+      try {
+        globalThis.__x2aiTtsAbort.abort();
+      } catch (e) {}
+    }
     const ac = new AbortController();
+    globalThis.__x2aiTtsAbort = ac;
 
     (async () => {
       try {

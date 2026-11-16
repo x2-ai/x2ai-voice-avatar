@@ -114,6 +114,14 @@ function pingReset() {
 }
 
 function createView(ctx) {
+  // Слот может рендериться повторно: прежний вид надо погасить, иначе
+  // остаются его таймеры и подписки (двойные реплики, двойные пинги).
+  if (typeof globalThis.__x2aiAvatarTeardown === "function") {
+    try {
+      globalThis.__x2aiAvatarTeardown();
+    } catch (e) {}
+  }
+
   const root = document.createElement("div");
   // Нулевая высота: полоса не занимает места, персонаж висит поверх окна.
   root.style.cssText =
@@ -1650,6 +1658,23 @@ function createView(ctx) {
     );
   } catch (e) {
   }
+
+  const teardown = () => {
+    pingReset();
+    clearTimeout(blinkTimer);
+    clearTimeout(idleTimer);
+    clearTimeout(moodTimer);
+    clearTimeout(speakTimer);
+    clearTimeout(bridgeTimer);
+    clearInterval(sidePoll);
+    if (talkTimer) clearInterval(talkTimer);
+    if (typeof unsub === "function") {
+      try {
+        unsub();
+      } catch (e) {}
+    }
+  };
+  globalThis.__x2aiAvatarTeardown = teardown;
 
   root.destroy = () => {
     pingReset();
