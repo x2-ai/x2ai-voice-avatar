@@ -768,7 +768,7 @@ async function llmReason(raw, gender, translate, sid, user = readUser()) {
   try {
     const out = await Promise.race([
       genText({ model: sumModel(), prompt }),
-      new Promise((r) => setTimeout(() => r(null), LLM_TIMEOUT)),
+      new Promise((r) => setTimeout(() => r(null), Math.max(LLM_TIMEOUT, 25000))),
     ]);
     let text = String(out?.text || "").replace(/\s+/g, " ").trim();
     if (!text) return "";
@@ -790,7 +790,24 @@ async function llmReason(raw, gender, translate, sid, user = readUser()) {
 }
 
 // Дедуп рассуждений: одна и та же мысль не читается дважды.
+// Файл общий для всех копий плагина — иначе каждая читает своё.
 const reasonSeen = new Map();
+const REASON_MARK = "/tmp/x2ai-reason.mark";
+
+function reasonSpokenRecently(key) {
+  try {
+    const raw = fs.readFileSync(REASON_MARK, "utf8").split("\n");
+    return raw[1] === key && Date.now() - Number(raw[0]) < 180000;
+  } catch (e) {
+    return false;
+  }
+}
+
+function markReasonSpoken(key) {
+  try {
+    fs.writeFileSync(REASON_MARK, `${Date.now()}\n${key}`);
+  } catch (e) {}
+}
 
 // Озвучка рассуждений: вызывается после паузы в потоке, чтобы не перечитывать куски.
 const reasonTimers = new Map();
@@ -804,7 +821,7 @@ async function speakReason(rsid, rtext) {
   }
   const norm = String(rtext).replace(/\s+/g, " ").trim().slice(0, 400);
   const rkey = hash(norm);
-  if (Date.now() - (reasonSeen.get(rkey) || 0) < 180000) {
+  if (reasonSpokenRecently(rkey) || Date.now() - (reasonSeen.get(rkey) || 0) < 180000) {
     log("SKIP: reason duplicate");
     return;
   }
@@ -816,7 +833,11 @@ async function speakReason(rsid, rtext) {
   } else if (reason.translate) {
     out = (await translateRu(rtext.slice(0, 3000))) || "";
   }
-  // Модель не ответила — читаем хотя бы очищенный исходник, но не молчим.
+  // Модель не ответила: пробуем хотя бы перевод, иначе читаем очищенный исходник.
+  if (!out && reason.translate) {
+    out = (await translateRu(stripCode(rtext).slice(0, 1500))) || "";
+    if (out) log("REASON: fallback translate");
+  }
   if (!out) out = stripCode(rtext).slice(0, reason.mode === "brief" ? 300 : 1200);
   out = agreeGender(out, rgender).trim();
   if (!out) {
@@ -824,6 +845,7 @@ async function speakReason(rsid, rtext) {
     return;
   }
   reasonSeen.set(rkey, Date.now());
+  markReasonSpoken(rkey);
   if (reasonSeen.size > 500) reasonSeen.clear();
   log("REASON:", rsid, reason.mode, reason.translate ? "tr" : "-", out.length);
   speak(out, rsid, rvoice, reason.mode === "brief" ? MAX_CHARS : FULL_MAX_CHARS, "think", "reason");
