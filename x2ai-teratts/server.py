@@ -347,7 +347,12 @@ def main() -> int:
                 continue
             current["proc"] = proc
             current["item"] = item
-            announce_playback(item["audio_s"], item.get("sid", ""), item.get("kind", ""))
+            announce_playback(
+                item["audio_s"],
+                item.get("sid", ""),
+                item.get("kind", ""),
+                item.get("text", ""),
+            )
             proc.wait()
             current["proc"] = None
             current["item"] = None
@@ -364,7 +369,9 @@ def main() -> int:
 
     threading.Thread(target=player_worker, daemon=True).start()
 
-    def announce_playback(audio_s: float, sid: str = "", kind: str = "") -> None:
+    def announce_playback(
+        audio_s: float, sid: str = "", kind: str = "", text: str = ""
+    ) -> None:
         """Сообщить персонажу в окне, что звук пошёл: файл читает GUI-плагин.
 
         sid нужен, чтобы губами двигал только тот чат, чья это озвучка.
@@ -378,6 +385,7 @@ def main() -> int:
                         "at": time.time(),
                         "sid": sid,
                         "kind": kind,
+                        "text": text[:400],
                     }
                 ),
                 encoding="utf-8",
@@ -503,7 +511,13 @@ def main() -> int:
                         log("reason already queued")
                         conn.sendall(json.dumps({"ok": True, "queued": False}).encode() + b"\n")
                         continue
-                item = {"wav": wav, "audio_s": audio_s, "sid": sid, "kind": kind}
+                item = {
+                    "wav": wav,
+                    "audio_s": audio_s,
+                    "sid": sid,
+                    "kind": kind,
+                    "text": text,
+                }
                 try:
                     play_q.put_nowait(item)
                 except queue.Full:

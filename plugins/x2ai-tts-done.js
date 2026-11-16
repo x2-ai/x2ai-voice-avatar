@@ -1085,6 +1085,7 @@ function startBridge(ctx) {
         ms: left,
         sid: state.sid || "",
         kind: state.kind || "",
+        text: state.text || "",
         voices: readVoices(),
         charVoices: readCharVoices(),
       });

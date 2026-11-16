@@ -1336,7 +1336,48 @@ function createView(ctx) {
   let blinkTimer = null;
   let speakTimer = null;
 
-  const startSpeaking = (ms, kind) => {
+  // Артикуляция по тексту: гласные дают свою форму рта, согласные — закрытый.
+  const VOWEL_FRAME = {
+    а: "wide",
+    о: "open",
+    у: "round",
+    ы: "half",
+    э: "half",
+    е: "half",
+    ё: "half",
+    и: "half",
+    ю: "round",
+    я: "wide",
+  };
+  const charWeight = (ch) => (VOWEL_FRAME[ch] ? 1.7 : /[а-яё]/.test(ch) ? 0.9 : 0.5);
+
+  const buildTalkPlan = (text, ms) => {
+    const chars = String(text || "")
+      .toLowerCase()
+      .replace(/[^а-яё\s]/g, "")
+      .split("");
+    if (!chars.length) return null;
+    const total = chars.reduce((acc, ch) => acc + charWeight(ch), 0) || 1;
+    return chars.map((ch) => ({
+      frame: VOWEL_FRAME[ch] || "closed",
+      delay: Math.max(45, Math.round((ms * charWeight(ch)) / total)),
+    }));
+  };
+
+  let talkTimeout = null;
+  const runPlan = (plan, thinking) => {
+    let i = 0;
+    const step = () => {
+      if (!speaking || i >= plan.length) return;
+      const item = plan[i++];
+      img.src = frame(voice, item.frame);
+      box.style.transform = `translateY(${i % 2 ? -1 : 0}px) rotate(${i % 2 ? -0.12 : 0.06}deg)`;
+      talkTimeout = setTimeout(step, thinking ? item.delay * 1.4 : item.delay);
+    };
+    step();
+  };
+
+  const startSpeaking = (ms, kind, text) => {
     speaking = true;
     const thinking = kind === "reason";
     bubble.style.display = thinking ? "block" : "none";
@@ -1347,14 +1388,23 @@ function createView(ctx) {
     }
     resetIdle();
     if (talkTimer) clearInterval(talkTimer);
+    if (talkTimeout) clearTimeout(talkTimeout);
     if (speakTimer) clearTimeout(speakTimer);
-    speakTimer = setTimeout(stopSpeaking, (ms > 0 ? ms : 9000) + 500);
-    talkTimer = setInterval(() => {
-      const state = TALK[talkStep % TALK.length];
-      img.src = frame(voice, state);
-      talkStep++;
-      box.style.transform = `translateY(${talkStep % 2 ? -1 : 0}px) rotate(${talkStep % 2 ? -0.12 : 0.06}deg)`;
-    }, thinking ? 170 : 110);
+    const total = ms > 0 ? ms : 9000;
+    speakTimer = setTimeout(stopSpeaking, total + 500);
+
+    const plan = buildTalkPlan(text, total);
+    if (plan) {
+      runPlan(plan, thinking);
+    } else {
+      // Текста нет — просто шевелим ртом, как раньше.
+      talkTimer = setInterval(() => {
+        const state = TALK[talkStep % TALK.length];
+        img.src = frame(voice, state);
+        talkStep++;
+        box.style.transform = `translateY(${talkStep % 2 ? -1 : 0}px) rotate(${talkStep % 2 ? -0.12 : 0.06}deg)`;
+      }, thinking ? 170 : 110);
+    }
   };
 
   const stopSpeaking = () => {
@@ -1362,7 +1412,9 @@ function createView(ctx) {
     bubble.style.display = "none";
     box.style.filter = "";
     if (talkTimer) clearInterval(talkTimer);
+    if (talkTimeout) clearTimeout(talkTimeout);
     talkTimer = null;
+    talkTimeout = null;
     talkStep = 0;
     box.style.transform = "";
     img.src = frame(voice, "closed");
@@ -1466,7 +1518,7 @@ function createView(ctx) {
             if (state.ms > 0) stats.ms += state.ms;
             saveStats();
             refreshBadge();
-            startSpeaking(state.ms > 0 ? state.ms : 9000, state.kind || "");
+            startSpeaking(state.ms > 0 ? state.ms : 9000, state.kind || "", state.text || "");
           }
         } else {
           bridgeSpeaking = false;
