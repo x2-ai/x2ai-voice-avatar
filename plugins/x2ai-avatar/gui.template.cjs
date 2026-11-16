@@ -213,6 +213,17 @@ function createView(ctx) {
 
   // Раскрывающиеся блоки настроек: по умолчанию свёрнуты.
   const sectionOpen = { pack: false, voice: false, speech: false, model: false };
+
+  // Позиции прокрутки списков: панель перерисовывается целиком, поэтому
+  // запоминаем offset и возвращаем его, иначе список прыгает наверх.
+  const scrollMemory = { pack: 0, voice: 0, speech: 0, model: 0 };
+  const keepScroll = (el, key) => {
+    el.scrollTop = scrollMemory[key] || 0;
+    el.onscroll = () => {
+      scrollMemory[key] = el.scrollTop;
+    };
+    return el;
+  };
   const collapsible = (titleText, key, parent) => {
     const wrap = document.createElement("div");
     wrap.style.cssText = `margin-top:${parent && parent !== panel ? 0 : 8}px`;
@@ -270,109 +281,10 @@ function createView(ctx) {
       playClip(packClips && packClips[pick || voice]);
     };
 
-    // Общая рамка для настроек: видно, что блоки относятся к одному разделу.
-    const settings = document.createElement("div");
-    settings.style.cssText = [
-      "display:flex",
-      "flex-direction:column",
-      "gap:6px",
-      "box-sizing:border-box",
-      "margin-top:0",
-      "padding:6px",
-      "border:1px solid rgba(255,255,255,.12)",
-      "border-radius:9px",
-      "background:rgba(255,255,255,.02)",
-    ].join(";");
-    panel.appendChild(settings);
-
-    const pBody = collapsible("Пак персонажей", "pack", settings);
-
-    const select = document.createElement("select");
-    select.style.cssText = [
-      "display:block",
-      "box-sizing:border-box",
-      "width:100%",
-      "margin:0",
-      "padding:6px 8px",
-      "border-radius:7px",
-      "cursor:pointer",
-      "font:inherit",
-      "font-size:12px",
-      "color:inherit",
-      "border:1px solid rgba(255,255,255,.16)",
-      "background:rgba(255,255,255,.06)",
-    ].join(";");
-    for (const name of Object.keys(PACKS)) {
-      const count = Object.keys(PACKS[name] || {}).length;
-      const opt = document.createElement("option");
-      opt.value = name;
-      opt.textContent = `${PACK_NAMES[name] || name} · ${count}`;
-      opt.selected = name === activePack;
-      select.appendChild(opt);
-    }
-    select.onchange = (ev) => {
-      ev.stopPropagation();
-      switchPack(select.value);
-      renderPanel();
-    };
-    pBody.appendChild(select);
-
-    const nextBtn = document.createElement("button");
-    nextBtn.type = "button";
-    nextBtn.textContent = "↻ Следующий персонаж из пака";
-    nextBtn.style.cssText = [
-      "display:block",
-      "width:100%",
-      "margin:0 0 10px",
-      "padding:7px 8px",
-      "border-radius:7px",
-      "cursor:pointer",
-      "font:inherit",
-      "font-size:12px",
-      "font-weight:600",
-      "color:inherit",
-      "text-align:center",
-      "border:1px solid rgba(120,180,255,.6)",
-      "background:rgba(80,130,220,.18)",
-    ].join(";");
-    nextBtn.onclick = (ev) => {
-      ev.stopPropagation();
-      nextCharacter();
-      renderPanel();
-    };
-    settings.appendChild(nextBtn);
-
-    const rule = document.createElement("hr");
-    rule.style.cssText = "border:none;border-top:1px solid rgba(255,255,255,.12);margin:0 0 2px";
-    settings.appendChild(rule);
-
-    const vBody = collapsible("Голос персонажа", "voice", settings);
-
+    // Подписи голоса и общая строка-кнопка для всех списков панели.
     const labelOf = (id) => {
       const found = (voiceCatalog || []).find((v) => v.id === id);
       return found ? found.label : id;
-    };
-    const curVoice = charVoices[voice] || voice;
-
-    const vCur = document.createElement("div");
-    vCur.textContent = `сейчас: ${labelOf(curVoice)}`;
-    vCur.style.cssText = "font-size:11px;opacity:.7;margin-bottom:6px";
-    vBody.appendChild(vCur);
-
-    const vList = document.createElement("div");
-    vList.style.cssText = "max-height:132px;overflow-y:auto;display:flex;flex-direction:column;gap:4px";
-    vBody.appendChild(vList);
-
-    const bindVoice = (id) => {
-      // Пример голоса звучит сразу, не дожидаясь ответа моста.
-      playClip((LINES.samples && (LINES.samples[id] || LINES.samples[voice])) || null);
-      bridge("/charvoice", { charId: voice, voice: id })
-        .then((out) => {
-          charVoices = (out && out.charVoices) || {};
-          if (currentSid) bridge("/voice", { sid: currentSid, voice: charVoice(voice) }).catch(() => {});
-          renderPanel();
-        })
-        .catch(() => {});
     };
 
     const vRow = (text, active, onClick, extra) => {
@@ -407,6 +319,91 @@ function createView(ctx) {
       return row;
     };
 
+    // Общая рамка для настроек: видно, что блоки относятся к одному разделу.
+    const settings = document.createElement("div");
+    settings.style.cssText = [
+      "display:flex",
+      "flex-direction:column",
+      "gap:6px",
+      "box-sizing:border-box",
+      "margin-top:0",
+      "padding:6px",
+      "border:1px solid rgba(255,255,255,.12)",
+      "border-radius:9px",
+      "background:rgba(255,255,255,.02)",
+    ].join(";");
+    panel.appendChild(settings);
+
+    const pBody = collapsible("Пак персонажей", "pack", settings);
+
+    // Список паков — кнопки, как в остальных блоках (со скроллом на будущее).
+    const pList = keepScroll(document.createElement("div"), "pack");
+    pList.style.cssText = "max-height:132px;overflow-y:auto;display:flex;flex-direction:column;gap:4px";
+    for (const name of Object.keys(PACKS)) {
+      const count = Object.keys(PACKS[name] || {}).length;
+      pList.appendChild(
+        vRow(`${PACK_NAMES[name] || name} · ${count}`, name === activePack, () => {
+          switchPack(name);
+          renderPanel();
+        }),
+      );
+    }
+    pBody.appendChild(pList);
+
+    const nextBtn = document.createElement("button");
+    nextBtn.type = "button";
+    nextBtn.textContent = "↻ Следующий персонаж из пака";
+    nextBtn.style.cssText = [
+      "display:block",
+      "width:100%",
+      "margin:0 0 10px",
+      "padding:7px 8px",
+      "border-radius:7px",
+      "cursor:pointer",
+      "font:inherit",
+      "font-size:12px",
+      "font-weight:600",
+      "color:inherit",
+      "text-align:center",
+      "border:1px solid rgba(120,180,255,.6)",
+      "background:rgba(80,130,220,.18)",
+    ].join(";");
+    nextBtn.onclick = (ev) => {
+      ev.stopPropagation();
+      nextCharacter();
+      renderPanel();
+    };
+    settings.appendChild(nextBtn);
+
+    const rule = document.createElement("hr");
+    rule.style.cssText = "border:none;border-top:1px solid rgba(255,255,255,.12);margin:0 0 2px";
+    settings.appendChild(rule);
+
+    const vBody = collapsible("Голос персонажа", "voice", settings);
+
+    const curVoice = charVoices[voice] || voice;
+
+    const vCur = document.createElement("div");
+    vCur.textContent = `сейчас: ${labelOf(curVoice)}`;
+    vCur.style.cssText = "font-size:11px;opacity:.7;margin-bottom:6px";
+    vBody.appendChild(vCur);
+
+    const vList = keepScroll(document.createElement("div"), "voice");
+    vList.style.cssText = "max-height:132px;overflow-y:auto;display:flex;flex-direction:column;gap:4px";
+    vBody.appendChild(vList);
+
+    const bindVoice = (id) => {
+      // Пример голоса звучит сразу, не дожидаясь ответа моста.
+      playClip((LINES.samples && (LINES.samples[id] || LINES.samples[voice])) || null);
+      bridge("/charvoice", { charId: voice, voice: id })
+        .then((out) => {
+          charVoices = (out && out.charVoices) || {};
+          if (currentSid) bridge("/voice", { sid: currentSid, voice: charVoice(voice) }).catch(() => {});
+          renderPanel();
+        })
+        .catch(() => {});
+    };
+
     if (!voiceCatalog) {
       const loading = document.createElement("div");
       loading.textContent = "загружаю голоса…";
@@ -434,36 +431,12 @@ function createView(ctx) {
 
     // Режим озвучки: полное чтение ответа, пересказ или тишина.
     const sBody = collapsible("Озвучка ответа", "speech", settings);
-    const sSelect = document.createElement("select");
-    sSelect.style.cssText = [
-      "display:block",
-      "box-sizing:border-box",
-      "width:100%",
-      "margin:0",
-      "padding:6px 8px",
-      "border-radius:7px",
-      "cursor:pointer",
-      "font:inherit",
-      "font-size:12px",
-      "color:inherit",
-      "border:1px solid rgba(255,255,255,.16)",
-      "background:rgba(255,255,255,.06)",
-    ].join(";");
     const SPEECH_LABELS = [
       ["full", "Полное прочтение ответа"],
       ["summary", "Пересказ"],
       ["silent", "Молчание"],
     ];
-    for (const [value, text] of SPEECH_LABELS) {
-      const opt = document.createElement("option");
-      opt.value = value;
-      opt.textContent = text;
-      opt.selected = value === (speechMode || "summary");
-      sSelect.appendChild(opt);
-    }
-    sSelect.onchange = (ev) => {
-      ev.stopPropagation();
-      const mode = sSelect.value;
+    const setSpeech = (mode) => {
       speechMode = mode;
       bridge("/speech", { mode })
         .then((out) => {
@@ -472,7 +445,12 @@ function createView(ctx) {
         })
         .catch(() => renderPanel());
     };
-    sBody.appendChild(sSelect);
+    const sList = keepScroll(document.createElement("div"), "speech");
+    sList.style.cssText = "max-height:132px;overflow-y:auto;display:flex;flex-direction:column;gap:4px";
+    for (const [value, text] of SPEECH_LABELS) {
+      sList.appendChild(vRow(text, value === (speechMode || "summary"), () => setSpeech(value)));
+    }
+    sBody.appendChild(sList);
     if (speechMode === "silent") {
       const note = document.createElement("div");
       note.textContent = "озвучки не будет";
@@ -493,7 +471,7 @@ function createView(ctx) {
     if (speechMode === "summary") {
     const mBody = collapsible("Модель пересказа", "model", settings);
 
-    const mList = document.createElement("div");
+    const mList = keepScroll(document.createElement("div"), "model");
     mList.style.cssText = "max-height:150px;overflow-y:auto;display:flex;flex-direction:column;gap:4px";
     const mNote = document.createElement("div");
     mNote.textContent = "загружаю…";
