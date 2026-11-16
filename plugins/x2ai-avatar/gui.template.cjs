@@ -340,7 +340,9 @@ function createView(ctx) {
     saveLocal(currentSid, next);
     if (currentSid) bridge("/voice", { sid: currentSid, voice: charVoice(next) }).catch(() => {});
     // Реплики есть по голосу, а не по id персонажа.
-    playClip(pickClip(LINES.lines && (LINES.lines[charVoice(next)] || LINES.lines[next])));
+    const line = pickClip(LINES.lines && (LINES.lines[charVoice(next)] || LINES.lines[next]));
+    playClip(line);
+    if (line && line.text) startSpeaking(line.ms || 1200, "", line.text);
     return next;
   };
 
@@ -1389,7 +1391,11 @@ function createView(ctx) {
     let i = 0;
     const step = () => {
       if (!speaking) return;
-      if (i >= plan.length) i = 0; // план короче аудио — идём по кругу
+      if (i >= plan.length) {
+        // План доиграл раньше звука — держим закрытый рот, не открываем заново.
+        img.src = frame(voice, "closed");
+        return;
+      }
       const item = plan[i++];
       img.src = frame(voice, item.frame);
       box.style.transform = `translateY(${i % 2 ? -1 : 0}px) rotate(${i % 2 ? -0.12 : 0.06}deg)`;

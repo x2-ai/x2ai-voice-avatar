@@ -385,7 +385,7 @@ def main() -> int:
                         "at": time.time(),
                         "sid": sid,
                         "kind": kind,
-                        "text": text[:400],
+                        "text": text[:4000],
                     }
                 ),
                 encoding="utf-8",
