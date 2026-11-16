@@ -177,6 +177,61 @@ function createView(ctx) {
   box.appendChild(panel);
 
   let voiceCatalog = null;
+  // Следующий персонаж пака вместе с его голосом: и по кнопке, и по правому клику.
+  const nextCharacter = () => {
+    stopAll();
+    const list = packVoices();
+    const index = list.indexOf(voice);
+    const next = list[(index + 1) % list.length] || voice;
+    apply(next);
+    saveLocal(currentSid, next);
+    if (currentSid) bridge("/voice", { sid: currentSid, voice: charVoice(next) }).catch(() => {});
+    return next;
+  };
+
+  // Раскрывающиеся блоки настроек: по умолчанию свёрнуты.
+  const sectionOpen = { voice: false, model: false };
+  const collapsible = (titleText, key) => {
+    const wrap = document.createElement("div");
+    wrap.style.cssText = "margin-top:8px";
+    const head = document.createElement("button");
+    head.type = "button";
+    head.style.cssText = [
+      "display:flex",
+      "align-items:center",
+      "gap:6px",
+      "box-sizing:border-box",
+      "width:100%",
+      "padding:5px 8px",
+      "border-radius:7px",
+      "cursor:pointer",
+      "font:inherit",
+      "font-size:11px",
+      "font-weight:600",
+      "color:inherit",
+      "text-align:left",
+      "opacity:.9",
+      "border:1px solid rgba(255,255,255,.1)",
+      "background:rgba(255,255,255,.04)",
+    ].join(";");
+    const caret = document.createElement("span");
+    caret.textContent = sectionOpen[key] ? "▾" : "▸";
+    caret.style.cssText = "width:10px;opacity:.7";
+    const label = document.createElement("span");
+    label.textContent = titleText;
+    head.append(caret, label);
+    head.onclick = (ev) => {
+      ev.stopPropagation();
+      sectionOpen[key] = !sectionOpen[key];
+      renderPanel();
+    };
+    const body = document.createElement("div");
+    body.style.cssText = `display:${sectionOpen[key] ? "block" : "none"};margin-top:6px`;
+    wrap.append(head, body);
+    panel.appendChild(wrap);
+    return body;
+  };
+
   const renderPanel = () => {
     panel.textContent = "";    const title = document.createElement("div");
     title.textContent = "Пак персонажей";
@@ -215,11 +270,31 @@ function createView(ctx) {
       };
       panel.appendChild(row);
     }
-    // Голос, привязанный к персонажу (по умолчанию — его собственный).
-    const vTitle = document.createElement("div");
-    vTitle.textContent = "Голос персонажа";
-    vTitle.style.cssText = "font-weight:600;margin:10px 0 6px;opacity:.9";
-    panel.appendChild(vTitle);
+    const nextBtn = document.createElement("button");
+    nextBtn.type = "button";
+    nextBtn.textContent = "Следующий персонаж из пака";
+    nextBtn.style.cssText = [
+      "display:block",
+      "width:100%",
+      "margin:0 0 4px",
+      "padding:6px 8px",
+      "border-radius:7px",
+      "cursor:pointer",
+      "font:inherit",
+      "font-size:11px",
+      "color:inherit",
+      "text-align:center",
+      "border:1px solid rgba(255,255,255,.16)",
+      "background:rgba(255,255,255,.07)",
+    ].join(";");
+    nextBtn.onclick = (ev) => {
+      ev.stopPropagation();
+      nextCharacter();
+      renderPanel();
+    };
+    panel.appendChild(nextBtn);
+
+    const vBody = collapsible("Голос персонажа", "voice");
 
     const labelOf = (id) => {
       const found = (voiceCatalog || []).find((v) => v.id === id);
@@ -230,11 +305,11 @@ function createView(ctx) {
     const vCur = document.createElement("div");
     vCur.textContent = `сейчас: ${labelOf(curVoice)}`;
     vCur.style.cssText = "font-size:11px;opacity:.7;margin-bottom:6px";
-    panel.appendChild(vCur);
+    vBody.appendChild(vCur);
 
     const vList = document.createElement("div");
     vList.style.cssText = "max-height:132px;overflow-y:auto;display:flex;flex-direction:column;gap:4px";
-    panel.appendChild(vList);
+    vBody.appendChild(vList);
 
     const bindVoice = (id) => {
       bridge("/charvoice", { charId: voice, voice: id })
@@ -303,14 +378,7 @@ function createView(ctx) {
       );
     }
 
-    const sep = document.createElement("div");
-    sep.style.cssText = "height:1px;background:rgba(255,255,255,.12);margin:10px 0 8px";
-    panel.appendChild(sep);
-
-    const mTitle = document.createElement("div");
-    mTitle.textContent = "Модель пересказа";
-    mTitle.style.cssText = "font-weight:600;margin-bottom:6px;opacity:.9";
-    panel.appendChild(mTitle);
+    const mBody = collapsible("Модель пересказа", "model");
 
     const mList = document.createElement("div");
     mList.style.cssText = "max-height:150px;overflow-y:auto;display:flex;flex-direction:column;gap:4px";
@@ -318,7 +386,7 @@ function createView(ctx) {
     mNote.textContent = "загружаю…";
     mNote.style.cssText = "opacity:.5;font-size:11px";
     mList.appendChild(mNote);
-    panel.appendChild(mList);
+    mBody.appendChild(mList);
 
     const renderModels = (data) => {
       mList.textContent = "";
@@ -380,10 +448,6 @@ function createView(ctx) {
         mNote.textContent = "мост недоступен";
       });
 
-    const hint = document.createElement("div");
-    hint.textContent = "Правый клик — следующий персонаж";
-    hint.style.cssText = "opacity:.5;margin-top:2px;font-size:11px";
-    panel.appendChild(hint);
   };
 
   let panelOpen = false;
@@ -612,13 +676,8 @@ function createView(ctx) {
   // Выбор запоминается за текущим чатом, чтобы озвучка говорила тем же голосом.
   box.oncontextmenu = (event) => {
     if (event) event.preventDefault();
-    stopAll();
-    const list = packVoices();
-    const index = list.indexOf(voice);
-    const next = list[(index + 1) % list.length] || voice;
-    apply(next);
-    saveLocal(currentSid, next);
-    if (currentSid) bridge("/voice", { sid: currentSid, voice: charVoice(next) }).catch(() => {});
+    nextCharacter();
+    if (panelOpen) renderPanel();
   };
 
   // Моргание только в тишине, чтобы не спорить с артикуляцией.
