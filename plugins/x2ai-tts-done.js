@@ -312,6 +312,11 @@ function stripCode(text) {
   t = t.replace(/`[^`]+`/g, " ");
   t = t.replace(/^([+-].*)$/gm, " ");
   t = t.replace(/\b[\w./-]+:\d+\b/g, " ");
+  t = t.replace(/https?:\/\/\S+/g, " ");
+  t = t.replace(/(^|\s)[~/][\w./-]+/g, " ");
+  t = t.replace(/\b[\w-]+\/[\w./-]+\.\w{1,5}\b/g, " ");
+  t = t.replace(/\b[a-f0-9]{8,}\b/gi, " ");
+  t = t.replace(/\b\w+_\w+\b/g, " ");
   t = t.replace(/^\$\s+.*/gm, " ");
   t = t.replace(/[{}\[\]();=<>|\\*#_~^]/g, " ");
   t = t.replace(/\s+/g, " ").trim();
@@ -622,6 +627,7 @@ async function llmSummary(raw, gender, user = readUser(), sid = "", style = "") 
       : "";
   const prompt = [
     "Сожми текст в 1–3 коротких предложения по-русски для озвучки вслух.",
+    "Код, команды, пути к файлам, имена переменных и ссылки не произноси — только суть.",
     "Только суть: что сделано и зачем это нужно. Без путей, имён файлов, команд, кода, цифр, markdown и списков.",
     "Пиши связной прозой, без вступлений вроде «в этом ответе».",
     "Пиши только по-русски. Английские слова и термины переводи, латиницу оставляй только в крайнем случае.",
@@ -662,7 +668,7 @@ async function llmSummary(raw, gender, user = readUser(), sid = "", style = "") 
 // Рассуждения модели: одним запросом — перевод (если нужно) и сжатие (если «кратко»).
 async function llmReason(raw, gender, translate, sid, user = readUser()) {
   if (!genText) return "";
-  const src = String(raw || "").replace(/\s+/g, " ").trim().slice(0, 6000);
+  const src = stripCode(String(raw || "")).replace(/\s+/g, " ").trim().slice(0, 6000);
   if (src.length < 30) return "";
   const task = translate
     ? "Переведи рассуждение модели на русский и сожми его в 1–2 коротких предложения для озвучки вслух."
@@ -688,6 +694,7 @@ async function llmReason(raw, gender, translate, sid, user = readUser()) {
   const prompt = [
     task,
     "Без вступлений вроде «вот краткое содержание». Только суть.",
+    "Код, команды и пути к файлам не произноси.",
     style,
     aboutUser,
     ...(nameRule ? [nameRule] : []),
@@ -753,7 +760,7 @@ function speak(text, sid, voice, maxChars = MAX_CHARS, emotion = null, kind = nu
     const m = cut.match(/[\s\S]*[.!?…]/);
     toSay = m ? m[0] : cut;
   }
-  toSay = toSay.replace(/\s+/g, " ").trim();
+  toSay = stripCode(toSay).replace(/\s+/g, " ").trim();
   if (!toSay) return;
   lastSpeak = { text: toSay, sid: sid || "", voice: voice || "", max: limit, emotion, kind };
   log("SPEAK:", toSay.slice(0, 100));
