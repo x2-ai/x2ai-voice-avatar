@@ -212,6 +212,19 @@ function readSpeed() {
   return 1.0;
 }
 
+// Обращение к пользователю: имя (может быть пустым) и род (m | f | "" — не указан).
+const USER_FILE = `${process.env.HOME}/.config/opencode/x2ai-user.json`;
+function readUser() {
+  try {
+    const raw = JSON.parse(fs.readFileSync(USER_FILE, "utf8"));
+    const name = typeof raw?.name === "string" ? raw.name.trim().slice(0, 40) : "";
+    const gender = raw?.gender === "m" || raw?.gender === "f" ? raw.gender : "";
+    return { name, gender };
+  } catch (e) {
+    return { name: "", gender: "" };
+  }
+}
+
 // Конец хода: эти события реально присылает десктопный сервис.
 const TRIGGERS = new Set(["session.execution.succeeded", "session.execution.interrupted"]);
 
@@ -483,13 +496,22 @@ async function translateRu(text) {
 }
 
 // Пересказ моделью (бесплатной, без сессии). Пустая строка = не получилось.
-async function llmSummary(raw, gender) {
+async function llmSummary(raw, gender, user = readUser()) {
   if (!LLM_SUMMARY || !genText) return "";
   const src = stripCode(raw).slice(0, 6000).trim();
   if (src.length < 40) return "";
-  // Пользователь всегда мужчина: женский род касается ТОЛЬКО речи ассистента о себе.
+  // Род ассистента (голос) и род пользователя — разные вещи: первый про «я», второй про «ты».
+  const userName = (user && user.name) || "";
+  const userGender = (user && user.gender) || "";
   const ABOUT_USER =
-    "Пользователь — мужчина. Обращаясь к нему, всегда используй мужской род: «ты проверил», «ты попросил», «ты прав», «ты уверен». Никогда не пиши о пользователе в женском роде.";
+    userGender === "f"
+      ? "Пользователь — женщина. Обращаясь к ней, используй женский род: «ты проверила», «ты попросила», «ты права», «ты уверена»."
+      : userGender === "m"
+        ? "Пользователь — мужчина. Обращаясь к нему, используй мужской род: «ты проверил», «ты попросил», «ты прав», «ты уверен»."
+        : "Род пользователя не указан: обращайся к нему нейтрально, избегая форм прошедшего времени во втором лице.";
+  const NAME_RULE = userName
+    ? `Один раз, в самом начале, обратись к пользователю по имени: ${userName}. Дальше имя не повторяй.`
+    : "";
   const GENDER_RULE = {
     f: `Пиши от лица ассистента. О себе (первое лицо, «я») говори в женском роде: «я проверила», «я сделала», «я нашла», «я уверена». ${ABOUT_USER}`,
     m: `Пиши от лица ассистента. О себе (первое лицо, «я») говори в мужском роде: «я проверил», «я сделал», «я нашёл», «я уверен». ${ABOUT_USER}`,
@@ -502,6 +524,7 @@ async function llmSummary(raw, gender) {
     "Каждое предложение — новая мысль. Не повторяй одну и ту же фразу разными словами.",
     GENDER_RULE[gender] ||
       `Пиши безлично или в третьем лице, избегая форм прошедшего времени от первого лица. ${ABOUT_USER}`,
+    ...(NAME_RULE ? [NAME_RULE] : []),
     "",
     src,
   ].join("\n");
@@ -715,6 +738,10 @@ function startBridge(ctx) {
       send(res, 200, { mode: readSpeech(), modes: SPEECH_MODES, speed: readSpeed() });
       return;
     }
+    if (req.method === "GET" && route === "/user") {
+      send(res, 200, { user: readUser() });
+      return;
+    }
     if (req.method === "GET" && route === "/models") {
       listModels()
         .then((out) => send(res, 200, { ...out, current: readModel() || SUM_MODEL_DEFAULT }))
@@ -764,6 +791,22 @@ function startBridge(ctx) {
           } catch (e) {}
         }
         send(res, 200, { ok: true, current: readModel() || SUM_MODEL_DEFAULT });
+        return;
+      }
+      if (req.method === "POST" && route === "/user") {
+        const next = readUser();
+        if (typeof payload.name === "string") {
+          next.name = payload.name.replace(/[<>]/g, "").replace(/\s+/g, " ").trim().slice(0, 40);
+        }
+        if (payload.gender === "m" || payload.gender === "f" || payload.gender === "") {
+          next.gender = payload.gender;
+        }
+        try {
+          fs.writeFileSync(USER_FILE, JSON.stringify(next, null, 2));
+        } catch (e) {
+          log("USER_WRITE_ERR", e?.message);
+        }
+        send(res, 200, { ok: true, user: readUser() });
         return;
       }
       if (req.method === "POST" && route === "/speech") {

@@ -198,6 +198,10 @@ function createView(ctx) {
   let voiceCatalog = null;
   let speechMode = null; // "full" | "summary" | "silent"; null = ещё не загружен
   let speechSpeed = null; // 0.7–1.8; null = ещё не загружена
+  // Обращение к пользователю: имя (пустое = не использовать) и род ("", "m", "f").
+  let userName = "";
+  let userGender = "";
+  let userLoaded = false;
 
   // Размер персонажа: высота картинки и отступ панели над ним.
   const setHeight = (value) => {
@@ -242,7 +246,7 @@ function createView(ctx) {
   };
 
   // Раскрывающиеся блоки настроек: по умолчанию свёрнуты.
-  const sectionOpen = { pack: false, voice: false, char: false, speech: false, model: false };
+  const sectionOpen = { pack: false, voice: false, char: false, speech: false, model: false, user: false };
 
   // Позиции прокрутки списков: панель перерисовывается целиком, поэтому
   // запоминаем offset и возвращаем его, иначе список прыгает наверх.
@@ -520,6 +524,67 @@ function createView(ctx) {
     const mList = keepScroll(document.createElement("div"), "model");
     mList.style.cssText = "max-height:150px;overflow-y:auto;display:flex;flex-direction:column;gap:4px";
     mBody.appendChild(mList);
+
+    // Обращение к пользователю: имя и род. Влияет на пересказ («Аня, ты просила…»).
+    const uBody = collapsible("Обращение к пользователю", "user", settings);
+
+    const uInput = document.createElement("input");
+    uInput.type = "text";
+    uInput.maxLength = 40;
+    uInput.placeholder = "Имя (необязательно)";
+    uInput.value = userName;
+    uInput.style.cssText =
+      "width:100%;box-sizing:border-box;font:inherit;font-size:12px;padding:5px 7px;" +
+      "border:1px solid rgba(255,255,255,.16);border-radius:7px;" +
+      "background:rgba(255,255,255,.05);color:inherit;outline:none";
+    uBody.appendChild(uInput);
+
+    const uHint = document.createElement("div");
+    uHint.textContent = "Как обращаться к тебе в пересказе";
+    uHint.style.cssText = "opacity:.5;font-size:10px;line-height:1.4;margin:3px 0 0 2px";
+    uBody.appendChild(uHint);
+
+    const gRow = document.createElement("div");
+    gRow.style.cssText = "display:flex;gap:4px;margin-top:5px";
+    uBody.appendChild(gRow);
+
+    const GENDERS = [
+      ["", "Не указывать"],
+      ["m", "Мужской"],
+      ["f", "Женский"],
+    ];
+    const genderRows = [];
+    const refreshUser = () => {
+      uInput.value = userName;
+      for (const item of genderRows) item.row.setActive(item.value === userGender);
+    };
+    const saveUser = (patch) => {
+      if (patch.name !== undefined) userName = String(patch.name).replace(/\s+/g, " ").trim().slice(0, 40);
+      if (patch.gender !== undefined) userGender = patch.gender;
+      refreshUser();
+      bridge("/user", { name: userName, gender: userGender }).catch(() => {});
+    };
+    for (const [value, text] of GENDERS) {
+      const row = vRow(text, userGender === value, () => saveUser({ gender: value }));
+      row.style.flex = "1";
+      row.style.justifyContent = "center";
+      gRow.appendChild(row);
+      genderRows.push({ value, row });
+    }
+    uInput.addEventListener("change", () => saveUser({ name: uInput.value }));
+    uInput.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") uInput.blur();
+    });
+    if (!userLoaded) {
+      userLoaded = true;
+      bridge("/user")
+        .then((data) => {
+          userName = (data && data.user && data.user.name) || "";
+          userGender = (data && data.user && data.user.gender) || "";
+          refreshUser();
+        })
+        .catch(() => {});
+    }
 
     const modelRows = [];
     let modelsLoaded = false;
