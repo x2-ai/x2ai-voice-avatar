@@ -1353,13 +1353,17 @@ function createView(ctx) {
   const frameFor = (ch) => VOWEL_FRAME[ch] || "closed";
   const charWeight = (ch) => {
     if (VOWEL_FRAME[ch]) return 1.7;
-    return /[а-яё]/.test(ch) ? 0.9 : 0.45;
+    if (/[.!?…]/.test(ch)) return 3.5;
+    if (/[,;:]/.test(ch)) return 2.2;
+    if (/[—–-]/.test(ch)) return 2.5;
+    if (/\s/.test(ch)) return 1.2;
+    return 0.9;
   };
 
   const buildTalkPlan = (text, ms) => {
     const chars = String(text || "")
       .toLowerCase()
-      .replace(/[^а-яё\s]/g, "")
+      .replace(/[^а-яё\s.,!?;:—–…-]/g, "")
       .split("");
     if (!chars.length) return null;
     const total = chars.reduce((acc, ch) => acc + charWeight(ch), 0) || 1;
