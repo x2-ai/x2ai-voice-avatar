@@ -362,6 +362,9 @@ function decorate(text) {
 function stripCode(text) {
   if (!text) return "";
   let t = text;
+  // Служебные блоки вида <dcp-system-reminder>…</dcp-…> — не речь.
+  t = t.replace(/<dcp-[\w-]*\b[^>]*>[\s\S]*?<\/dcp-[\w-]*>/gi, " ");
+  t = t.replace(/<\/?dcp-[\w-]*\b[^>]*>/gi, " ");
   // Теги и всё их содержимое — вон: это разметка, а не речь.
   const BLOCK_TAGS =
     "code|pre|script|style|details|summary|tool|tools|tool_call|file|files|path|bash|command|cmd|output|result|json|xml|html|patch|diff|thinking|reasoning|system|context|antml";

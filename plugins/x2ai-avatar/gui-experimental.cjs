@@ -1373,9 +1373,9 @@ function createView(ctx) {
         plan.push({ frame: "closed", delay: dur });
         continue;
       }
-      plan.push({ frame: "half", delay: Math.max(60, Math.round(dur * 0.25)) });
-      plan.push({ frame: target, delay: Math.max(70, Math.round(dur * 0.5)) });
-      plan.push({ frame: "half", delay: Math.max(60, Math.round(dur * 0.25)) });
+      plan.push({ frame: "half", delay: Math.max(70, Math.round(dur * 0.22)) });
+      plan.push({ frame: target, delay: Math.max(80, Math.round(dur * 0.56)) });
+      plan.push({ frame: "half", delay: Math.max(70, Math.round(dur * 0.22)) });
     }
     return plan;
   };
