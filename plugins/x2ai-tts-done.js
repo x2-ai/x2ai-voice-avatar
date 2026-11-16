@@ -750,8 +750,10 @@ function startBridge(ctx) {
       if (req.method === "POST" && route === "/speech") {
         if (SPEECH_MODES.includes(payload.mode)) {
           try {
-            fs.writeFileSync(speechFile, JSON.stringify({ mode: payload.mode }, null, 2));
-          } catch (e) {}
+            fs.writeFileSync(SPEECH_FILE, JSON.stringify({ mode: payload.mode }, null, 2));
+          } catch (e) {
+            log("SPEECH_WRITE_ERR", String(e));
+          }
         }
         send(res, 200, { ok: true, mode: readSpeech() });
         return;
