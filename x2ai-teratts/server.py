@@ -346,9 +346,11 @@ def main() -> int:
                 log(f"play error {exc}")
                 continue
             current["proc"] = proc
+            current["item"] = item
             announce_playback(item["audio_s"], item.get("sid", ""), item.get("kind", ""))
             proc.wait()
             current["proc"] = None
+            current["item"] = None
             try:
                 wav.unlink()
             except OSError:
@@ -423,24 +425,40 @@ def main() -> int:
                     raw += chunk
                 req = json.loads(raw.decode("utf-8") or "{}")
                 if req.get("stop"):
+                    # Пустой sid — глушим всё; с sid — только этот чат.
+                    stop_sid = str(req.get("sid") or "")
                     stopped = 0
-                    proc = current.get("proc")
-                    if proc is not None and proc.poll() is None:
-                        try:
-                            proc.terminate()
-                            stopped += 1
-                        except Exception:
-                            pass
+                    cur_item = current.get("item") or {}
+                    if not stop_sid or cur_item.get("sid") == stop_sid:
+                        proc = current.get("proc")
+                        if proc is not None and proc.poll() is None:
+                            try:
+                                proc.terminate()
+                                stopped += 1
+                            except Exception:
+                                pass
+                    kept = []
                     while True:
                         try:
                             it = play_q.get_nowait()
                         except queue.Empty:
                             break
+                        if stop_sid and it.get("sid") != stop_sid:
+                            kept.append(it)
+                            continue
                         try:
                             it["wav"].unlink()
                         except OSError:
                             pass
                         stopped += 1
+                    for it in kept:
+                        try:
+                            play_q.put_nowait(it)
+                        except queue.Full:
+                            try:
+                                it["wav"].unlink()
+                            except OSError:
+                                pass
                     try:
                         STATE.write_text(json.dumps({"speaking": False, "ms": 0, "at": 0, "sid": ""}))
                     except Exception:

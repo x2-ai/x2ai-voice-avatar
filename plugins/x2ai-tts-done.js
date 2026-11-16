@@ -1059,12 +1059,12 @@ function startBridge(ctx) {
     }
   };
 
-  const stopTts = () => {
+  const stopTts = (sid) => {
     try {
       const net = require("node:net");
       const socket = net.createConnection("/tmp/x2ai-teratts.sock");
       socket.on("error", () => {});
-      socket.end(JSON.stringify({ stop: true }) + "\n");
+      socket.end(JSON.stringify({ stop: true, sid: sid || "" }) + "\n");
     } catch (e) {}
   };
 
@@ -1266,7 +1266,7 @@ function startBridge(ctx) {
         return;
       }
       if (req.method === "POST" && route === "/stop") {
-        stopTts();
+        stopTts(String(payload.sid || ""));
         send(res, 200, { ok: true });
         return;
       }

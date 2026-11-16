@@ -810,7 +810,6 @@ function createView(ctx) {
     };
     const stopBtn = actBtn("■ Стоп", "Заглушить текущую озвучку");
     stopBtn.onclickAction = () => {
-      bridge("/stop", {}).catch(() => {});
       stopAll();
     };
     const replayBtn = actBtn("↻ Повторить", "Озвучить последний текст ещё раз");
@@ -1479,11 +1478,12 @@ function createView(ctx) {
     } catch (e) {}
     clickAudio = null;
   };
+  // Глушим только свой чат: очередь других чатов не трогаем.
   const stopAll = () => {
     stopClick();
     stopSynth();
     stopSpeaking();
-    bridge("/stop", { stop: true }).catch(() => {});
+    bridge("/stop", { sid: currentSid }).catch(() => {});
   };
 
   box.onclick = () => {
