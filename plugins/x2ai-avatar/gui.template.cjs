@@ -215,7 +215,25 @@ function createView(ctx) {
   swapBtn.type = "button";
   swapBtn.textContent = "↻";
   swapBtn.title = "Следующий персонаж из пака";
-  swapBtn.style.cssText = gear.style.cssText.replace("top:2px", "top:28px");
+  // Стиль задаём явно: чтение gear.style.cssText нормализует пробелы
+  // («top: 2px»), и replace не срабатывал — кнопка накрывала шестерёнку.
+  swapBtn.style.cssText = [
+    "position:absolute",
+    "left:0",
+    "top:28px",
+    "width:22px",
+    "height:22px",
+    "padding:0",
+    "border-radius:50%",
+    "border:1px solid rgba(255,255,255,.25)",
+    "background:rgba(20,20,24,.78)",
+    "color:#ddd",
+    "font-size:13px",
+    "line-height:1",
+    "cursor:pointer",
+    "opacity:0",
+    "transition:opacity 120ms ease",
+  ].join(";");
   swapBtn.onclick = (ev) => {
     ev.stopPropagation();
     nextCharacter();
