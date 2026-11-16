@@ -639,7 +639,7 @@ async function llmSummary(raw, gender, user = readUser(), sid = "", style = "") 
 }
 
 // Рассуждения модели: одним запросом — перевод (если нужно) и сжатие (если «кратко»).
-async function llmReason(raw, gender, translate, sid) {
+async function llmReason(raw, gender, translate, sid, user = readUser()) {
   if (!genText) return "";
   const src = String(raw || "").replace(/\s+/g, " ").trim().slice(0, 6000);
   if (src.length < 30) return "";
@@ -652,7 +652,21 @@ async function llmReason(raw, gender, translate, sid) {
       : gender === "m"
         ? "О себе говори в мужском роде: «я проверил», «я подумал»."
         : "Пиши безлично.";
-  const prompt = [task, "Без вступлений вроде «вот краткое содержание». Только суть.", style, "Текст:", src].join("\n");
+  const userGender = (user && user.gender) || "";
+  const aboutUser =
+    userGender === "f"
+      ? "Если упоминаешь пользователя, говори о ней в женском роде: «ты попросила», «ты права»."
+      : userGender === "m"
+        ? "Если упоминаешь пользователя, говори о нём в мужском роде: «ты попросил», «ты прав»."
+        : "Если упоминаешь пользователя, говори нейтрально, без форм прошедшего времени во втором лице.";
+  const prompt = [
+    task,
+    "Без вступлений вроде «вот краткое содержание». Только суть.",
+    style,
+    aboutUser,
+    "Текст:",
+    src,
+  ].join("\n");
   try {
     const out = await Promise.race([
       genText({ model: sumModel(), prompt }),
