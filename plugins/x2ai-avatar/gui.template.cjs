@@ -103,6 +103,16 @@ function frame(voice, state) {
   return set[state] || set.closed;
 }
 
+// Таймеры пинга живут на уровне модуля: при повторном рендере слота старый
+// вид не должен продолжать напоминать своим таймером.
+const PING = { timers: new Map(), delays: new Map(), activity: new Map(), say: null };
+function pingReset() {
+  for (const t of PING.timers.values()) clearTimeout(t);
+  PING.timers.clear();
+  PING.delays.clear();
+  PING.activity.clear();
+}
+
 function createView(ctx) {
   const root = document.createElement("div");
   // Нулевая высота: полоса не занимает места, персонаж висит поверх окна.
@@ -1349,10 +1359,13 @@ function createView(ctx) {
     if (/_m$/.test(v) || MALE_VOICES.includes(v)) return "m";
     return "n";
   };
-  // Таймеры пинга — свои у каждого чата: вкладки независимы.
-  const pingTimers = new Map();
-  const pingDelays = new Map();
-  const activityAt = new Map();
+  // Старый вид мог оставить свои таймеры — гасим их при каждом новом рендере.
+  pingReset();
+  PING.say = (text, sid) => bridge("/say", { text, sid }).catch(() => {});
+
+  const pingTimers = PING.timers;
+  const pingDelays = PING.delays;
+  const activityAt = PING.activity;
   const markActive = (sid) => {
     if (sid) activityAt.set(sid, Date.now());
   };
@@ -1591,6 +1604,7 @@ function createView(ctx) {
   }
 
   root.destroy = () => {
+    pingReset();
     clearTimeout(blinkTimer);
     clearTimeout(idleTimer);
     clearTimeout(moodTimer);
