@@ -782,6 +782,43 @@ async function llmReason(raw, gender, translate, sid, user = readUser()) {
 // Дедуп рассуждений: одна и та же мысль не читается дважды.
 const reasonSeen = new Map();
 
+// Озвучка рассуждений: вызывается после паузы в потоке, чтобы не перечитывать куски.
+const reasonTimers = new Map();
+
+async function speakReason(rsid, rtext) {
+  const reason = readReason();
+  if (reason.mode === "off") return;
+  if (readSpeech() === "silent" || inQuietHours()) {
+    log("SKIP: reason muted");
+    return;
+  }
+  const norm = String(rtext).replace(/\s+/g, " ").trim().slice(0, 400);
+  const rkey = hash(norm);
+  if (Date.now() - (reasonSeen.get(rkey) || 0) < 180000) {
+    log("SKIP: reason duplicate");
+    return;
+  }
+  const rvoice = effectiveVoice(rsid);
+  const rgender = genderOf(rvoice);
+  let out = "";
+  if (reason.mode === "brief") {
+    out = (await llmReason(rtext, rgender, reason.translate, rsid)) || summarize(rtext) || "";
+  } else if (reason.translate) {
+    out = (await translateRu(rtext.slice(0, 3000))) || "";
+  }
+  // Модель не ответила — читаем хотя бы очищенный исходник, но не молчим.
+  if (!out) out = stripCode(rtext).slice(0, reason.mode === "brief" ? 300 : 1200);
+  out = agreeGender(out, rgender).trim();
+  if (!out) {
+    log("SKIP: reason empty");
+    return;
+  }
+  reasonSeen.set(rkey, Date.now());
+  if (reasonSeen.size > 500) reasonSeen.clear();
+  log("REASON:", rsid, reason.mode, reason.translate ? "tr" : "-", out.length);
+  speak(out, rsid, rvoice, reason.mode === "brief" ? MAX_CHARS : FULL_MAX_CHARS, "think", "reason");
+}
+
 function speakTera(text, sid, forced, emotion, kind) {
   try {
     if (!fs.existsSync(TERATTS)) return false;
@@ -1214,36 +1251,18 @@ module.exports = {
           if (type === "session.reasoning.ended") {
             const rsid = data.sessionID;
             const rtext = String(data.text || "").trim();
-            const reason = readReason();
-            if (!rsid || !rtext || reason.mode === "off") continue;
-            if (readSpeech() === "silent" || inQuietHours()) {
-              log("SKIP: reason muted");
-              continue;
-            }
-            const rkey = hash(rtext);
-            if (Date.now() - (reasonSeen.get(rkey) || 0) < 120000) {
-              log("SKIP: reason duplicate");
-              continue;
-            }
-            const rvoice = effectiveVoice(rsid);
-            const rgender = genderOf(rvoice);
-            let out = "";
-            if (reason.mode === "brief") {
-              out = (await llmReason(rtext, rgender, reason.translate, rsid)) || summarize(rtext) || "";
-            } else if (reason.translate) {
-              out = (await translateRu(rtext.slice(0, 3000))) || "";
-            }
-            // Модель не ответила — читаем хотя бы очищенный исходник, но не молчим.
-            if (!out) out = stripCode(rtext).slice(0, reason.mode === "brief" ? 300 : 1200);
-            out = agreeGender(out, rgender).trim();
-            if (!out) {
-              log("SKIP: reason empty");
-              continue;
-            }
-            reasonSeen.set(rkey, Date.now());
-            if (reasonSeen.size > 500) reasonSeen.clear();
-            log("REASON:", rsid, reason.mode, reason.translate ? "tr" : "-", out.length);
-            speak(out, rsid, rvoice, reason.mode === "brief" ? MAX_CHARS : FULL_MAX_CHARS, "think", "reason");
+            if (!rsid || !rtext) continue;
+            if (readReason().mode === "off") continue;
+            // Модель присылает рассуждение кусками: ждём, пока текст перестанет расти.
+            const prev = reasonTimers.get(rsid);
+            if (prev) clearTimeout(prev);
+            reasonTimers.set(
+              rsid,
+              setTimeout(() => {
+                reasonTimers.delete(rsid);
+                void speakReason(rsid, rtext);
+              }, 1600),
+            );
             continue;
           }
 
