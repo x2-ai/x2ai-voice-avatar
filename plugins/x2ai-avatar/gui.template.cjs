@@ -1349,28 +1349,33 @@ function createView(ctx) {
     if (/_m$/.test(v) || MALE_VOICES.includes(v)) return "m";
     return "n";
   };
-  let pingTimer = null;
-  let pingDelay = 60000; // растёт с каждой репликой, сбрасывается после ответа
-  // Когда в чате последний раз была активность: если агент простаивает, пинг молчит.
+  // Таймеры пинга — свои у каждого чата: вкладки независимы.
+  const pingTimers = new Map();
+  const pingDelays = new Map();
   const activityAt = new Map();
   const markActive = (sid) => {
     if (sid) activityAt.set(sid, Date.now());
   };
-  const pingStop = () => {
-    if (pingTimer) clearTimeout(pingTimer);
-    pingTimer = null;
-    pingDelay = 60000;
+
+  const pingStop = (sid) => {
+    const key = sid || "";
+    const t = pingTimers.get(key);
+    if (t) clearTimeout(t);
+    pingTimers.delete(key);
+    pingDelays.delete(key);
   };
+
   // Пинг говорит голосом ТОГО чата, где идёт работа, а не активной вкладки.
   const pingStart = (sid) => {
-    if (pingTimer) return;
+    const key = sid || "";
+    if (!key || pingTimers.has(key)) return;
     const tick = () => {
       // Агент простаивает дольше полутора минут — реплики прекращаем.
-      if (Date.now() - (activityAt.get(sid) || 0) > 90000) {
-        pingStop();
+      if (Date.now() - (activityAt.get(key) || 0) > 90000) {
+        pingStop(key);
         return;
       }
-      const KEY = `x2ai-avatar:ping:${sid || "any"}`;
+      const KEY = `x2ai-avatar:ping:${key}`;
       let last = 0;
       try {
         last = Number(localStorage.getItem(KEY) || 0) || 0;
@@ -1379,27 +1384,16 @@ function createView(ctx) {
         try {
           localStorage.setItem(KEY, String(Date.now()));
         } catch (e) {}
-        const list = PING_PHRASES[voiceGender(charVoice(sid ? voiceOf(sid) : voice))] || PING_PHRASES.n;
+        const list = PING_PHRASES[voiceGender(charVoice(voiceOf(key)))] || PING_PHRASES.n;
         const phrase = list[Math.floor(Math.random() * list.length)];
-        sayWhenFree(phrase, sid);
+        // Если что-то уже звучит — реплику не повторяем, просто считаем сказанной.
+        bridge("/say", { text: phrase, sid: key }).catch(() => {});
       }
-      pingDelay = Math.min(600000, Math.round(pingDelay * 1.6));
-      pingTimer = setTimeout(tick, pingDelay);
+      const next = Math.min(600000, Math.round((pingDelays.get(key) || 60000) * 1.6));
+      pingDelays.set(key, next);
+      pingTimers.set(key, setTimeout(tick, next));
     };
-    pingTimer = setTimeout(tick, pingDelay);
-  };
-
-  // Если что-то уже звучит — не перебиваем, ждём своей очереди.
-  const sayWhenFree = (text, sid, attempt) => {
-    const n = attempt || 0;
-    bridge("/say", { text, sid })
-      .then((out) => {
-        if (out && out.ok === false && out.reason === "busy" && n < 40) {
-          const wait = Math.min(15000, Math.max(3000, Number(out.wait) || 6000));
-          setTimeout(() => sayWhenFree(text, sid, n + 1), wait + 400);
-        }
-      })
-      .catch(() => {});
+    pingTimers.set(key, setTimeout(tick, pingDelays.get(key) || 60000));
   };
 
   // Клик по персонажу: короткая заранее сгенерированная реплика его голосом.
@@ -1566,7 +1560,13 @@ function createView(ctx) {
           "session.execution.interrupted",
         ]) {
           try {
-            offs.push(data.on(name, () => pingStop()));
+            offs.push(
+              data.on(name, (event) => {
+                const id = (event && event.data && event.data.sessionID) || "";
+                pingStop(id);
+                if (!id) pingStop(currentSid);
+              }),
+            );
           } catch (err) {
           }
         }
