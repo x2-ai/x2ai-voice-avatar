@@ -305,6 +305,50 @@ function log(...args) {
   } catch (e) {}
 }
 
+// Вместо кода и ссылок вслух говорим, где их смотреть.
+const CODE_PHRASES = [
+  "Код смотри в текстовом варианте ответа.",
+  "Код есть в тексте ответа.",
+  "Пример кода оставил в текстовом ответе.",
+  "Код — в текстовом варианте.",
+];
+const LINK_PHRASES = [
+  "Ссылку смотри в текстовом варианте ответа.",
+  "Ссылка есть в тексте ответа.",
+  "Ссылку оставил в текстовом ответе.",
+  "Адрес ссылки — в текстовом варианте.",
+];
+const pickPhrase = (list) => list[Math.floor(Math.random() * list.length)];
+
+// Заменяет код и ссылки на короткие фразы — до общей чистки.
+function decorate(text) {
+  if (!text) return "";
+  let t = String(text);
+  let saidCode = false;
+  let saidLink = false;
+  t = t.replace(/```[\s\S]*?```/g, () => {
+    if (saidCode) return " ";
+    saidCode = true;
+    return ` ${pickPhrase(CODE_PHRASES)} `;
+  });
+  t = t.replace(/`[^`]+`/g, () => {
+    if (saidCode) return " ";
+    saidCode = true;
+    return ` ${pickPhrase(CODE_PHRASES)} `;
+  });
+  t = t.replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g, (m, label) => {
+    if (saidLink) return ` ${label} `;
+    saidLink = true;
+    return ` ${label} — ${pickPhrase(LINK_PHRASES)} `;
+  });
+  t = t.replace(/https?:\/\/\S+/g, () => {
+    if (saidLink) return " ";
+    saidLink = true;
+    return ` ${pickPhrase(LINK_PHRASES)} `;
+  });
+  return t;
+}
+
 function stripCode(text) {
   if (!text) return "";
   let t = text;
@@ -319,6 +363,8 @@ function stripCode(text) {
   t = t.replace(/\b\w+_\w+\b/g, " ");
   t = t.replace(/^\$\s+.*/gm, " ");
   t = t.replace(/[{}\[\]();=<>|\\*#_~^]/g, " ");
+  t = t.replace(/\s+([,.!?;:])/g, "$1");
+  t = t.replace(/([,.!?;:])(?:\s*[,.!?;:])+/g, "$1");
   t = t.replace(/\s+/g, " ").trim();
   return t;
 }
@@ -754,7 +800,7 @@ let lastSpeak = null;
 
 function speak(text, sid, voice, maxChars = MAX_CHARS, emotion = null, kind = null) {
   const limit = Math.max(maxChars || MAX_CHARS, MAX_CHARS);
-  let toSay = text;
+  let toSay = decorate(text);
   if (toSay.length > limit) {
     const cut = toSay.slice(0, limit);
     const m = cut.match(/[\s\S]*[.!?…]/);
