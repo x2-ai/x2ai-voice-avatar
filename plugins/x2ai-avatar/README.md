@@ -74,6 +74,24 @@ pip install pillow
 
 Тексты реплик — список `PHRASES` в `gen-clicks.py`.
 
+## Реплики панели
+
+`gen-lines.py` готовит ещё три набора (тоже data-URI m4a, в
+`gui-experimental.cjs` как `const LINES`):
+
+| ключ | когда звучит | что это |
+| --- | --- | --- |
+| `lines[voice]` | смена персонажа (кнопка или правый клик) | три забавные реплики персонажа, играется случайная |
+| `packs[pack][voice]` | смена пака в селекте | персонаж называет пак: «Аниме!» / «Пиксельарт!» |
+| `samples[voice]` | клик по голосу в «Голос персонажа» | пример голоса: «Привет. Это мой голос.» |
+
+```sh
+~/.config/opencode/teratts-venv/bin/python gen-lines.py            # все голоса
+~/.config/opencode/teratts-venv/bin/python gen-lines.py fx_cat     # только один
+```
+
+Тексты — словари `LINES`, `PACKS` и константа `SAMPLE` в `gen-lines.py`.
+
 ## Отключить
 
 Убрать путь `.../plugins/x2ai-avatar` из массива `plugins` в

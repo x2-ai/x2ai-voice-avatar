@@ -19,6 +19,8 @@ const BRIDGE_URL = "http://127.0.0.1:47821";
 
 const PACKS = __SPRITES__;
 const CLICKS = __CLICKS__;
+// Реплики панели: lines (при смене персонажа), packs (при смене пака), samples (пример голоса).
+const LINES = __LINES__;
 
 const VOICES = ["ru_f1","ru_f2","ru_m1","ru_m5","fx_robot","fx_demoness","fx_alien","fx_cat","fx_penguin","fx_ghost"];
 // Мужской «демон» остался голосом в меню, но спрайт у него тот же — демонесса.
@@ -177,6 +179,24 @@ function createView(ctx) {
   box.appendChild(panel);
 
   let voiceCatalog = null;
+
+  // Готовые клипы: одна реплика за раз, артикуляция идёт по длительности клипа.
+  function pickClip(list) {
+    return list && list.length ? list[Math.floor(Math.random() * list.length)] : null;
+  }
+  function playClip(item) {
+    if (!item || !item.src) return 0;
+    stopClick();
+    try {
+      clickAudio = new Audio(item.src);
+      clickAudio.play();
+    } catch (e) {
+      clickAudio = null;
+    }
+    startSpeaking(item.ms > 0 ? item.ms : 1200);
+    return item.ms || 1200;
+  }
+
   // Следующий персонаж пака вместе с его голосом: и по кнопке, и по правому клику.
   const nextCharacter = () => {
     stopAll();
@@ -186,6 +206,7 @@ function createView(ctx) {
     apply(next);
     saveLocal(currentSid, next);
     if (currentSid) bridge("/voice", { sid: currentSid, voice: charVoice(next) }).catch(() => {});
+    playClip(pickClip(LINES.lines && LINES.lines[next]));
     return next;
   };
 
@@ -246,6 +267,9 @@ function createView(ctx) {
         saveLocal(currentSid, pick);
         if (currentSid) bridge("/voice", { sid: currentSid, voice: charVoice(pick) }).catch(() => {});
       }
+      // Персонаж называет пак своим голосом.
+      const packClips = LINES.packs && LINES.packs[name];
+      playClip(packClips && packClips[pick || voice]);
     };
 
     const select = document.createElement("select");
@@ -340,6 +364,8 @@ function createView(ctx) {
     vBody.appendChild(vList);
 
     const bindVoice = (id) => {
+      // Пример голоса звучит сразу, не дожидаясь ответа моста.
+      playClip((LINES.samples && (LINES.samples[id] || LINES.samples[voice])) || null);
       bridge("/charvoice", { charId: voice, voice: id })
         .then((out) => {
           charVoices = (out && out.charVoices) || {};
@@ -687,17 +713,7 @@ function createView(ctx) {
 
   box.onclick = () => {
     stopAll();
-    const list = CLICKS[voice] || CLICKS.ru_f1 || [];
-    const item = list.length ? list[Math.floor(Math.random() * list.length)] : null;
-    if (item) {
-      try {
-        clickAudio = new Audio(item.src);
-        clickAudio.play();
-      } catch (e) {
-        clickAudio = null;
-      }
-    }
-    startSpeaking(item && item.ms > 0 ? item.ms : 1200);
+    playClip(pickClip(CLICKS[voice] || CLICKS.ru_f1));
   };
 
   // Правый клик — следующий персонаж вместе с его голосом.

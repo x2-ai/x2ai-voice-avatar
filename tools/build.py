@@ -5,9 +5,10 @@ GUI-плагины OpenCode Desktop исполняются через new Functi
 относительные require внутри плагина не работают: спрайты и реплики должны
 лежать прямо в файле. Этот скрипт подставляет их в шаблон.
 
-    plugins/x2ai-avatar/gui.template.cjs   код с __SPRITES__ и __CLICKS__
+    plugins/x2ai-avatar/gui.template.cjs   код с __SPRITES__, __CLICKS__, __LINES__
     plugins/x2ai-avatar/sprites.json       кадры персонажей (build_sprites.py)
     plugins/x2ai-avatar/clicks.json        реплики на клик (gen-clicks.py)
+    plugins/x2ai-avatar/lines.json         реплики/паки/примеры голоса (gen-lines.py)
 
     python3 tools/build.py
 
@@ -38,8 +39,13 @@ def main() -> int:
     template = (PLUGIN / "gui.template.cjs").read_text(encoding="utf-8")
     sprites = load(PLUGIN / "sprites.json", "спрайты (tools/build_sprites.py)")
     clicks = load(PLUGIN / "clicks.json", "реплики (plugins/x2ai-avatar/gen-clicks.py)")
+    lines = load(PLUGIN / "lines.json", "реплики панели (plugins/x2ai-avatar/gen-lines.py)")
 
-    out = template.replace("__SPRITES__", sprites).replace("__CLICKS__", clicks)
+    out = (
+        template.replace("__SPRITES__", sprites)
+        .replace("__CLICKS__", clicks)
+        .replace("__LINES__", lines)
+    )
     target = PLUGIN / "gui-experimental.cjs"
     target.write_text(out, encoding="utf-8")
     print(f"готово: {target} ({target.stat().st_size / 1024:.0f} КБ)")
