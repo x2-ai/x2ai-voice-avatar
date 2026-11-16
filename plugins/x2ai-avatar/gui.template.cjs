@@ -737,7 +737,64 @@ function createView(ctx) {
       bridge("/stop", {}).catch(() => {});
       stopAll();
     };
-    actRow.append(testBtn, stopBtn);
+    const replayBtn = actBtn("↻ Повторить", "Озвучить последний текст ещё раз");
+    replayBtn.onclickAction = () => {
+      bridge("/replay", {}).catch(() => {});
+    };
+    // Тихие часы: в этом окне персонаж молчит сам, режим озвучки не меняется.
+    let quiet = { on: false, from: "23:00", to: "09:00" };
+    const qBox = document.createElement("div");
+    qBox.style.cssText = "margin-top:10px;display:flex;flex-direction:column;gap:6px";
+    const qTop = document.createElement("div");
+    qTop.style.cssText = "display:flex;align-items:center;justify-content:space-between;gap:8px";
+    const qLabel = document.createElement("span");
+    qLabel.textContent = "Тихие часы";
+    qLabel.style.cssText = "font-size:11px;opacity:.75";
+    const qToggle = document.createElement("button");
+    qToggle.type = "button";
+    qToggle.style.cssText =
+      "border:1px solid rgba(255,255,255,.16);background:rgba(255,255,255,.04);color:inherit;border-radius:7px;padding:3px 9px;font-size:11px;cursor:pointer";
+    qToggle.textContent = "выкл";
+    const qTimes = document.createElement("div");
+    qTimes.style.cssText = "display:flex;align-items:center;gap:6px;font-size:11px;opacity:.8";
+    const timeInput = (value) => {
+      const el = document.createElement("input");
+      el.type = "time";
+      el.value = value;
+      el.style.cssText =
+        "border:1px solid rgba(255,255,255,.16);background:rgba(255,255,255,.04);color:inherit;border-radius:6px;padding:2px 4px;font-size:11px";
+      el.style.colorScheme = "dark";
+      return el;
+    };
+    const qFrom = timeInput(quiet.from);
+    const qTo = timeInput(quiet.to);
+    const qDash = document.createElement("span");
+    qDash.textContent = "—";
+    qDash.style.opacity = ".6";
+    qTimes.append(qFrom, qDash, qTo);
+
+    const refreshQuiet = () => {
+      qToggle.textContent = quiet.on ? "вкл" : "выкл";
+      qToggle.style.borderColor = quiet.on ? "rgba(120,180,255,.6)" : "rgba(255,255,255,.16)";
+      qToggle.style.background = quiet.on ? "rgba(80,130,220,.18)" : "rgba(255,255,255,.04)";
+      qFrom.value = quiet.from;
+      qTo.value = quiet.to;
+      qTimes.style.opacity = quiet.on ? ".85" : ".45";
+    };
+    const saveQuiet = (patch) => {
+      quiet = { ...quiet, ...patch };
+      refreshQuiet();
+      bridge("/speech", { quiet }).catch(() => {});
+    };
+    qToggle.onclick = () => saveQuiet({ on: !quiet.on });
+    qFrom.onchange = () => saveQuiet({ from: qFrom.value || quiet.from });
+    qTo.onchange = () => saveQuiet({ to: qTo.value || quiet.to });
+    qTop.append(qLabel, qToggle);
+    qBox.append(qTop, qTimes);
+    refreshQuiet();
+    sBody.appendChild(qBox);
+
+    actRow.append(testBtn, replayBtn, stopBtn);
     sBody.appendChild(actRow);
 
     const applySpeechState = (data) => {
@@ -747,6 +804,15 @@ function createView(ctx) {
         speechSpeed = sp;
         spInput.value = String(sp);
         spVal.textContent = `${sp.toFixed(2)}×`;
+      }
+      const q = data && data.quiet;
+      if (q && typeof q === "object") {
+        quiet = {
+          on: Boolean(q.on),
+          from: typeof q.from === "string" ? q.from : quiet.from,
+          to: typeof q.to === "string" ? q.to : quiet.to,
+        };
+        refreshQuiet();
       }
       refreshSpeech();
     };
@@ -1099,8 +1165,10 @@ function createView(ctx) {
   };
 
   box.onclick = () => {
+    // Пока персонаж говорит, клик его замолкает; в тишине — просто реплика.
+    const wasSpeaking = speaking;
     stopAll();
-    playClip(pickClip(CLICKS[voice] || CLICKS.ru_f1));
+    if (!wasSpeaking) playClip(pickClip(CLICKS[voice] || CLICKS.ru_f1));
   };
 
   // Правый клик — настройки персонажа.

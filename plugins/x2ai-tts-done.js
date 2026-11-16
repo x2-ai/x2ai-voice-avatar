@@ -212,6 +212,38 @@ function readSpeed() {
   return 1.0;
 }
 
+// Тихие часы: в этом окне озвучка не запускается сама (режим остаётся прежним).
+const QUIET_DEFAULT = { on: false, from: "23:00", to: "09:00" };
+function validTime(v) {
+  return typeof v === "string" && /^([01]\d|2[0-3]):[0-5]\d$/.test(v);
+}
+function readQuiet() {
+  try {
+    const raw = JSON.parse(fs.readFileSync(SPEECH_FILE, "utf8"));
+    const q = raw && raw.quiet;
+    if (!q || typeof q !== "object") return { ...QUIET_DEFAULT };
+    return {
+      on: Boolean(q.on),
+      from: validTime(q.from) ? q.from : QUIET_DEFAULT.from,
+      to: validTime(q.to) ? q.to : QUIET_DEFAULT.to,
+    };
+  } catch (e) {
+    return { ...QUIET_DEFAULT };
+  }
+}
+function inQuietHours() {
+  const q = readQuiet();
+  if (!q.on) return false;
+  const now = new Date();
+  const cur = now.getHours() * 60 + now.getMinutes();
+  const [fh, fm] = q.from.split(":").map(Number);
+  const [th, tm] = q.to.split(":").map(Number);
+  const from = fh * 60 + fm;
+  const to = th * 60 + tm;
+  if (from === to) return false;
+  return from < to ? cur >= from && cur < to : cur >= from || cur < to;
+}
+
 // Обращение к пользователю: имя (может быть пустым) и род (m | f | "" — не указан).
 const USER_FILE = `${process.env.HOME}/.config/opencode/x2ai-user.json`;
 function readUser() {
@@ -611,6 +643,9 @@ function speakTera(text, sid, forced) {
   }
 }
 
+// Последняя озвученная фраза — для кнопки «Повторить».
+let lastSpeak = null;
+
 function speak(text, sid, voice, maxChars = MAX_CHARS) {
   const limit = Math.max(maxChars || MAX_CHARS, MAX_CHARS);
   let toSay = text;
@@ -621,6 +656,7 @@ function speak(text, sid, voice, maxChars = MAX_CHARS) {
   }
   toSay = toSay.replace(/\s+/g, " ").trim();
   if (!toSay) return;
+  lastSpeak = { text: toSay, sid: sid || "", voice: voice || "", max: limit };
   log("SPEAK:", toSay.slice(0, 100));
   if (ENGINE === "say") return speakSay(toSay);
   if (ENGINE === "teratts" || ENGINE === "auto") {
@@ -764,7 +800,7 @@ function startBridge(ctx) {
       return;
     }
     if (req.method === "GET" && route === "/speech") {
-      send(res, 200, { mode: readSpeech(), modes: SPEECH_MODES, speed: readSpeed() });
+      send(res, 200, { mode: readSpeech(), modes: SPEECH_MODES, speed: readSpeed(), quiet: readQuiet() });
       return;
     }
     if (req.method === "GET" && route === "/user") {
@@ -839,23 +875,41 @@ function startBridge(ctx) {
         return;
       }
       if (req.method === "POST" && route === "/speech") {
-        const next = { mode: readSpeech(), speed: readSpeed() };
+        const next = { mode: readSpeech(), speed: readSpeed(), quiet: readQuiet() };
         if (SPEECH_MODES.includes(payload.mode)) next.mode = payload.mode;
         const sp = Number(payload.speed);
         if (Number.isFinite(sp) && sp >= 0.7 && sp <= 1.8) {
           next.speed = Math.round(sp * 100) / 100;
+        }
+        if (payload.quiet && typeof payload.quiet === "object") {
+          next.quiet = {
+            on: Boolean(payload.quiet.on),
+            from: validTime(payload.quiet.from) ? payload.quiet.from : next.quiet.from,
+            to: validTime(payload.quiet.to) ? payload.quiet.to : next.quiet.to,
+          };
         }
         try {
           fs.writeFileSync(SPEECH_FILE, JSON.stringify(next, null, 2));
         } catch (e) {
           log("SPEECH_WRITE_ERR", String(e));
         }
-        send(res, 200, { ok: true, mode: readSpeech(), speed: readSpeed() });
+        send(res, 200, { ok: true, mode: readSpeech(), speed: readSpeed(), quiet: readQuiet() });
+        return;
+      }
+      if (req.method === "POST" && route === "/replay") {
+        if (!lastSpeak || !lastSpeak.text) {
+          send(res, 200, { ok: false, reason: "empty" });
+          return;
+        }
+        speak(lastSpeak.text, lastSpeak.sid, lastSpeak.voice, lastSpeak.max);
+        send(res, 200, { ok: true, chars: lastSpeak.text.length });
         return;
       }
       if (req.method === "POST" && route === "/test") {
         // Пробная фраза текущим голосом и с текущей скоростью.
-        const ok = speakTera("Проверка озвучки. Раз, два, три.", payload.sid || "", payload.voice || null);
+        const phrase = "Проверка озвучки. Раз, два, три.";
+        lastSpeak = { text: phrase, sid: payload.sid || "", voice: payload.voice || "", max: MAX_CHARS };
+        const ok = speakTera(phrase, payload.sid || "", payload.voice || null);
         send(res, 200, { ok });
         return;
       }
@@ -940,6 +994,10 @@ module.exports = {
           const mode = readSpeech();
           if (mode === "silent") {
             log("SKIP: silent mode");
+            continue;
+          }
+          if (inQuietHours()) {
+            log("SKIP: quiet hours");
             continue;
           }
           const source =
