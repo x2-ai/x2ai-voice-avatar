@@ -492,30 +492,6 @@ function createView(ctx) {
     }
     pBody.appendChild(pList);
 
-    const nextBtn = document.createElement("button");
-    nextBtn.type = "button";
-    nextBtn.textContent = "↻ Следующий персонаж из пака";
-    nextBtn.style.cssText = [
-      "display:block",
-      "width:100%",
-      "margin:0 0 10px",
-      "padding:7px 8px",
-      "border-radius:7px",
-      "cursor:pointer",
-      "font:inherit",
-      "font-size:12px",
-      "font-weight:600",
-      "color:inherit",
-      "text-align:center",
-      "border:1px solid rgba(120,180,255,.6)",
-      "background:rgba(80,130,220,.18)",
-    ].join(";");
-    nextBtn.onclick = (ev) => {
-      ev.stopPropagation();
-      nextCharacter();
-      renderPanel();
-    };
-    settings.appendChild(nextBtn);
 
     const rule = document.createElement("hr");
     rule.style.cssText = "border:none;border-top:1px solid rgba(255,255,255,.12);margin:0 0 2px";
