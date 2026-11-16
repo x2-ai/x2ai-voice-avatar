@@ -223,6 +223,7 @@ function createView(ctx) {
   let speechMode = null; // "full" | "summary" | "silent"; null = ещё не загружен
   let speechSpeed = null; // 0.7–1.8; null = ещё не загружена
   let reasonState = null; // { mode: off|brief|full, translate: bool }
+  let keepAlive = true; // держать движок в памяти
   const REASON_LABELS = [
     ["off", "Выключено"],
     ["brief", "Кратко"],
@@ -907,6 +908,26 @@ function createView(ctx) {
     actRow.append(testBtn, replayBtn, stopBtn);
     sBody.appendChild(actRow);
 
+    // Память против скорости: держать движок загруженным или поднимать на фразу.
+    const memRow = document.createElement("div");
+    memRow.style.cssText = "display:flex;flex-direction:column;gap:4px;margin-top:10px";
+    const memBtn = vRow("Держать движок в памяти", true, () => {
+      keepAlive = !keepAlive;
+      refreshMem();
+      bridge("/speech", { keepAlive }).catch(() => {});
+    });
+    const memHint = document.createElement("div");
+    memHint.style.cssText = "font-size:10px;line-height:1.4;opacity:.5";
+    const refreshMem = () => {
+      memBtn.setActive(keepAlive);
+      memHint.textContent = keepAlive
+        ? "движок занимает ~1.7 ГБ и отвечает за полсекунды"
+        : "по требованию: каждая фраза ~9 с на загрузку, память свободна";
+    };
+    memRow.append(memBtn, memHint);
+    refreshMem();
+    sBody.appendChild(memRow);
+
     const applySpeechState = (data) => {
       speechMode = (data && data.mode) || "summary";
       const sp = Number(data && data.speed);
@@ -914,6 +935,10 @@ function createView(ctx) {
         speechSpeed = sp;
         spInput.value = String(sp);
         spVal.textContent = `${sp.toFixed(2)}×`;
+      }
+      if (data && data.keepAlive !== undefined) {
+        keepAlive = Boolean(data.keepAlive);
+        refreshMem();
       }
       const rs = data && data.reason;
       if (rs && typeof rs === "object") {

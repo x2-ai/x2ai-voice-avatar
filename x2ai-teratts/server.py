@@ -42,6 +42,8 @@ except Exception:
     pass
 ACCENT = os.environ.get("TERATTS_ACCENT", "dictionary")
 IDLE = float(os.environ.get("TERATTS_IDLE", "600"))
+# Режим «синтез по требованию»: сервер гасится сразу после проигрывания фразы.
+ONESHOT = os.environ.get("X2AI_TTS_ONESHOT") == "1"
 
 
 def log(*args: object) -> None:
@@ -431,6 +433,12 @@ def main() -> int:
                         f.unlink()
                     except Exception:
                         pass
+                    if ONESHOT:
+                        try:
+                            SOCK.unlink()
+                        except OSError:
+                            pass
+                        os._exit(0)
 
                 threading.Thread(target=_cleanup, daemon=True).start()
                 log(f"spoke {audio_s:.2f}s audio in {gen_ms:.0f}ms: {text[:60]}")

@@ -205,6 +205,16 @@ function readSpeech() {
   }
 }
 
+// Держать движок в памяти (true) или поднимать на каждую фразу (false).
+function readKeepAlive() {
+  try {
+    const raw = JSON.parse(fs.readFileSync(SPEECH_FILE, "utf8"));
+    return raw && raw.keepAlive === false ? false : true;
+  } catch (e) {
+    return true;
+  }
+}
+
 function readSpeed() {
   try {
     const raw = JSON.parse(fs.readFileSync(SPEECH_FILE, "utf8"));
@@ -835,6 +845,8 @@ function speakTera(text, sid, forced, emotion, kind) {
     else delete env.X2AI_TTS_EMOTION;
     if (kind) env.X2AI_TTS_KIND = kind;
     else delete env.X2AI_TTS_KIND;
+    if (readKeepAlive()) delete env.X2AI_TTS_ONESHOT;
+    else env.X2AI_TTS_ONESHOT = "1";
     delete env.X2AI_TTS_TEXT;
     log("TERA_VOICE:", voice || "(default)", sid || "", emotion ? `emotion=${emotion}` : "");
     const p = spawn(TERATTS, [], { stdio: ["pipe", "ignore", "ignore"], detached: true, env });
@@ -1030,6 +1042,7 @@ function startBridge(ctx) {
         speed: readSpeed(),
         quiet: readQuiet(),
         reason: readReason(),
+        keepAlive: readKeepAlive(),
       });
       return;
     }
@@ -1110,12 +1123,14 @@ function startBridge(ctx) {
           speed: readSpeed(),
           quiet: readQuiet(),
           reason: readReason(),
+          keepAlive: readKeepAlive(),
         };
         if (SPEECH_MODES.includes(payload.mode)) next.mode = payload.mode;
         const sp = Number(payload.speed);
         if (Number.isFinite(sp) && sp >= 0.7 && sp <= 1.8) {
           next.speed = Math.round(sp * 100) / 100;
         }
+        if (payload.keepAlive !== undefined) next.keepAlive = Boolean(payload.keepAlive);
         if (payload.reason && typeof payload.reason === "object") {
           const cur = next.reason || readReason();
           next.reason = {
@@ -1136,7 +1151,14 @@ function startBridge(ctx) {
         } catch (e) {
           log("SPEECH_WRITE_ERR", String(e));
         }
-        send(res, 200, { ok: true, mode: readSpeech(), speed: readSpeed(), quiet: readQuiet() });
+        send(res, 200, {
+          ok: true,
+          mode: readSpeech(),
+          speed: readSpeed(),
+          quiet: readQuiet(),
+          reason: readReason(),
+          keepAlive: readKeepAlive(),
+        });
         return;
       }
       if (req.method === "POST" && route === "/say") {
