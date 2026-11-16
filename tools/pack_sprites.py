@@ -37,6 +37,8 @@ def uri(path: Path) -> str:
         ratio = HEIGHT / img.height
         img = img.resize((max(1, int(round(img.width * ratio))), HEIGHT), Image.LANCZOS)
     buf = io.BytesIO()
+    # WebP q86: так кадры выглядели до всех экспериментов — мягче по краям,
+    # без резкой пиксельной «лесенки». PNG-без-потерь, наоборот, проявлял её.
     img.save(buf, format="WEBP", quality=86, method=6)
     return "data:image/webp;base64," + base64.b64encode(buf.getvalue()).decode()
 
@@ -72,9 +74,12 @@ def main() -> int:
                 print(f"{pack_dir.name}: собран sprites.json из PNG")
         if not voices:
             continue
-        # В пиксельном паке папка исторически fx_demon, а персонаж — fx_demoness.
-        if pack_dir.name == "pixel" and "fx_demon" in voices:
-            voices["fx_demoness"] = voices.pop("fx_demon")
+        # Пиксельный пак: папка fx_demon = персонаж fx_demoness, и у всех
+        # персонажей свой префикс px_, чтобы не путались с аниме-паком.
+        if pack_dir.name == "pixel":
+            if "fx_demon" in voices:
+                voices["fx_demoness"] = voices.pop("fx_demon")
+            voices = {k if k.startswith("px_") else f"px_{k}": v for k, v in voices.items()}
         packs[pack_dir.name] = voices
 
     OUT.write_text(json.dumps(packs, ensure_ascii=False), encoding="utf-8")
