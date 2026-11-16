@@ -1,9 +1,15 @@
 #!/usr/bin/env python3
-"""Собирает sprites.json из наших PNG-кадров в packs/.
+"""Собирает общий sprites.json из папок паков.
 
-Аниме-пак (чужие ассеты LivLiv) в репозитории не хранится: если он есть
-локально в packs/anime, он тоже попадёт в sprites.json. Пиксельный пак —
-наш, он лежит в packs/pixel и всегда собирается.
+Каждый пак — отдельная папка со своим sprites.json:
+
+    packs/pixel/sprites.json   — наш пак (в репозитории)
+    packs/anime/sprites.json   — чужой пак LivLiv (в .gitignore, только локально)
+
+Если в папке пака нет sprites.json, но есть PNG-кадры по персонажам,
+файл собирается из них и сохраняется рядом.
+
+Итог пишется в plugins/x2ai-avatar/sprites.json (этот файл в .gitignore).
 
 Запуск: python3 tools/pack_sprites.py
 """
@@ -31,48 +37,50 @@ def uri(path: Path) -> str:
         ratio = HEIGHT / img.height
         img = img.resize((max(1, int(round(img.width * ratio))), HEIGHT), Image.LANCZOS)
     buf = io.BytesIO()
-    img.save(buf, "WEBP", quality=86, method=6)
+    img.save(buf, format="WEBP", quality=86, method=6)
     return "data:image/webp;base64," + base64.b64encode(buf.getvalue()).decode()
+
+
+def from_png(pack_dir: Path) -> dict[str, dict[str, str]]:
+    voices: dict[str, dict[str, str]] = {}
+    for voice_dir in sorted(p for p in pack_dir.iterdir() if p.is_dir()):
+        files = {p.stem: p for p in voice_dir.glob("*.png")}
+        if "closed" not in files:
+            continue
+        closed = uri(files["closed"])
+        opened = uri(files["open"]) if "open" in files else closed
+        entry = {"closed": closed}
+        for state in STATES[1:]:
+            if state == "blink":
+                entry[state] = uri(files["blink"]) if "blink" in files else closed
+            else:
+                entry[state] = uri(files[state]) if state in files else opened
+        voices[voice_dir.name] = entry
+    return voices
 
 
 def main() -> int:
     packs: dict[str, dict[str, dict[str, str]]] = {}
     for pack_dir in sorted(p for p in PACKS.iterdir() if p.is_dir()):
-        voices: dict[str, dict[str, str]] = {}
-        for voice_dir in sorted(p for p in pack_dir.iterdir() if p.is_dir()):
-            files = {p.stem: p for p in voice_dir.glob("*.png")}
-            if "closed" not in files:
-                continue
-            closed = uri(files["closed"])
-            opened = uri(files["open"]) if "open" in files else closed
-            entry = {"closed": closed}
-            for state in STATES[1:]:
-                if state == "blink":
-                    entry[state] = uri(files["blink"]) if "blink" in files else closed
-                else:
-                    entry[state] = uri(files[state]) if state in files else opened
-            voices[voice_dir.name] = entry
-        if voices:
-            # В пиксельном паке папка исторически называется fx_demon,
-            # а в интерфейсе персонаж — fx_demoness.
-            if pack_dir.name == "pixel" and "fx_demon" in voices:
-                voices["fx_demoness"] = voices.pop("fx_demon")
-            packs[pack_dir.name] = voices
-
-    # Аниме-пак не хранится в репозитории (чужие ассеты): если он уже собран
-    # локально, сохраняем его как есть и только обновляем наши паки.
-    if OUT.exists():
-        try:
-            existing = json.loads(OUT.read_text(encoding="utf-8"))
-        except Exception:
-            existing = {}
-        for name, voices in existing.items():
-            if name not in packs and name == "anime":
-                packs[name] = voices
+        file = pack_dir / "sprites.json"
+        if file.exists():
+            voices = json.loads(file.read_text(encoding="utf-8"))
+        else:
+            voices = from_png(pack_dir)
+            if voices:
+                file.write_text(json.dumps(voices, ensure_ascii=False), encoding="utf-8")
+                print(f"{pack_dir.name}: собран sprites.json из PNG")
+        if not voices:
+            continue
+        # В пиксельном паке папка исторически fx_demon, а персонаж — fx_demoness.
+        if pack_dir.name == "pixel" and "fx_demon" in voices:
+            voices["fx_demoness"] = voices.pop("fx_demon")
+        packs[pack_dir.name] = voices
 
     OUT.write_text(json.dumps(packs, ensure_ascii=False), encoding="utf-8")
     total = sum(len(v) for v in packs.values())
-    print(f"готово: {OUT.name} — паков {len(packs)}, персонажей {total}")
+    names = ", ".join(f"{k} ({len(v)})" for k, v in packs.items())
+    print(f"готово: паков {len(packs)}, персонажей {total} — {names}")
     return 0
 
 
