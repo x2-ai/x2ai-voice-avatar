@@ -203,6 +203,15 @@ function readSpeech() {
   }
 }
 
+function readSpeed() {
+  try {
+    const raw = JSON.parse(fs.readFileSync(SPEECH_FILE, "utf8"));
+    const v = Number(raw && raw.speed);
+    if (Number.isFinite(v) && v >= 0.7 && v <= 1.8) return v;
+  } catch (e) {}
+  return 1.0;
+}
+
 // Конец хода: эти события реально присылает десктопный сервис.
 const TRIGGERS = new Set(["session.execution.succeeded", "session.execution.interrupted"]);
 
@@ -533,6 +542,7 @@ function speakTera(text, sid, forced) {
     const env = { ...process.env };
     if (voice) env.X2AI_TTS_VOICE = voice;
     if (sid) env.X2AI_TTS_SID = sid;
+    env.X2AI_TTS_SCALE = String(readSpeed());
     delete env.X2AI_TTS_TEXT;
     log("TERA_VOICE:", voice || "(default)", sid || "");
     const p = spawn(TERATTS, [], { stdio: ["pipe", "ignore", "ignore"], detached: true, env });

@@ -16,7 +16,10 @@
 from __future__ import annotations
 
 import json
+
+import numpy as np
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -142,6 +145,58 @@ def _reverb(y, amount: float):
             continue
         out[d:] += y[:-d] * (gain * amount)
     return out
+
+
+
+# Длинный текст модель читает сжато (предиктор длительности насыщается),
+# поэтому режем на куски по границам предложений и склеиваем с паузами.
+CHUNK_CHARS = int(os.environ.get("X2AI_TTS_CHUNK") or 240)
+CHUNK_GAP = 0.22
+
+
+def split_chunks(text: str, limit: int = CHUNK_CHARS) -> list:
+    if len(text) <= limit:
+        return [text]
+    parts, cur = [], ""
+    for piece in re.split(r"(?<=[.!?…])\s+", text):
+        if not piece:
+            continue
+        if len(piece) > limit:
+            for i in range(0, len(piece), limit):
+                parts.append(piece[i:i + limit])
+            cur = ""
+            continue
+        if len(cur) + len(piece) + 1 <= limit:
+            cur = (cur + " " + piece).strip()
+        else:
+            if cur:
+                parts.append(cur)
+            cur = piece
+    if cur:
+        parts.append(cur)
+    return parts
+
+
+def synth(tts, text: str, voice: str, scale: float):
+    import teratts
+
+    # Теги языка нужны каждому куску, иначе модель ругается.
+    tag = "ru"
+    body = text
+    m = re.match(r"^<(ru|en)>(.*)</\1>$", text, re.S)
+    if m:
+        tag, body = m.group(1), m.group(2)
+    chunks = [f"<{tag}>{c}</{tag}>" for c in split_chunks(body)]
+    if len(chunks) == 1:
+        return teratts.generate_speech(tts, chunks[0], voice, duration_scale=scale)
+    gap = np.zeros(int(CHUNK_GAP * float(teratts.SAMPLE_RATE)), dtype=np.float32)
+    out = []
+    for idx, chunk in enumerate(chunks):
+        audio = teratts.generate_speech(tts, chunk, voice, duration_scale=scale)
+        out.append(np.asarray(audio, dtype=np.float32).reshape(-1))
+        if idx != len(chunks) - 1:
+            out.append(gap)
+    return np.concatenate(out)
 
 
 def apply_fx(voice: str, audio):
@@ -279,9 +334,7 @@ def main() -> int:
                 voice = req.get("voice") or VOICE
                 scale = float(req.get("duration_scale", 1.0))
                 t0 = time.time()
-                audio = teratts.generate_speech(
-                    tts, text, resolve_voice(voice), duration_scale=scale
-                )
+                audio = synth(tts, text, resolve_voice(voice), scale)
                 audio = apply_fx(voice, audio)
                 audio = loudify(audio)
                 gen_ms = (time.time() - t0) * 1000

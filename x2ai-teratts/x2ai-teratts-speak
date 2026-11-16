@@ -65,7 +65,11 @@ import json, os, socket, sys
 sock = sys.argv[1]
 text = os.environ.get("X2AI_TTS_TEXT", "")
 
-req = json.dumps({"text": text, "voice": os.environ.get("X2AI_TTS_VOICE") or None, "sid": os.environ.get("X2AI_TTS_SID") or ""}).encode() + b"\n"
+try:
+    scale = float(os.environ.get("X2AI_TTS_SCALE") or 1.0)
+except ValueError:
+    scale = 1.0
+req = json.dumps({"text": text, "voice": os.environ.get("X2AI_TTS_VOICE") or None, "sid": os.environ.get("X2AI_TTS_SID") or "", "duration_scale": scale}).encode() + b"\n"
 s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
 s.settimeout(300)
 try:
