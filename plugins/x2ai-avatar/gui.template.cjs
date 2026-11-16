@@ -175,7 +175,7 @@ function createView(ctx) {
   gear.title = "Настройки персонажа";
   gear.style.cssText = [
     "position:absolute",
-    "right:-4px",
+    "left:-8px",
     "top:2px",
     "width:22px",
     "height:22px",
