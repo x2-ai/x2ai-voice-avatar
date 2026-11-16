@@ -1363,10 +1363,21 @@ function createView(ctx) {
       .split("");
     if (!chars.length) return null;
     const total = chars.reduce((acc, ch) => acc + charWeight(ch), 0) || 1;
-    return chars.map((ch) => ({
-      frame: frameFor(ch),
-      delay: Math.max(55, Math.round((ms * charWeight(ch)) / total)),
-    }));
+    // Каждый звук разбиваем на «подход — держим — отпускаем»: кадры меняются
+    // чаще, и речь выглядит живее, а не как один застывший кадр на букву.
+    const plan = [];
+    for (const ch of chars) {
+      const dur = Math.max(45, Math.round((ms * charWeight(ch)) / total));
+      const target = frameFor(ch);
+      if (target === "closed") {
+        plan.push({ frame: "closed", delay: dur });
+        continue;
+      }
+      plan.push({ frame: "half", delay: Math.max(30, Math.round(dur * 0.25)) });
+      plan.push({ frame: target, delay: Math.max(45, Math.round(dur * 0.5)) });
+      plan.push({ frame: "half", delay: Math.max(30, Math.round(dur * 0.25)) });
+    }
+    return plan;
   };
 
   let talkTimeout = null;
