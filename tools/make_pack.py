@@ -100,7 +100,8 @@ def main() -> None:
     if "--height" in sys.argv:
         height = int(sys.argv[sys.argv.index("--height") + 1])
     resample = Image.NEAREST if "--nearest" in sys.argv else Image.LANCZOS
-    harden = "--nearest" in sys.argv  # пиксель-арту нужны жёсткие края без полупрозрачной каймы
+    # Пиксель-арту нужны жёсткие края без полупрозрачной каймы.
+    harden = "--nearest" in sys.argv or "--harden" in sys.argv
 
     files = {s: src / f"{s}.png" for s in STATES if (src / f"{s}.png").exists()}
     if "closed" not in files:
