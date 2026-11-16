@@ -1506,6 +1506,8 @@ function createView(ctx) {
                 const id = (event && event.data && event.data.sessionID) || "";
                 if (id && currentSid && id !== currentSid) return;
                 answerStartedAt = Date.now();
+                markActive(id || currentSid);
+                pingStart(id || currentSid);
               }),
             );
           } catch (err) {
@@ -1516,9 +1518,7 @@ function createView(ctx) {
             offs.push(
               data.on(name, (event) => {
                 const id = (event && event.data && event.data.sessionID) || "";
-                const psid = id || currentSid;
-                markActive(psid);
-                pingStart(psid);
+                markActive(id || currentSid);
               }),
             );
           } catch (err) {
