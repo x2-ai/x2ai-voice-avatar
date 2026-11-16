@@ -1355,8 +1355,15 @@ function createView(ctx) {
       .catch(() => {});
   };
   refreshBadge();
-  const bridgeTimer = setInterval(pollBridge, 250);
-  pollBridge();
+  // Опрос моста адаптивный: часто только пока идёт звук, иначе — редко.
+  let bridgeTimer = null;
+  const schedulePoll = () => {
+    bridgeTimer = setTimeout(() => {
+      pollBridge();
+      schedulePoll();
+    }, bridgeSpeaking ? 200 : 800);
+  };
+  schedulePoll();
 
   // Пинг долгой задачи: инструмент работает дольше минуты — персонаж
   // напоминает о себе своим голосом раз в 2.5 минуты.
@@ -1626,7 +1633,7 @@ function createView(ctx) {
     clearTimeout(moodTimer);
     clearTimeout(speakTimer);
     clearInterval(sidePoll);
-    clearInterval(bridgeTimer);
+    clearTimeout(bridgeTimer);
     document.removeEventListener("mousedown", onDocDown, true);
     if (talkTimer) clearInterval(talkTimer);
     if (typeof unsub === "function") {

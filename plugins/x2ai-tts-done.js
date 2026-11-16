@@ -908,12 +908,22 @@ function startBridge(ctx) {
     "access-control-allow-methods": "GET,POST,OPTIONS",
     "content-type": "application/json",
   };
+  // Кэш чтения состояния: окно опрашивает /state несколько раз в секунду,
+  // а файл меняется редко — незачем дёргать диск на каждый запрос.
+  const jsonCache = new Map();
   const readJson = (file) => {
+    const now = Date.now();
+    const hit = jsonCache.get(file);
+    if (hit && now - hit.at < 150) return hit.value;
+    let value = null;
     try {
-      return JSON.parse(fs.readFileSync(file, "utf8"));
+      value = JSON.parse(fs.readFileSync(file, "utf8"));
     } catch (e) {
-      return null;
+      value = null;
     }
+    jsonCache.set(file, { at: now, value });
+    if (jsonCache.size > 12) jsonCache.clear();
+    return value;
   };
   const readVoices = () => {
     const value = readJson(voicesFile);

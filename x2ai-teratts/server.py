@@ -41,7 +41,7 @@ try:
 except Exception:
     pass
 ACCENT = os.environ.get("TERATTS_ACCENT", "dictionary")
-IDLE = float(os.environ.get("TERATTS_IDLE", "900"))
+IDLE = float(os.environ.get("TERATTS_IDLE", "600"))
 
 
 def log(*args: object) -> None:

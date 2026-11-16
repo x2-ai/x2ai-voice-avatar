@@ -3,18 +3,17 @@
 # Текст читается со stdin. Поднимает тёплый сервер, если он не запущен,
 # и печатает ответ сервера JSON-строкой. Код выхода != 0 — озвучка не удалась.
 #
-# Важно: в горячем пути нет опроса «жив ли сервер» питоном — раньше цикл
-# ожидания плодил десятки процессов python. Теперь просто пробуем отправить
-# запрос, а поднимаем сервер только если ответа нет.
+# Лёгкий путь: один процесс python (send.py) на попытку. Никаких опросов
+# «жив ли сервер» в цикле — только отправка и, при необходимости, один старт.
 set -uo pipefail
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VENV="$HOME/.config/opencode/teratts-venv/bin/python"
 SOCK="${TERATTS_SOCK:-/tmp/x2ai-teratts.sock}"
 LOG="${TERATTS_LOG:-$HOME/.config/opencode/x2ai-teratts.log}"
-WAIT="${TERATTS_WAIT:-300}"
-NC="${TERATTS_NC:-/usr/bin/nc}"
 LOCKD="${TERATTS_LOCK:-/tmp/x2ai-teratts-start.d}"
+SEND="$DIR/send.py"
+PY="${TERATTS_CLIENT_PY:-/usr/bin/python3}"
 
 text="$(cat)"
 if [ -z "$(printf '%s' "$text" | tr -d '[:space:]')" ]; then
@@ -22,34 +21,18 @@ if [ -z "$(printf '%s' "$text" | tr -d '[:space:]')" ]; then
   exit 1
 fi
 
-payload="$(
-  X2AI_TTS_TEXT="$text" /usr/bin/python3 - <<'PY'
-import json, os
-try:
-    scale = float(os.environ.get("X2AI_TTS_SCALE") or 1.0)
-except ValueError:
-    scale = 1.0
-emotion = (os.environ.get("X2AI_TTS_EMOTION") or "").strip() or None
-kind = (os.environ.get("X2AI_TTS_KIND") or "").strip() or None
-print(json.dumps({
-    "text": os.environ.get("X2AI_TTS_TEXT", ""),
-    "voice": os.environ.get("X2AI_TTS_VOICE") or None,
-    "sid": os.environ.get("X2AI_TTS_SID") or "",
-    "duration_scale": scale,
-    "emotion": emotion,
-    "kind": kind,
-}))
-PY
-)"
+export X2AI_TTS_TEXT="$text"
 
-send() {
-  printf '%s\n' "$payload" | "$NC" -U -w "$WAIT" "$SOCK" 2>/dev/null
-}
+"$PY" "$SEND" "$SOCK"
+rc=$?
 
-start_server() {
-  [ -S "$SOCK" ] && rm -f "$SOCK"
-  "$VENV" - "$VENV" "$DIR/server.py" "$LOG" <<'PY'
+if [ "$rc" -eq 3 ]; then
+  # Сервера нет: поднимает ровно один клиент, остальные ждут появления сокета.
+  if mkdir "$LOCKD" 2>/dev/null; then
+    [ -S "$SOCK" ] && rm -f "$SOCK"
+    "$VENV" - "$VENV" "$DIR/server.py" "$LOG" <<'PY'
 import subprocess, sys
+
 venv, srv, log = sys.argv[1:4]
 with open(log, "ab") as fh:
     subprocess.Popen(
@@ -62,33 +45,19 @@ with open(log, "ab") as fh:
         cwd=srv.rsplit("/", 1)[0],
     )
 PY
-}
-
-out="$(send)"
-if [ -z "$out" ]; then
-  # Сервера нет. Замок через mkdir: одновременно поднимает только один клиент.
-  if mkdir "$LOCKD" 2>/dev/null; then
-    start_server
-    for _ in $(seq 1 90); do
+    for _ in $(seq 1 120); do
       [ -S "$SOCK" ] && break
       sleep 0.5
     done
     rmdir "$LOCKD" 2>/dev/null || true
   else
-    # Кто-то уже поднимает — ждём появления сокета.
-    for _ in $(seq 1 180); do
+    for _ in $(seq 1 240); do
       [ -S "$SOCK" ] && break
       sleep 0.5
     done
   fi
-  out="$(send)"
+  "$PY" "$SEND" "$SOCK"
+  exit $?
 fi
 
-if [ -z "$out" ]; then
-  echo '{"ok":false,"error":"server did not start"}'
-  exit 1
-fi
-
-printf '%s\n' "$out"
-/usr/bin/python3 -c 'import json,sys;sys.exit(0 if json.loads(sys.argv[1]).get("ok") else 1)' "$out" 2>/dev/null || exit 1
-exit 0
+exit "$rc"
