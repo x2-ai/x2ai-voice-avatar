@@ -598,6 +598,19 @@ function createView(ctx) {
     const mWrap = mBody.parentNode;
     const mList = keepScroll(document.createElement("div"), "model");
     mList.style.cssText = "max-height:150px;overflow-y:auto;display:flex;flex-direction:column;gap:4px";
+    const mSearch = document.createElement("input");
+    mSearch.type = "text";
+    mSearch.placeholder = "Поиск модели";
+    mSearch.style.cssText =
+      "width:100%;box-sizing:border-box;font:inherit;font-size:11px;padding:4px 7px;margin-bottom:6px;" +
+      "border:1px solid rgba(255,255,255,.16);border-radius:7px;background:rgba(255,255,255,.04);color:inherit";
+    mSearch.oninput = () => {
+      modelQuery = mSearch.value;
+      modelLimit = 40;
+      renderModels();
+    };
+    mSearch.onclick = (ev) => ev.stopPropagation();
+    mBody.appendChild(mSearch);
     mBody.appendChild(mList);
 
     // Обращение к пользователю: имя и род. Влияет на пересказ («Аня, ты просила…»).
@@ -665,14 +678,24 @@ function createView(ctx) {
     let modelsLoaded = false;
     let modelsLoading = false;
 
+    let modelQuery = "";
+    let modelLimit = 40;
+    let modelsData = null;
+
     const renderModels = (data) => {
+      if (data) modelsData = data;
       mList.textContent = "";
       modelRows.length = 0;
-      const models = (data && data.models) || [];
-      const current = (data && data.current) || {};
+      const models = (modelsData && modelsData.models) || [];
+      const current = (modelsData && modelsData.current) || {};
       // Порядок приходит с моста: локальные, затем бесплатные.
-      const free = models.filter((m) => m.local || m.free);
-      const shown = free.slice(0, 40);
+      const q = modelQuery.trim().toLowerCase();
+      const free = models.filter((m) => {
+        if (!(m.local || m.free)) return false;
+        if (!q) return true;
+        return `${m.name} ${m.providerID}/${m.id}`.toLowerCase().includes(q);
+      });
+      const shown = free.slice(0, modelLimit);
       if (!shown.length) {
         const empty = document.createElement("div");
         empty.textContent =
@@ -692,10 +715,22 @@ function createView(ctx) {
         mList.appendChild(row);
       }
       if (free.length > shown.length) {
-        const more = document.createElement("div");
-        more.textContent = `и ещё ${free.length - shown.length}`;
-        more.style.cssText = "opacity:.45;font-size:10px;padding:2px 7px";
+        const more = document.createElement("button");
+        more.type = "button";
+        more.textContent = `Показать ещё ${Math.min(40, free.length - shown.length)}`;
+        more.style.cssText =
+          "margin-top:4px;padding:4px 8px;font:inherit;font-size:11px;cursor:pointer;border-radius:7px;" +
+          "border:1px solid rgba(255,255,255,.16);background:rgba(255,255,255,.05);color:inherit";
+        more.onclick = (ev) => {
+          ev.stopPropagation();
+          modelLimit += 40;
+          renderModels();
+        };
         mList.appendChild(more);
+        const left = document.createElement("div");
+        left.textContent = `всего подходит: ${free.length}`;
+        left.style.cssText = "opacity:.4;font-size:10px;padding:2px 7px";
+        mList.appendChild(left);
       }
     };
 
