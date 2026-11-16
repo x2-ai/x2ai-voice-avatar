@@ -261,33 +261,6 @@ function readUser() {
 const TRIGGERS = new Set(["session.execution.succeeded", "session.execution.interrupted"]);
 const FAILS = new Set(["session.execution.failed", "session.execution.error", "session.execution.errored"]);
 
-// Пинг долгой задачи: если инструмент работает дольше минуты, персонаж
-// напоминает о себе раз в 2.5 минуты — не чаще.
-const PING_AFTER_MS = 60_000;
-const PING_EVERY_MS = 150_000;
-const PING_PHRASES = ["Ещё работаю, почти.", "Продолжаю, не ушёл.", "Ещё пара минут."];
-const pings = new Map();
-
-function pingStop(sid) {
-  const t = pings.get(sid);
-  if (t) clearTimeout(t);
-  pings.delete(sid);
-}
-
-function pingStart(sid) {
-  if (!sid || pings.has(sid)) return;
-  const tick = () => {
-    const mode = readSpeech();
-    if (mode !== "silent" && !inQuietHours()) {
-      const phrase = PING_PHRASES[Math.floor(Math.random() * PING_PHRASES.length)];
-      log("PING:", sid, phrase);
-      speak(phrase, sid, effectiveVoice(sid), MAX_CHARS, null);
-    }
-    pings.set(sid, setTimeout(tick, PING_EVERY_MS));
-  };
-  pings.set(sid, setTimeout(tick, PING_AFTER_MS));
-}
-
 function enabled() {
   if (process.env.TTS_DONE === "0") return false;
   try {
@@ -931,6 +904,21 @@ function startBridge(ctx) {
         send(res, 200, { ok: true, mode: readSpeech(), speed: readSpeed(), quiet: readQuiet() });
         return;
       }
+      if (req.method === "POST" && route === "/say") {
+        const text = typeof payload.text === "string" ? payload.text.trim().slice(0, 400) : "";
+        if (!text) {
+          send(res, 200, { ok: false, reason: "empty" });
+          return;
+        }
+        const ssid = String(payload.sid || "");
+        if (readSpeech() === "silent" || inQuietHours()) {
+          send(res, 200, { ok: false, reason: "muted" });
+          return;
+        }
+        speak(text, ssid, effectiveVoice(ssid), MAX_CHARS, null);
+        send(res, 200, { ok: true });
+        return;
+      }
       if (req.method === "POST" && route === "/replay") {
         if (!lastSpeak || !lastSpeak.text) {
           send(res, 200, { ok: false, reason: "empty" });
@@ -1013,18 +1001,7 @@ module.exports = {
             continue;
           }
 
-          // Пинг долгой задачи: старт инструмента — таймер, финиш — стоп.
-          if (type === "session.tool.called") {
-            pingStart(data.sessionID);
-            continue;
-          }
-          if (type === "session.tool.success" || type === "session.tool.error" || type === "session.tool.failed") {
-            pingStop(data.sessionID);
-            continue;
-          }
-
           if (FAILS.has(type)) {
-            pingStop(data.sessionID);
             const fsid = data.sessionID;
             if (fsid && readSpeech() !== "silent" && !inQuietHours()) {
               log("FAIL:", fsid);
@@ -1034,8 +1011,6 @@ module.exports = {
           }
 
           if (!TRIGGERS.has(type)) continue;
-
-          pingStop(data.sessionID);
 
           const sid = data.sessionID;
           const raw = bufTake(sid);

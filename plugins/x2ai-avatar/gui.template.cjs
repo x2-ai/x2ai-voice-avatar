@@ -1184,6 +1184,35 @@ function createView(ctx) {
   const bridgeTimer = setInterval(pollBridge, 250);
   pollBridge();
 
+  // Пинг долгой задачи: инструмент работает дольше минуты — персонаж
+  // напоминает о себе своим голосом раз в 2.5 минуты.
+  const PING_PHRASES = ["Ещё работаю, почти.", "Продолжаю, не ушёл.", "Ещё пара минут."];
+  let pingTimer = null;
+  const pingStop = () => {
+    if (pingTimer) clearTimeout(pingTimer);
+    pingTimer = null;
+  };
+  const pingStart = () => {
+    if (pingTimer) return;
+    const tick = () => {
+      // Слот может рендериться дважды — пингуем один раз на окно (localStorage общий).
+      const KEY = "x2ai-avatar:ping";
+      let last = 0;
+      try {
+        last = Number(localStorage.getItem(KEY) || 0) || 0;
+      } catch (e) {}
+      if (Date.now() - last >= 60000) {
+        try {
+          localStorage.setItem(KEY, String(Date.now()));
+        } catch (e) {}
+        const phrase = PING_PHRASES[Math.floor(Math.random() * PING_PHRASES.length)];
+        bridge("/say", { text: phrase, sid: currentSid }).catch(() => {});
+      }
+      pingTimer = setTimeout(tick, 150000);
+    };
+    pingTimer = setTimeout(tick, 60000);
+  };
+
   // Клик по персонажу: короткая заранее сгенерированная реплика его голосом.
   // Ждать TeraTTS не нужно — звук уже лежит внутри плагина.
   box.style.cursor = "pointer";
@@ -1270,6 +1299,31 @@ function createView(ctx) {
         for (const name of ["session.execution.succeeded", "session.execution.interrupted"]) {
           try {
             offs.push(data.on(name, onSpeak(name)));
+          } catch (err) {
+          }
+        }
+        for (const name of ["session.tool.called"]) {
+          try {
+            offs.push(
+              data.on(name, (event) => {
+                const id = (event && event.data && event.data.sessionID) || "";
+                if (id && currentSid && id !== currentSid) return;
+                pingStart();
+              }),
+            );
+          } catch (err) {
+          }
+        }
+        for (const name of [
+          "session.tool.success",
+          "session.tool.error",
+          "session.tool.failed",
+          "session.execution.succeeded",
+          "session.execution.failed",
+          "session.execution.interrupted",
+        ]) {
+          try {
+            offs.push(data.on(name, () => pingStop()));
           } catch (err) {
           }
         }
