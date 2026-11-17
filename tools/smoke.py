@@ -75,6 +75,10 @@ def check_bundle_markers() -> None:
         "Переводить на {lang}",
         "defaultVoiceFor",
         "voiceLang",
+        "EN_CLICKS",
+        "clipVoice",
+        "Имя персонажа",
+        "CHAR_NAMES_EN",
     ]
     for marker in markers:
         if marker in text:
@@ -138,6 +142,7 @@ def check_tts_markers() -> None:
         "function langRatio",
         "voiceLang",
         "eng_f3",
+        "p.stdin.write(payload)",
     ]
     for marker in markers:
         if marker in text:

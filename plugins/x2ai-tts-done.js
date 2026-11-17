@@ -604,7 +604,7 @@ function speakPiper(text, model) {
       a.unref();
     });
     p.stdin.on("error", () => {});
-    p.stdin.write(payload);
+    p.stdin.write(text);
     p.stdin.end();
     p.unref();
   } catch (e) {
@@ -647,7 +647,7 @@ function summarize(raw) {
       if (/\b\w+:\d+\b/.test(t)) continue;
       if (/\d/.test(t) && (t.match(/\d/g) || []).length / t.length > 0.06) continue;
       if (!/^[A-ZА-ЯЁ]/.test(t)) continue;
-      if (cyrRatio(t) < 0.5) continue;
+      if (langRatio(t, voiceLang()) < 0.5) continue;
       cand.push(t);
       if (cand.length >= 3) break;
     }
@@ -1124,7 +1124,7 @@ function speakTera(text, sid, forced, emotion, kind) {
     p.on("error", (e) => log("TERA_ERR", e?.message));
     p.on("close", (code) => log("TERA_EXIT", code));
     p.stdin.on("error", () => {});
-    p.stdin.write(text);
+    p.stdin.write(payload);
     p.stdin.end();
     p.unref();
     return true;
@@ -1524,11 +1524,14 @@ function startBridge(ctx) {
         return;
       }
       if (req.method === "POST" && route === "/test") {
-        // Пробная фраза текущим голосом и с текущей скоростью.
-        const phrase = "Проверка озвучки. Раз, два, три.";
-        lastSpeak = { text: phrase, sid: payload.sid || "", voice: payload.voice || "", max: MAX_CHARS };
-        const ok = speakTera(phrase, payload.sid || "", payload.voice || null);
-        send(res, 200, { ok });
+        // Пробная фраза текущим голосом и с текущей скоростью. Через speak(),
+        // чтобы сервер записал state с текстом — тогда двигаются губы.
+        const phrase =
+          voiceLang() === "en"
+            ? "Testing the voice. One, two, three."
+            : "Проверка озвучки. Раз, два, три.";
+        speak(phrase, String(payload.sid || ""), payload.voice || null, MAX_CHARS);
+        send(res, 200, { ok: true });
         return;
       }
       if (req.method === "POST" && route === "/stop") {
@@ -1672,12 +1675,14 @@ module.exports = {
               (await llmSummary(raw, gender, undefined, sid, long ? "long" : "")) ||
               summarize(raw) ||
               clean.slice(0, 300);
-            if (long) source = `Много деталей, коротко. ${source}`;
+            if (long) {
+              source = `${voiceLang() === "en" ? "Lots of details, in short. " : "Много деталей, коротко. "}${source}`;
+            }
           }
-          const summary = agreeGender(source, gender);
+          const summary = voiceLang() === "ru" ? agreeGender(source, gender) : source;
           log("GENDER:", gender || "-", voice, "mode:", mode);
-          if (cyrRatio(summary) < 0.5) {
-            log("SKIP: not russian", summary.slice(0, 60));
+          if (langRatio(summary, voiceLang()) < 0.5) {
+            log("SKIP: not " + voiceLang(), summary.slice(0, 60));
             continue;
           }
           speak(summary, sid, voice, mode === "full" ? FULL_MAX_CHARS : MAX_CHARS, "up");

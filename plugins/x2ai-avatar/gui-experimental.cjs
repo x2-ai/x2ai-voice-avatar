@@ -77,6 +77,23 @@ const saveCharSetting = (key, patch) => {
   } catch (e) {}
 };
 
+// Дефолтные имена по-английски. Своё имя, введённое пользователем, важнее
+// и никогда не переводится.
+const CHAR_NAMES_EN = {
+  ru_f1: "Anya", ru_f2: "Mila", ru_m1: "Grisha", ru_m5: "Timur",
+  fx_robot: "Robik", fx_demoness: "Azazel", fx_alien: "Zeta",
+  fx_cat: "Murzik", fx_penguin: "Piko", fx_ghost: "Yuki",
+  px_ru_f1: "Tyanka", px_fx_robot: "Robot", px_fx_demoness: "Demoness",
+  px_fx_penguin: "Alien", px_ru_m1: "Programmer",
+};
+const charName = (key) => {
+  const k = packKey(key);
+  const custom = (charSettingsFor(k).name || "").trim();
+  if (custom) return custom;
+  const base = nameFor(k);
+  return activeLang === "ru" ? base : CHAR_NAMES_EN[k] || base;
+};
+
 // Какие персонажи пака доступны: для новых чатов и для кнопки смены.
 const ENABLED_KEY = "x2ai-avatar:enabled";
 let enabledMap = {};
@@ -193,6 +210,8 @@ const I18N = {
     "загружаю голоса…": "loading voices…",
     "По умолчанию": "Default",
     "сейчас: {v}": "now: {v}",
+    "Имя персонажа": "Character name",
+    "Пусто — имя по умолчанию.": "Empty — the default name is used.",
     "Озвучка ответа": "Answer speech",
     "Выключено": "Off",
     "Кратко": "Brief",
@@ -388,7 +407,7 @@ function createView(ctx) {
     voice = next;
     img.src = frame(voice, moodState.value === "awake" ? "closed" : "blink");
     if (moodState.value !== "awake") setMood(moodState.value, true);
-    root.title = `x2ai · ${nameFor(voice)} · ${voice}`;
+    root.title = `x2ai · ${charName(voice)} · ${voice}`;
     applyHeightFor(packKey(next));
     applyPrefsFor(packKey(next));
   };
@@ -570,6 +589,9 @@ function createView(ctx) {
   };
 
   // Готовые клипы: одна реплика за раз, артикуляция идёт по длительности клипа.
+  // Готовые клипы записаны русскими голосами: берём базовый голос персонажа,
+  // а не тот, которым он говорит на текущем языке.
+  const clipVoice = (id) => VOICE_ALIAS[packKey(id)] || packKey(id);
   function pickClip(list) {
     return list && list.length ? list[Math.floor(Math.random() * list.length)] : null;
   }
@@ -621,11 +643,16 @@ function createView(ctx) {
     stopAll();
     animateSwap(next);
     saveLocal(currentSid, next);
-    if (currentSid) bridge("/voice", { sid: currentSid, voice: charVoice(next), name: nameFor(next) }).catch(() => {});
-    // Реплики есть по голосу, а не по id персонажа.
-    const line = pickClip(LINES.lines && (LINES.lines[charVoice(next)] || LINES.lines[next]));
-    playClip(line);
-    if (line && line.text) startSpeaking(line.ms || 1200, "", line.text);
+    if (currentSid) bridge("/voice", { sid: currentSid, voice: charVoice(next), name: charName(next) }).catch(() => {});
+    if (voiceLang() === "en") {
+      const text = tf(pickClip(EN_SUMMON), { name: charName(next) });
+      if (text) bridge("/say", { text, sid: currentSid, voice: charVoice(next) }).catch(() => {});
+    } else {
+      // Реплики есть по голосу, а не по id персонажа.
+      const line = pickClip(LINES.lines && (LINES.lines[clipVoice(next)] || LINES.lines[next]));
+      playClip(line);
+      if (line && line.text) startSpeaking(line.ms || 1200, "", line.text);
+    }
     return next;
   };
 
@@ -760,7 +787,7 @@ function createView(ctx) {
     swapBtn.title = t("Следующий персонаж из пака");
     bridge("/speech", { lang: code }).catch(() => {});
     if (currentSid) {
-      bridge("/voice", { sid: currentSid, voice: charVoice(voice), name: nameFor(voice) }).catch(() => {});
+      bridge("/voice", { sid: currentSid, voice: charVoice(voice), name: charName(voice) }).catch(() => {});
     }
     if (panelOpen) renderPanel();
   };
@@ -783,11 +810,13 @@ function createView(ctx) {
       if (pick) {
         apply(pick, true);
         saveLocal(currentSid, pick);
-        if (currentSid) bridge("/voice", { sid: currentSid, voice: charVoice(pick), name: nameFor(pick) }).catch(() => {});
+        if (currentSid) bridge("/voice", { sid: currentSid, voice: charVoice(pick), name: charName(pick) }).catch(() => {});
       }
       // Персонаж называет пак своим голосом.
-      const packClips = LINES.packs && LINES.packs[name];
-      playClip(packClips && packClips[pick || voice]);
+      if (voiceLang() === "ru") {
+        const packClips = LINES.packs && LINES.packs[name];
+        playClip(packClips && packClips[pick || voice]);
+      }
     };
 
     // Подписи голоса и общая строка-кнопка для всех списков панели.
@@ -854,7 +883,7 @@ function createView(ctx) {
     };
 
     // Шапка подменю: «Назад» выглядит ссылкой, а не пунктом меню.
-    const head = (title, back) => {
+    const head = (title, back, input) => {
       const row = document.createElement("div");
       row.style.cssText = "display:flex;flex-direction:column;gap:2px;margin:0 0 8px";
       const backBtn = document.createElement("button");
@@ -877,9 +906,37 @@ function createView(ctx) {
         ev.stopPropagation();
         go(back || { name: "root" });
       };
-      const titleEl = document.createElement("div");
-      titleEl.textContent = t(title);
-      titleEl.style.cssText = "font-size:12px;font-weight:600;opacity:.95;padding-left:2px";
+      let titleEl;
+      if (typeof input === "function") {
+        // Имя персонажа редактируется прямо в шапке.
+        titleEl = document.createElement("input");
+        titleEl.type = "text";
+        titleEl.maxLength = 40;
+        titleEl.placeholder = t("Имя персонажа");
+        titleEl.value = title;
+        titleEl.style.cssText = [
+          "width:100%",
+          "box-sizing:border-box",
+          "font:inherit",
+          "font-size:12px",
+          "font-weight:600",
+          "padding:3px 6px",
+          "border-radius:6px",
+          "border:1px solid rgba(255,255,255,.16)",
+          "background:rgba(255,255,255,.05)",
+          "color:inherit",
+          "outline:none",
+        ].join(";");
+        titleEl.addEventListener("change", () => input(titleEl.value));
+        titleEl.addEventListener("keydown", (ev) => {
+          if (ev.key === "Enter") titleEl.blur();
+        });
+        titleEl.onclick = (ev) => ev.stopPropagation();
+      } else {
+        titleEl = document.createElement("div");
+        titleEl.textContent = t(title);
+        titleEl.style.cssText = "font-size:12px;font-weight:600;opacity:.95;padding-left:2px";
+      }
       row.append(backBtn, titleEl);
       panel.appendChild(row);
     };
@@ -1115,7 +1172,7 @@ function createView(ctx) {
         };
 
         const name = document.createElement("span");
-        name.textContent = nameFor(key);
+        name.textContent = charName(key);
         name.style.cssText =
           "flex:1;min-width:0;font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" +
           (on ? "" : "opacity:.45");
@@ -1143,8 +1200,16 @@ function createView(ctx) {
       hint("Галочка — персонаж доступен в новых чатах и при смене. Снятая — уже выбранного не убирает.", box);
     } else if (view.name === "char") {
       const key = view.key;
-      head(nameFor(key), { name: "chars" });
+      head(charName(key), { name: "chars" }, (value) => {
+        const clean = value.replace(/\s+/g, " ").trim().slice(0, 40);
+        saveCharSetting(key, { name: clean });
+        if (key === packKey(voice) && currentSid) {
+          bridge("/voice", { sid: currentSid, voice: charVoice(voice), name: charName(key) }).catch(() => {});
+        }
+        renderPanel();
+      });
       const box = boxEl();
+      if (!(charSettingsFor(key).name || "").trim()) hint("Пусто — имя по умолчанию.", box);
 
       if (!isCharEnabled(key)) {
         hint("Персонаж выключен: в новых чатах не появится, включить в текущем чате нельзя.", box);
@@ -1207,9 +1272,14 @@ function createView(ctx) {
       };
 
       const bindVoice = (id) => {
-        // Пример голоса звучит сразу, не дожидаясь ответа моста.
-        playClip((LINES.samples && (LINES.samples[id] || LINES.samples[key])) || null);
         const value = id || defaultVoiceOf();
+        if (voiceLang() === "ru") {
+          // Пример голоса звучит сразу, не дожидаясь ответа моста.
+          playClip((LINES.samples && (LINES.samples[id] || LINES.samples[key])) || null);
+        } else {
+          const text = pickClip(EN_SAMPLE);
+          if (text) bridge("/say", { text, sid: currentSid, voice: value }).catch(() => {});
+        }
         const lang = voiceLang();
         const byLang = { ...(charSettingsFor(key).voiceByLang || {}) };
         byLang[lang] = value;
@@ -1217,7 +1287,7 @@ function createView(ctx) {
         charVoices[key] = value;
         bridge("/charvoice", { charId: key, voice: value }).catch(() => {});
         if (key === packKey(voice) && currentSid) {
-          bridge("/voice", { sid: currentSid, voice: value, name: nameFor(key) }).catch(() => {});
+          bridge("/voice", { sid: currentSid, voice: value, name: charName(key) }).catch(() => {});
         }
         refreshVoiceSelection();
       };
@@ -1837,7 +1907,7 @@ function createView(ctx) {
       box.style.animation = "x2ai-breathe 3.6s ease-in-out infinite";
       zzz.style.animation = "x2ai-zzz 2.6s ease-out infinite";
       zzz.style.opacity = "0";
-      root.title = `x2ai · ${nameFor(voice)} · ${t("спит")}`;
+      root.title = `x2ai · ${charName(voice)} · ${t("спит")}`;
     } else if (next === "sad") {
       if (!quiet) img.src = frame(voice, "blink");
       img.style.filter = `${SHADOW} grayscale(.55) brightness(.88)`;
@@ -1845,7 +1915,7 @@ function createView(ctx) {
       box.style.transform = "translateY(2px) rotate(-2deg)";
       zzz.style.animation = "";
       zzz.style.opacity = "0";
-      root.title = `x2ai · ${nameFor(voice)} · ${t("расстроен")}`;
+      root.title = `x2ai · ${charName(voice)} · ${t("расстроен")}`;
     } else {
       if (!quiet) img.src = frame(voice, "closed");
       img.style.filter = SHADOW;
@@ -1853,7 +1923,7 @@ function createView(ctx) {
       box.style.transform = "";
       zzz.style.animation = "";
       zzz.style.opacity = "0";
-      root.title = `x2ai · ${nameFor(voice)} · ${voice}`;
+      root.title = `x2ai · ${charName(voice)} · ${voice}`;
     }
     return prev;
   };
@@ -1924,6 +1994,13 @@ function createView(ctx) {
     и: "half",
     ю: "round",
     я: "wide",
+    // Латинские гласные: без них английская речь шла без движения рта.
+    a: "wide",
+    o: "open",
+    u: "round",
+    e: "half",
+    i: "half",
+    y: "half",
   };
   // Без сглаживания: согласные закрывают рот, гласные держат свою форму.
   const frameFor = (ch) => VOWEL_FRAME[ch] || "closed";
@@ -1939,7 +2016,8 @@ function createView(ctx) {
   const buildTalkPlan = (text, ms) => {
     const chars = String(text || "")
       .toLowerCase()
-      .replace(/[^а-яё\s.,!?;:—–…-]/g, "")
+      .replace(/<\/?[a-z]{2}>/gi, " ")
+      .replace(/[^a-zа-яё\s.,!?;:—–…-]/g, "")
       .split("");
     if (!chars.length) return null;
     const total = chars.reduce((acc, ch) => acc + charWeight(ch), 0) || 1;
@@ -2078,7 +2156,7 @@ function createView(ctx) {
   // Голос чата на сервер: до готовности моста молчим, потом дошлём.
   function pushVoice(key) {
     if (!bridgeReady || !currentSid || !key) return;
-    bridge("/voice", { sid: currentSid, voice: charVoice(key), name: nameFor(key) }).catch(() => {});
+    bridge("/voice", { sid: currentSid, voice: charVoice(key), name: charName(key) }).catch(() => {});
   }
 
   const applyForSession = (sid) => {
@@ -2140,7 +2218,7 @@ function createView(ctx) {
   let lastSyncedName = "";
   const syncName = () => {
     if (!currentSid) return;
-    const nm = nameFor(voice);
+    const nm = charName(voice);
     if (!nm || nm === lastSyncedName) return;
     lastSyncedName = nm;
     bridge("/voice", { sid: currentSid, voice: charVoice(voice), name: nm }).catch(() => {});
@@ -2201,6 +2279,23 @@ function createView(ctx) {
   // Пинг долгой задачи: инструмент работает дольше минуты — персонаж
   // напоминает о себе своим голосом раз в 2.5 минуты.
   // Реплики пинга — по роду персонажа, чтобы «не ушла» не звучало мужским голосом.
+  const EN_CLICKS = [
+    "Yes?",
+    "I'm here.",
+    "Did you call me?",
+    "Listening.",
+    "What is it?",
+    "Ready.",
+    "One moment.",
+    "Hmm?",
+  ];
+  const EN_SUMMON = ["Hi! I'm {name}.", "Hello, I'm {name}.", "Nice to meet you, I'm {name}."];
+  const EN_SAMPLE = ["This is my voice.", "That's how I sound.", "Hello, this is me."];
+  const EN_PINGS = {
+    f: ["Still working, almost done.", "Carrying on, I'm here.", "A couple more minutes."],
+    m: ["Still working, almost done.", "Carrying on, I'm here.", "A couple more minutes."],
+    n: ["Still working, almost done.", "Still working.", "A couple more minutes."],
+  };
   const PING_PHRASES = {
     f: ["Ещё работаю, почти.", "Продолжаю, не ушла.", "Ещё пара минут."],
     m: ["Ещё работаю, почти.", "Продолжаю, не ушёл.", "Ещё пара минут."],
@@ -2253,7 +2348,11 @@ function createView(ctx) {
         try {
           localStorage.setItem(KEY, String(Date.now()));
         } catch (e) {}
-        const list = PING_PHRASES[voiceGender(charVoice(voiceOf(key)))] || PING_PHRASES.n;
+        const gender = voiceGender(charVoice(voiceOf(key)));
+        const list =
+          voiceLang() === "en"
+            ? EN_PINGS[gender] || EN_PINGS.n
+            : PING_PHRASES[gender] || PING_PHRASES.n;
         const phrase = list[Math.floor(Math.random() * list.length)];
         // Если что-то уже звучит — реплику не повторяем, просто считаем сказанной.
         bridge("/say", { text: phrase, sid: key, voice: charVoice(voiceOf(key)) }).catch(() => {});
@@ -2292,7 +2391,12 @@ function createView(ctx) {
     const wasSpeaking = speaking;
     stopAll();
     if (!wasSpeaking) {
-      const clip = pickClip(CLICKS[charVoice(voice)] || CLICKS.ru_f1);
+      if (voiceLang() === "en") {
+        const text = pickClip(EN_CLICKS);
+        if (text) bridge("/say", { text, sid: currentSid, voice: charVoice(voice) }).catch(() => {});
+        return;
+      }
+      const clip = pickClip(CLICKS[clipVoice(voice)] || CLICKS.ru_f1);
       playClip(clip);
       if (clip && clip.text) startSpeaking(clip.ms || 1200, "", clip.text);
     }
