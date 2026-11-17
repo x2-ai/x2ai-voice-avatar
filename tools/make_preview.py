@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Собирает docs/preview.png — контактный лист персонажей.
+"""Собирает docs/preview.png — контактный лист пиксельного пака.
 
-Берёт кадр «closed» из plugins/x2ai-avatar/sprites.json и раскладывает
-10 персонажей в сетку 5×2 на тёмном фоне с подписями.
+Берёт кадр «closed» из plugins/x2ai-avatar/sprites.json (пак pixel)
+и раскладывает пять персонажей в один ряд на тёмном фоне с подписями.
 
-Запуск: python3 tools/make_preview.py
+Запуск: python3 tools/pack_sprites.py && python3 tools/make_preview.py
 """
 
 import base64
@@ -18,25 +18,21 @@ ROOT = Path(__file__).resolve().parent.parent
 SPRITES = ROOT / "plugins" / "x2ai-avatar" / "sprites.json"
 OUT = ROOT / "docs" / "preview.png"
 
+PACK = "pixel"
 NAMES = {
-    "ru_f1": "Аня",
-    "ru_f2": "Мила",
-    "ru_m1": "Гриша",
-    "ru_m5": "Тимур",
-    "fx_robot": "Робик",
-    "fx_demon": "Азазель",
-    "fx_alien": "Зета",
-    "fx_cat": "Мурзик",
-    "fx_penguin": "Пико",
-    "fx_ghost": "Юки",
+    "px_ru_f1": "Тянка",
+    "px_fx_demoness": "Демонесса",
+    "px_fx_robot": "Робот",
+    "px_fx_penguin": "Инопланетянин",
+    "px_ru_m1": "Программист",
 }
 ORDER = list(NAMES)
 
 BG = (24, 24, 28)
 FG = (210, 210, 215)
 COLS = 5
-CELL_W, CELL_H = 210, 330
-SPRITE_H = 280
+CELL_W, CELL_H = 220, 360
+SPRITE_H = 300
 PAD_TOP = 18
 
 
@@ -47,6 +43,12 @@ def decode(uri: str) -> Image.Image:
 
 def main() -> None:
     data = json.loads(SPRITES.read_text(encoding="utf-8"))
+    pack = data.get(PACK)
+    if not pack:
+        raise SystemExit(
+            f"в {SPRITES} нет пака {PACK}: сначала запусти python3 tools/pack_sprites.py"
+        )
+
     rows = (len(ORDER) + COLS - 1) // COLS
     W, H = CELL_W * COLS, CELL_H * rows
     canvas = Image.new("RGB", (W, H), BG)
@@ -57,7 +59,7 @@ def main() -> None:
         font = ImageFont.load_default()
 
     for i, voice in enumerate(ORDER):
-        sprite = decode(data[voice]["closed"])
+        sprite = decode(pack[voice]["closed"])
         scale = SPRITE_H / sprite.height
         sprite = sprite.resize((round(sprite.width * scale), SPRITE_H), Image.LANCZOS)
         col, row = i % COLS, i // COLS
