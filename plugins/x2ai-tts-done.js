@@ -290,7 +290,7 @@ function readReason() {
 
 // Язык панели и озвучки: ru | en | es | zh. Движок TeraTTS знает только
 // русский и английский, поэтому для es/zh говорим по-английски.
-const LANGS = ["ru", "en", "es", "zh"];
+const LANGS = ["ru", "en"];
 function readLang() {
   try {
     const raw = JSON.parse(fs.readFileSync(SPEECH_FILE, "utf8"));

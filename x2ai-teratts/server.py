@@ -3,7 +3,8 @@
 
 Слушает unix-сокет, принимает JSON-строки вида
     {"text": "Привет", "voice": "ru_f1", "duration_scale": 1.0}
-синтезирует wav и проигрывает его через afplay. Модель грузится один раз,
+синтезирует wav и проигрывает его: afplay на macOS, paplay/aplay/ffplay на Linux.
+Модель грузится один раз,
 поэтому озвучка стартует почти сразу; по простою сервер сам выходит.
 
 Переменные окружения:
@@ -21,6 +22,7 @@ import numpy as np
 import os
 import re
 import queue
+import shutil
 import socket
 import subprocess
 import sys
@@ -288,6 +290,24 @@ def _socket_alive(path: Path) -> bool:
 LOCK = Path("/tmp/x2ai-teratts.lock")
 
 
+def pick_player() -> list[str] | None:
+    """Чем играть wav: на macOS afplay, на Linux — первый доступный плеер."""
+    if sys.platform == "darwin":
+        return ["afplay"] if shutil.which("afplay") else None
+    for cmd in (
+        ["paplay"],
+        ["aplay", "-q"],
+        ["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet"],
+        ["play", "-q"],
+    ):
+        if shutil.which(cmd[0]):
+            return cmd
+    return None
+
+
+PLAYER = pick_player()
+
+
 def main() -> int:
     # Один сервер на сокет: файловая блокировка атомарна и не даёт гонки
     # при одновременном запуске из нескольких запросов озвучки.
@@ -344,9 +364,16 @@ def main() -> int:
             if item is None:
                 return
             wav = item["wav"]
+            if not PLAYER:
+                log("no audio player: install alsa-utils or pulseaudio-utils")
+                try:
+                    wav.unlink()
+                except OSError:
+                    pass
+                continue
             try:
                 proc = subprocess.Popen(
-                    ["afplay", str(wav)],
+                    [*PLAYER, str(wav)],
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                 )
