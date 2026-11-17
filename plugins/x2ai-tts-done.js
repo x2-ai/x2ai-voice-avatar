@@ -1442,10 +1442,11 @@ module.exports = {
       }
     })();
 
-    // Правила общения в первый промпт чата: род персонажа и род/имя пользователя.
+    // Правила общения: подмешиваем в системные инструкции первого запроса чата,
+    // поэтому в переписке они не видны вообще.
     try {
       const greeted = new Set();
-      await ctx.session.hook("prompt", async (event) => {
+      await ctx.session.hook("context", (event) => {
         const sid =
           event.sessionID || (event.session && event.session.id) || (event.metadata && event.metadata.sessionID) || "";
         if (sid && greeted.has(sid)) return;
@@ -1470,7 +1471,7 @@ module.exports = {
         }
         if (!rules.length) return;
         if (sid) greeted.add(sid);
-        event.prompt.text = `${event.prompt.text}\n\n[Правила общения]\n${rules.join("\n")}`;
+        event.system.push({ type: "text", text: `[Правила общения]\n${rules.join("\n")}` });
         log("PROMPT_RULES:", sid || "-", rules.length);
       });
     } catch (e) {
