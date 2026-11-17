@@ -79,6 +79,8 @@ def check_bundle_markers() -> None:
         "clipVoice",
         "Имя персонажа",
         "CHAR_NAMES_EN",
+        "muteBtn",
+        "Выключить озвучку",
     ]
     for marker in markers:
         if marker in text:
@@ -143,6 +145,7 @@ def check_tts_markers() -> None:
         "voiceLang",
         "eng_f3",
         "p.stdin.write(payload)",
+        "function readMuted",
     ]
     for marker in markers:
         if marker in text:

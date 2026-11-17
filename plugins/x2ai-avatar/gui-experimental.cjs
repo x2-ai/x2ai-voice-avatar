@@ -258,6 +258,8 @@ const I18N = {
     "Аниме": "Anime",
     "Пиксельарт": "Pixel art",
     "Следующий персонаж из пака": "Next character from the pack",
+    "Выключить озвучку": "Mute speech",
+    "Включить озвучку": "Unmute speech",
   },
 };
 
@@ -440,7 +442,47 @@ function createView(ctx) {
   ].join(";");
   box.appendChild(gear);
 
-  // Вторая кнопка — сменить персонажа (то же, что кнопка в панели).
+  // Между настройками и сменой персонажа — включение/выключение озвучки.
+  // Это отдельный флаг: настройки персонажа (режим, рассуждения) не меняются.
+  let mutedState = false;
+  const muteBtn = document.createElement("button");
+  muteBtn.type = "button";
+  muteBtn.textContent = "🔊";
+  muteBtn.title = t("Выключить озвучку");
+  muteBtn.style.cssText = [
+    "position:absolute",
+    "left:0",
+    "top:28px",
+    "width:22px",
+    "height:22px",
+    "padding:0",
+    "border-radius:50%",
+    "border:1px solid rgba(255,255,255,.25)",
+    "background:rgba(20,20,24,.78)",
+    "color:#ddd",
+    "font-size:11px",
+    "line-height:1",
+    "cursor:pointer",
+    "opacity:0",
+    "transition:opacity 120ms ease",
+  ].join(";");
+  const paintMute = () => {
+    muteBtn.textContent = mutedState ? "🔇" : "🔊";
+    muteBtn.title = t(mutedState ? "Включить озвучку" : "Выключить озвучку");
+  };
+  const setMuted = (next) => {
+    mutedState = Boolean(next);
+    paintMute();
+    bridge("/speech", { muted: mutedState }).catch(() => {});
+    if (mutedState) stopAll();
+  };
+  muteBtn.onclick = (ev) => {
+    ev.stopPropagation();
+    setMuted(!mutedState);
+  };
+  box.appendChild(muteBtn);
+
+  // Третья кнопка — сменить персонажа (то же, что кнопка в панели).
   const swapBtn = document.createElement("button");
   swapBtn.type = "button";
   swapBtn.textContent = "↻";
@@ -450,7 +492,7 @@ function createView(ctx) {
   swapBtn.style.cssText = [
     "position:absolute",
     "left:0",
-    "top:28px",
+    "top:54px",
     "width:22px",
     "height:22px",
     "padding:0",
@@ -547,6 +589,10 @@ function createView(ctx) {
     const sp = Number(data.speed);
     if (Number.isFinite(sp) && sp >= 0.7 && sp <= 1.8) speechSpeed = sp;
     if (data.keepAlive !== undefined) keepAlive = Boolean(data.keepAlive);
+    if (data.muted !== undefined) {
+      mutedState = Boolean(data.muted);
+      paintMute();
+    }
     const rs = data.reason;
     if (rs && typeof rs === "object") {
       reasonState = {
@@ -1757,6 +1803,8 @@ function createView(ctx) {
     gear.style.opacity = panelOpen ? "1" : "";
     swapBtn.style.display = panelOpen ? "none" : "";
     swapBtn.style.opacity = panelOpen ? "1" : "";
+    muteBtn.style.display = panelOpen ? "none" : "";
+    muteBtn.style.opacity = panelOpen ? "1" : "";
   };
   gear.onclick = (ev) => {
     ev.stopPropagation();
@@ -1772,11 +1820,13 @@ function createView(ctx) {
   box.onmouseenter = () => {
     gear.style.opacity = "1";
     swapBtn.style.opacity = "1";
+    muteBtn.style.opacity = "1";
   };
   box.onmouseleave = () => {
     if (!panelOpen) {
       gear.style.opacity = "0";
       swapBtn.style.opacity = "0";
+      muteBtn.style.opacity = "0";
     }
   };
 

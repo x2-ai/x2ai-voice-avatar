@@ -305,6 +305,17 @@ function voiceLang() {
   return readLang() === "ru" ? "ru" : "en";
 }
 
+// Глобальное выключение озвучки кнопкой у персонажа: ответы и рассуждения
+// молчат, ручные реплики по клику и проверка звука остаются.
+function readMuted() {
+  try {
+    const raw = JSON.parse(fs.readFileSync(SPEECH_FILE, "utf8"));
+    return raw && raw.muted === true;
+  } catch (e) {
+    return false;
+  }
+}
+
 function inQuietHours() {
   const q = readQuiet();
   if (!q.on) return false;
@@ -1044,7 +1055,7 @@ const reasonTimers = new Map();
 async function speakReason(rsid, rtext) {
   const reason = readReason();
   if (reason.mode === "off") return;
-  if (readSpeech() === "silent" || inQuietHours()) {
+  if (readSpeech() === "silent" || readMuted() || inQuietHours()) {
     log("SKIP: reason muted");
     return;
   }
@@ -1343,6 +1354,7 @@ function startBridge(ctx) {
         keepAlive: readKeepAlive(),
         lang: readLang(),
         langs: LANGS,
+        muted: readMuted(),
       });
       return;
     }
@@ -1447,6 +1459,7 @@ function startBridge(ctx) {
           reason: readReason(),
           keepAlive: readKeepAlive(),
           lang: readLang(),
+          muted: readMuted(),
         };
         if (SPEECH_MODES.includes(payload.mode)) next.mode = payload.mode;
         const sp = Number(payload.speed);
@@ -1455,6 +1468,7 @@ function startBridge(ctx) {
         }
         if (payload.keepAlive !== undefined) next.keepAlive = Boolean(payload.keepAlive);
         if (LANGS.includes(payload.lang)) next.lang = payload.lang;
+        if (payload.muted !== undefined) next.muted = Boolean(payload.muted);
         if (payload.reason && typeof payload.reason === "object") {
           const cur = next.reason || readReason();
           next.reason = {
@@ -1484,6 +1498,7 @@ function startBridge(ctx) {
           keepAlive: readKeepAlive(),
           lang: readLang(),
           langs: LANGS,
+          muted: readMuted(),
         });
         return;
       }
@@ -1653,7 +1668,7 @@ module.exports = {
           const voice = effectiveVoice(sid);
           const gender = genderOf(voice);
           const mode = readSpeech();
-          if (mode === "silent") {
+          if (mode === "silent" || readMuted()) {
             log("SKIP: silent mode");
             continue;
           }
