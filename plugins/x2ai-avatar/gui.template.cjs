@@ -1065,6 +1065,7 @@ function createView(ctx) {
       }
       sBody.appendChild(sList);
       sBody.appendChild(speechNote);
+      refreshSpeech();
 
       // Скорость речи: общая для движка, применяется к следующей озвучке.
       const spRow = document.createElement("div");
