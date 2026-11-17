@@ -71,6 +71,10 @@ def check_bundle_markers() -> None:
         "sayWhenFree" if False else "bridge(\"/say\"",
         "centerActive",
         "x2ai-active",
+        "x2ai-avatar:lang",
+        "Переводить на {lang}",
+        "defaultVoiceFor",
+        "voiceLang",
     ]
     for marker in markers:
         if marker in text:
@@ -129,6 +133,11 @@ def check_tts_markers() -> None:
         "FULL_MAX_CHARS",
         "CODE_PHRASES",
         "LINK_PHRASES",
+        "function readLang",
+        "function translateText",
+        "function langRatio",
+        "voiceLang",
+        "eng_f3",
     ]
     for marker in markers:
         if marker in text:
@@ -151,7 +160,7 @@ def check_server() -> None:
         return
     ok("server.py: синтаксис")
     text = SERVER.read_text(encoding="utf-8")
-    for marker in ("fx_spec", "emotion", "CHUNK_CHARS", "announce_playback"):
+    for marker in ("fx_spec", "emotion", "CHUNK_CHARS", "announce_playback", "setproctitle"):
         if marker in text:
             ok(f"server: «{marker}»")
         else:

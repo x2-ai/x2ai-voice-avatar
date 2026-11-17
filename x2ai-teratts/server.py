@@ -29,6 +29,14 @@ import time
 import traceback
 from pathlib import Path
 
+# Имя в мониторе системы: иначе там висит «Python».
+try:
+    import setproctitle
+
+    setproctitle.setproctitle("x2ai-voice")
+except Exception:
+    pass
+
 HOME = Path.home()
 ROOT = Path(os.environ.get("TERATTS_DIR", HOME / ".config/opencode/teratts-model"))
 SOCK = Path(os.environ.get("TERATTS_SOCK", "/tmp/x2ai-teratts.sock"))

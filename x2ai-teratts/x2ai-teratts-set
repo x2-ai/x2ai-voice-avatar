@@ -24,6 +24,7 @@ case " $VOICES " in
 esac
 
 printf '%s' "$v" >"$FILE"
+pkill -x x2ai-voice 2>/dev/null
 pkill -f "x2ai-teratts/server.py" 2>/dev/null
 rm -f "/tmp/x2ai-teratts.sock"
 echo "voice: $v (сервер перезапустится при следующей озвучке)"

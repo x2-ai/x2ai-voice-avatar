@@ -288,6 +288,23 @@ function readReason() {
   }
 }
 
+// Язык панели и озвучки: ru | en | es | zh. Движок TeraTTS знает только
+// русский и английский, поэтому для es/zh говорим по-английски.
+const LANGS = ["ru", "en", "es", "zh"];
+function readLang() {
+  try {
+    const raw = JSON.parse(fs.readFileSync(SPEECH_FILE, "utf8"));
+    const v = raw && raw.lang;
+    return LANGS.includes(v) ? v : "ru";
+  } catch (e) {
+    return "ru";
+  }
+}
+
+function voiceLang() {
+  return readLang() === "ru" ? "ru" : "en";
+}
+
 function inQuietHours() {
   const q = readQuiet();
   if (!q.on) return false;
@@ -390,33 +407,48 @@ const LINK_PHRASES = [
   "Ссылку оставил в текстовом ответе.",
   "Адрес ссылки — в текстовом варианте.",
 ];
+const CODE_PHRASES_EN = [
+  "The code is in the text version of the answer.",
+  "The code is in the written answer.",
+  "I left the code in the text.",
+  "The code is in the text.",
+];
+const LINK_PHRASES_EN = [
+  "The link is in the text version of the answer.",
+  "The link is in the written answer.",
+  "I left the link in the text.",
+  "The address is in the text version.",
+];
 const pickPhrase = (list) => list[Math.floor(Math.random() * list.length)];
 
 // Заменяет код и ссылки на короткие фразы — до общей чистки.
 function decorate(text) {
   if (!text) return "";
+  const en = voiceLang() === "en";
+  const CODE = en ? CODE_PHRASES_EN : CODE_PHRASES;
+  const LINK = en ? LINK_PHRASES_EN : LINK_PHRASES;
   let t = String(text);
   let saidCode = false;
   let saidLink = false;
   t = t.replace(/```[\s\S]*?```/g, () => {
     if (saidCode) return " ";
     saidCode = true;
-    return ` ${pickPhrase(CODE_PHRASES)} `;
+    return ` ${pickPhrase(CODE)} `;
   });
   t = t.replace(/`[^`]+`/g, () => {
     if (saidCode) return " ";
     saidCode = true;
-    return ` ${pickPhrase(CODE_PHRASES)} `;
+    return ` ${pickPhrase(CODE)} `;
   });
   t = t.replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g, (m, label) => {
     if (saidLink) return ` ${label} `;
     saidLink = true;
-    return ` ${label} — ${pickPhrase(LINK_PHRASES)} `;
+    return ` ${label} — ${pickPhrase(LINK)} `;
   });
   t = t.replace(/https?:\/\/\S+/g, () => {
     if (saidLink) return " ";
     saidLink = true;
-    return ` ${pickPhrase(LINK_PHRASES)} `;
+    return ` ${pickPhrase(LINK)} `;
   });
   return t;
 }
@@ -572,7 +604,7 @@ function speakPiper(text, model) {
       a.unref();
     });
     p.stdin.on("error", () => {});
-    p.stdin.write(text);
+    p.stdin.write(payload);
     p.stdin.end();
     p.unref();
   } catch (e) {
@@ -653,22 +685,38 @@ function dedupeSentences(text, maxSentences = 3) {
   return out.join(" ");
 }
 
-// Если модель ответила не по-русски — один раз просим перевод.
-async function translateRu(text) {
+// Доля текста на нужном языке (ru: кириллица, en: латиница, zh: иероглифы).
+function langRatio(text, lang) {
+  const t = String(text || "");
+  if (lang === "zh") {
+    const han = (t.match(/[\u4e00-\u9fff]/g) || []).length;
+    const letters = (t.match(/[\u4e00-\u9fffA-Za-z]/g) || []).length;
+    return letters ? han / letters : 0;
+  }
+  const lat = (t.match(/[A-Za-z]/g) || []).length;
+  const cyr = (t.match(/[А-Яа-яЁё]/g) || []).length;
+  if (!lat && !cyr) return 0;
+  return lang === "en" ? lat / (lat + cyr) : cyr / (lat + cyr);
+}
+
+// Если модель ответила не на том языке — один раз просим перевод.
+const LANG_TARGET = { ru: "русский", en: "английский" };
+async function translateText(text, lang = "ru") {
   if (!genText || !sumModel()) return "";
+  const target = LANG_TARGET[lang] || LANG_TARGET.ru;
   try {
     const out = await Promise.race([
       genText({
         model: sumModel(),
-        prompt: `Переведи на русский язык, сохранив смысл. Только перевод, без пояснений:\n\n${text.slice(0, 3000)}`,
+        prompt: `Переведи на ${target} язык, сохранив смысл. Только перевод, без пояснений:\n\n${text.slice(0, 3000)}`,
       }),
       new Promise((r) => setTimeout(() => r(null), LLM_TIMEOUT)),
     ]);
     const t = String(out?.text || "")
       .replace(/\s+/g, " ")
       .trim();
-    if (cyrRatio(t) < 0.5) {
-      log("TR: still not russian");
+    if (langRatio(t, lang) < 0.5) {
+      log("TR: still not " + lang);
       return "";
     }
     log("TR:", t.slice(0, 100));
@@ -677,6 +725,10 @@ async function translateRu(text) {
     log("TR_ERR", e?.message);
     return "";
   }
+}
+
+function translateRu(text) {
+  return translateText(text, "ru");
 }
 
 // Когда звать пользователя по имени: первое сообщение в чате — всегда,
@@ -725,11 +777,60 @@ function shouldUseReasonName() {
   return true;
 }
 
+// Английский пересказ: в английском нет грамматического рода, правила проще.
+async function llmSummaryEn(src, user, sid, style) {
+  const userName = (user && user.name) || "";
+  const useName = Boolean(userName) && shouldUseName(sid);
+  if (userName) log("NAME:", useName ? "yes" : "no");
+  const nameRule = useName
+    ? `Address the user by name once, at the very start: ${userName}. Do not repeat the name.`
+    : "Do not address the user by name.";
+  const briefRule =
+    style === "long" ? "The text is long: keep only the outcome — 1–2 short sentences." : "";
+  const prompt = [
+    "Summarize the text in 1–3 short sentences of English for reading aloud.",
+    "Do not read code, commands, file paths, variable names or links — only the point.",
+    "Only the point: what was done and why it matters. No paths, file names, commands, code, numbers, markdown or lists.",
+    "Write plain prose, without openers like «in this answer».",
+    "Write only in English.",
+    "Each sentence is a new thought. Do not repeat the same phrase in different words.",
+    nameRule,
+    ...(briefRule ? [briefRule] : []),
+    "",
+    src,
+  ].join("\n");
+  try {
+    const out = await Promise.race([
+      genText({ model: sumModel(), prompt }),
+      new Promise((r) => setTimeout(() => r(null), LLM_TIMEOUT)),
+    ]);
+    let text = String(out?.text || "")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (!text) {
+      log("LLM: empty");
+      return "";
+    }
+    if (langRatio(text, "en") < 0.5) {
+      log("LLM: not english, translating");
+      const en = await translateText(text, "en");
+      if (!en) return "";
+      text = en;
+    }
+    log("LLM:", text.slice(0, 120));
+    return dedupeSentences(text).slice(0, 400);
+  } catch (e) {
+    log("LLM_ERR", e?.message);
+    return "";
+  }
+}
+
 // Пересказ моделью (бесплатной, без сессии). Пустая строка = не получилось.
 async function llmSummary(raw, gender, user = readUser(), sid = "", style = "") {
   if (!LLM_SUMMARY || !genText || !sumModel()) return "";
   const src = stripCode(raw).slice(0, 6000).trim();
   if (src.length < 40) return "";
+  if (voiceLang() === "en") return llmSummaryEn(src, user, sid, style);
   // Род ассистента (голос) и род пользователя — разные вещи: первый про «я», второй про «ты».
   const userName = (user && user.name) || "";
   const userGender = (user && user.gender) || "";
@@ -792,11 +893,51 @@ async function llmSummary(raw, gender, user = readUser(), sid = "", style = "") 
   }
 }
 
+async function llmReasonEn(src, translate, sid, user) {
+  const task = translate
+    ? "Translate the model's reasoning into English and condense it into 1–2 short sentences for reading aloud."
+    : "Condense the model's reasoning into 1–2 short sentences of English for reading aloud.";
+  const userName = (user && user.name) || "";
+  const useName = Boolean(userName) && shouldUseReasonName();
+  const nameRule = userName
+    ? `When you mention the user, call them ${userName} once.`
+    : "Do not use the words «user» or «assistant»; speak plainly.";
+  const prompt = [
+    task,
+    "No openers like «here is a summary». Only the point.",
+    "The whole answer must be in English only.",
+    "Do not read code, commands or file paths.",
+    nameRule,
+    "Text:",
+    src,
+  ].join("\n");
+  if (userName) log("R_NAME:", useName ? "yes" : "no");
+  try {
+    const out = await Promise.race([
+      genText({ model: sumModel(), prompt }),
+      new Promise((r) => setTimeout(() => r(null), Math.max(LLM_TIMEOUT, 25000))),
+    ]);
+    let text = String(out?.text || "").replace(/\s+/g, " ").trim();
+    if (!text) return "";
+    if (langRatio(text, "en") < 0.9) {
+      log("REASON: not english, translating");
+      const en = await translateText(text, "en");
+      if (en) text = en;
+    }
+    log("REASON_LLM:", text.slice(0, 120));
+    return text.slice(0, 400);
+  } catch (e) {
+    log("REASON_ERR", e?.message);
+    return "";
+  }
+}
+
 // Рассуждения модели: одним запросом — перевод (если нужно) и сжатие (если «кратко»).
 async function llmReason(raw, gender, translate, sid, user = readUser()) {
   if (!genText || !sumModel()) return "";
   const src = stripCode(String(raw || "")).replace(/\s+/g, " ").trim().slice(0, 6000);
   if (src.length < 30) return "";
+  if (voiceLang() === "en") return llmReasonEn(src, translate, sid, user);
   const task = translate
     ? "Переведи рассуждение модели на русский и сожми его в 1–2 коротких предложения для озвучки вслух."
     : "Сожми рассуждение модели в 1–2 коротких предложения по-русски для озвучки вслух.";
@@ -914,19 +1055,21 @@ async function speakReason(rsid, rtext) {
   }
   const rvoice = effectiveVoice(rsid);
   const rgender = genderOf(rvoice);
+  const lang = voiceLang();
   let out = "";
   if (reason.mode === "brief") {
-    out = (await llmReason(rtext, rgender, reason.translate, rsid)) || summarize(rtext) || "";
+    const short = await llmReason(rtext, rgender, reason.translate, rsid);
+    out = short || (lang === "ru" ? summarize(rtext) : "") || "";
   } else if (reason.translate) {
-    out = (await translateRu(rtext.slice(0, 3000))) || "";
+    out = (await translateText(rtext.slice(0, 3000), lang)) || "";
   }
   // Модель не ответила: пробуем хотя бы перевод, иначе читаем очищенный исходник.
   if (!out && reason.translate) {
-    out = (await translateRu(stripCode(rtext).slice(0, 1500))) || "";
+    out = (await translateText(stripCode(rtext).slice(0, 1500), lang)) || "";
     if (out) log("REASON: fallback translate");
   }
-  if (reason.translate && out && cyrRatio(out) < 0.5) {
-    const retry = await translateRu(out);
+  if (reason.translate && out && langRatio(out, lang) < 0.5) {
+    const retry = await translateText(out, lang);
     out = retry || "";
   }
   if (!out) {
@@ -936,7 +1079,7 @@ async function speakReason(rsid, rtext) {
     }
     out = stripCode(rtext).slice(0, reason.mode === "brief" ? 300 : 1200);
   }
-  out = agreeGender(out, rgender).trim();
+  out = lang === "ru" ? agreeGender(out, rgender).trim() : out.trim();
   if (!out) {
     log("SKIP: reason empty");
     return;
@@ -955,7 +1098,16 @@ function speakTera(text, sid, forced, emotion, kind) {
     return false;
   }
   try {
-    const voice = forced || teraVoice(sid);
+    const lang = voiceLang();
+    let voice = forced || teraVoice(sid);
+    let payload = text;
+    if (lang === "en") {
+      // Движок понимает только <ru>/<en>. Выбранный английский голос уважаем,
+      // русский или эффект переводим в eng-голос по полу.
+      const g = genderOf(voice) || "f";
+      if (!/^eng_/.test(String(voice || ""))) voice = g === "m" ? "eng_m3" : "eng_f3";
+      payload = `<en>${String(text).replace(/<\/?[a-z]{2}>/gi, " ").trim()}</en>`;
+    }
     const env = { ...process.env };
     if (voice) env.X2AI_TTS_VOICE = voice;
     if (sid) env.X2AI_TTS_SID = sid;
@@ -995,12 +1147,17 @@ function speak(text, sid, voice, maxChars = MAX_CHARS, emotion = null, kind = nu
   }
   toSay = stripCode(toSay).replace(/\s+/g, " ").trim();
   if (!toSay) return;
-  // Страховка от английских обрывков: блокируем только когда латиницы
-  // реально больше, чем кириллицы.
+  // Страховка от чужого языка: блокируем только когда текста на языке
+  // озвучки меньше, чем на другом.
+  const speakLang = voiceLang();
   const cyrCount = (toSay.match(/[А-Яа-яЁё]/g) || []).length;
   const latCount = (toSay.match(/[A-Za-z]/g) || []).length;
-  if (cyrCount < 20 && latCount > cyrCount) {
+  if (speakLang === "ru" && cyrCount < 20 && latCount > cyrCount) {
     log("SKIP: not russian", cyrRatio(toSay).toFixed(2), toSay.slice(0, 60));
+    return;
+  }
+  if (speakLang === "en" && latCount < 20 && cyrCount > latCount) {
+    log("SKIP: not english", langRatio(toSay, "en").toFixed(2), toSay.slice(0, 60));
     return;
   }
   lastSpeak = { text: toSay, sid: sid || "", voice: voice || "", max: limit, emotion, kind };
@@ -1075,18 +1232,26 @@ function startBridge(ctx) {
     return value && typeof value === "object" ? value : {};
   };
   // Голоса, которые умеет TeraTTS: 4 спикера и 6 эффектов поверх них.
+  // Голоса по языкам: движок знает только ru и en. Английские стили лежат
+  // в teratts-model/styles, поэтому список для панели один на оба языка.
   const VOICE_LIST = [
-    { id: "ru_f1", label: "Аня — женский", kind: "voice" },
-    { id: "ru_f2", label: "Мила — женский, ниже", kind: "voice" },
-    { id: "ru_m1", label: "Гриша — мужской", kind: "voice" },
-    { id: "ru_m5", label: "Тимур — мужской, ниже", kind: "voice" },
-    { id: "fx_robot", label: "Робот — кольцевая модуляция", kind: "effect" },
-    { id: "fx_demon", label: "Демон — мужской, питч вниз", kind: "effect" },
-    { id: "fx_demoness", label: "Демонесса — женский, низкий, хриплый", kind: "effect" },
-    { id: "fx_alien", label: "Пришелец — вибрато", kind: "effect" },
-    { id: "fx_cat", label: "Кот — питч вверх", kind: "effect" },
-    { id: "fx_penguin", label: "Пришелец — высокий писк", kind: "effect" },
-    { id: "fx_ghost", label: "Призрак — реверб", kind: "effect" },
+    { id: "ru_f1", label: "Аня — женский", labelEn: "Anya — female", lang: "ru", kind: "voice" },
+    { id: "ru_f2", label: "Мила — женский, ниже", labelEn: "Mila — female, lower", lang: "ru", kind: "voice" },
+    { id: "ru_m1", label: "Гриша — мужской", labelEn: "Grisha — male", lang: "ru", kind: "voice" },
+    { id: "ru_m5", label: "Тимур — мужской, ниже", labelEn: "Timur — male, lower", lang: "ru", kind: "voice" },
+    { id: "fx_robot", label: "Робот — кольцевая модуляция", labelEn: "Robot — ring modulation", lang: "ru", kind: "effect" },
+    { id: "fx_demon", label: "Демон — мужской, питч вниз", labelEn: "Demon — male, pitch down", lang: "ru", kind: "effect" },
+    { id: "fx_demoness", label: "Демонесса — женский, низкий, хриплый", labelEn: "Demoness — female, low, husky", lang: "ru", kind: "effect" },
+    { id: "fx_alien", label: "Пришелец — вибрато", labelEn: "Alien — vibrato", lang: "ru", kind: "effect" },
+    { id: "fx_cat", label: "Кот — питч вверх", labelEn: "Cat — pitch up", lang: "ru", kind: "effect" },
+    { id: "fx_penguin", label: "Пришелец — высокий писк", labelEn: "Alien — high squeak", lang: "ru", kind: "effect" },
+    { id: "fx_ghost", label: "Призрак — реверб", labelEn: "Ghost — reverb", lang: "ru", kind: "effect" },
+    { id: "eng_f3", label: "F3 — female", labelEn: "F3 — female", lang: "en", kind: "voice" },
+    { id: "eng_f4_whisper", label: "F4 — female, whisper", labelEn: "F4 — female, whisper", lang: "en", kind: "voice" },
+    { id: "eng_f5", label: "F5 — female, bright", labelEn: "F5 — female, bright", lang: "en", kind: "voice" },
+    { id: "eng_m2_whisper", label: "M2 — male, whisper", labelEn: "M2 — male, whisper", lang: "en", kind: "voice" },
+    { id: "eng_m3", label: "M3 — male", labelEn: "M3 — male", lang: "en", kind: "voice" },
+    { id: "eng_m4", label: "M4 — male, low", labelEn: "M4 — male, low", lang: "en", kind: "voice" },
   ];
   const send = (res, code, payload) => {
     res.writeHead(code, CORS);
@@ -1175,6 +1340,8 @@ function startBridge(ctx) {
         quiet: readQuiet(),
         reason: readReason(),
         keepAlive: readKeepAlive(),
+        lang: readLang(),
+        langs: LANGS,
       });
       return;
     }
@@ -1278,6 +1445,7 @@ function startBridge(ctx) {
           quiet: readQuiet(),
           reason: readReason(),
           keepAlive: readKeepAlive(),
+          lang: readLang(),
         };
         if (SPEECH_MODES.includes(payload.mode)) next.mode = payload.mode;
         const sp = Number(payload.speed);
@@ -1285,6 +1453,7 @@ function startBridge(ctx) {
           next.speed = Math.round(sp * 100) / 100;
         }
         if (payload.keepAlive !== undefined) next.keepAlive = Boolean(payload.keepAlive);
+        if (LANGS.includes(payload.lang)) next.lang = payload.lang;
         if (payload.reason && typeof payload.reason === "object") {
           const cur = next.reason || readReason();
           next.reason = {
@@ -1312,6 +1481,8 @@ function startBridge(ctx) {
           quiet: readQuiet(),
           reason: readReason(),
           keepAlive: readKeepAlive(),
+          lang: readLang(),
+          langs: LANGS,
         });
         return;
       }

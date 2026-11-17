@@ -8,10 +8,17 @@
 
 ![Персонажи: 4 голоса и 6 эффектов](docs/preview.png)
 
+> [!IMPORTANT]
+> **Голосовой движок ставится отдельно.** В репозитории нет модели TeraTTSv2 —
+> только код плагина. Без шага 1 персонаж появится, но будет молчать: синтез
+> нечем делать. Модель занимает ~390 МБ, окружение — ещё ~225 МБ, всё качается
+> один раз с Hugging Face.
+
 ## Установка за 5 шагов
 
-1. **TeraTTS**: модель `TeraSpace/TeraTTSv2` → `~/.config/opencode/teratts-model`,
-   зависимости → `~/.config/opencode/teratts-venv` (подробности ниже).
+1. **TeraTTS (обязательно)**: модель `TeraSpace/TeraTTSv2` →
+   `~/.config/opencode/teratts-model`, зависимости →
+   `~/.config/opencode/teratts-venv` (подробности ниже).
 2. **Сервер озвучки**: `cp x2ai-teratts/* ~/.config/opencode/x2ai-teratts/`,
    `chmod +x` на клиенты, проверка — `echo "Привет" | x2ai-teratts-speak`.
 3. **Спрайты**: `python3 tools/build_sprites.py` — скачает модели
@@ -47,8 +54,25 @@
    ```sh
    python3 -m venv ~/.config/opencode/teratts-venv
    ~/.config/opencode/teratts-venv/bin/pip install \
-     numpy onnxruntime transformers num2words huggingface_hub pillow
+     numpy onnxruntime transformers num2words huggingface_hub pillow setproctitle
    ```
+
+   **Английские голоса.** В репозитории модели лежат только русские стили
+   (`styles/ru_*`). Для английского скачайте стили нужных голосов:
+
+   ```sh
+   cd ~/.config/opencode/teratts-model/styles
+   for v in eng_f3 eng_f4_whisper eng_f5 eng_m2_whisper eng_m3 eng_m4; do
+     mkdir -p $v
+     for f in style_dp style_ttl; do
+       curl -sLO "https://huggingface.co/TeraSpace/TeraTTSv2/resolve/main/styles/$v/$f.npy"
+       mv $f.npy $v/ 2>/dev/null || true
+     done
+   done
+   ```
+
+   Движок понимает только `<ru>` и `<en>`: испанский и китайский он
+   синтезировать не умеет (акценты и иероглифы выбрасываются).
 
 2. **Сервер и клиенты.**
 
@@ -60,7 +84,9 @@
    ```
 
    Первый вызов поднимает демон (загрузка модели ~7 с), дальше фраза
-   синтезируется за 0.3–1.1 с.
+   синтезируется за 0.3–1.1 с. В мониторе системы он называется
+   **x2ai-voice** (пакет `setproctitle`), а не «Python». Остановить вручную:
+   `pkill -x x2ai-voice`.
 
 3. **Плагины.** Скопировать `plugins/x2ai-tts-done.js` и каталог
    `plugins/x2ai-avatar` в `~/.config/opencode/plugins/`, затем собрать
@@ -87,9 +113,22 @@
    }
    ```
 
+## Языки
+
+Справа вверху главного меню — четыре кнопки: **EN / RU / ES / ZH**.
+
+- **RU** — интерфейс и озвучка по-русски.
+- **EN** — интерфейс и озвучка по-английски.
+- **ES / ZH** — интерфейс локализован, но голос остаётся английским: движок
+  TeraTTSv2 знает только русский и английский. В панели об этом есть подсказка.
+
+Язык хранится в `localStorage` окна (`x2ai-avatar:lang`) и дублируется в
+`~/.config/opencode/x2ai-speech.json` (`lang`), чтобы пересказ и перевод
+рассуждений шли на том же языке, что и озвучка.
+
 ## Голоса и персонажи
 
-10 голосов, по одному на персонажа. Первые четыре — чистые голоса TeraTTS,
+11 русских голосов, по одному на персонажа. Первые четыре — чистые голоса TeraTTS,
 остальные — те же голоса с обработкой (питч, вибрато, кольцевая модуляция,
 биткраш, перегрузка, реверб) в `server.py`.
 
@@ -106,6 +145,28 @@
 | `fx_cat` | Мурзик | питч +34 % |
 | `fx_penguin` | Пико | питч +55 %, вибрато 7 Гц |
 | `fx_ghost` | Юки | реверб 0.55 |
+
+### Английские голоса
+
+Для английского доступны шесть голосов TeraTTS (стили из `styles/eng_*`):
+`eng_f3`, `eng_f4_whisper`, `eng_f5`, `eng_m2_whisper`, `eng_m3`, `eng_m4`.
+Панель показывает только голоса текущего языка, а у каждого персонажа есть
+свой английский голос по умолчанию — подобран по полу и характеру русского:
+
+| русский голос | английский по умолчанию |
+| --- | --- |
+| `ru_f1` (Аня, Тянка) | `eng_f3` |
+| `ru_f2` (Мила) | `eng_f5` |
+| `ru_m1` (Гриша, Программист) | `eng_m3` |
+| `ru_m5` (Тимур) | `eng_m4` |
+| `fx_demoness` | `eng_f3` |
+| `fx_alien`, `fx_cat` | `eng_f5` |
+| `fx_ghost` | `eng_f4_whisper` |
+| `fx_robot`, `fx_demon` | `eng_m3` / `eng_m4` |
+| `fx_penguin` | `eng_m2_whisper` |
+
+Выбор голоса запоминается отдельно для каждого языка, поэтому переключение
+RU ↔ EN не сбрасывает настройки друг друга.
 
 Голос чата выбирается хешем `sessionID` — и в плагине озвучки, и в плагине
 персонажа одним и тем же кодом, поэтому картинка и голос не расходятся.

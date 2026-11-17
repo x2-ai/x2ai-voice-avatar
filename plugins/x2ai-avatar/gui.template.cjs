@@ -150,6 +150,283 @@ try {
   else if (!PACKS.pixel || !Object.keys(PACKS.pixel).length) activePack = "anime";
 } catch (e) {}
 
+// Язык интерфейса: кнопки EN/RU/ES/ZH справа вверху главного меню.
+// Ключ словаря — русская строка, поэтому t() можно звать где угодно и она
+// вернёт исходник, если перевода нет (имена персонажей и моделей не трогаем).
+const LANG_KEY = "x2ai-avatar:lang";
+const LANGS = [
+  ["en", "EN"],
+  ["ru", "RU"],
+  ["es", "ES"],
+  ["zh", "ZH"],
+];
+let activeLang = "ru";
+try {
+  const saved = localStorage.getItem(LANG_KEY);
+  if (LANGS.some(([code]) => code === saved)) activeLang = saved;
+} catch (e) {}
+
+const I18N = {
+  ru: {},
+  en: {
+    "Данные пользователя": "User data",
+    "Настройка персонажей": "Characters",
+    "Вспомогательная модель": "Helper model",
+    "Дополнительно": "Advanced",
+    "Статистика": "Statistics",
+    "← Назад": "← Back",
+    "Имя (необязательно)": "Name (optional)",
+    "Как обращаться к тебе в пересказе": "How to address you in the summary",
+    "Не указывать": "Not specified",
+    "Мужской": "Male",
+    "Женский": "Female",
+    "Пак персонажей": "Character pack",
+    "Доступен для новых чатов": "Available for new chats",
+    "Выключен": "Disabled",
+    "Выбрать персонажа": "Select character",
+    "Персонаж выключен": "Character is off",
+    "Настройки персонажа": "Character settings",
+    "Галочка — персонаж доступен в новых чатах и при смене. Снятая — уже выбранного не убирает.":
+      "Checked — the character is available in new chats and when switching. Unchecking does not remove the current one.",
+    "Персонаж выключен: в новых чатах не появится, включить в текущем чате нельзя.":
+      "The character is off: it will not appear in new chats and cannot be enabled in this chat.",
+    "Размер персонажа": "Character size",
+    "Голос персонажа": "Character voice",
+    "загружаю голоса…": "loading voices…",
+    "По умолчанию": "Default",
+    "сейчас: {v}": "now: {v}",
+    "Озвучка ответа": "Answer speech",
+    "Выключено": "Off",
+    "Кратко": "Brief",
+    "Полностью": "Full",
+    "озвучки не будет": "no speech",
+    "Нужно выбрать вспомогательную модель": "Choose a helper model first",
+    "Озвучка рассуждений": "Reasoning speech",
+    "Переводить на {lang}": "Translate into {lang}",
+    "русский": "Russian",
+    "английский": "English",
+    "испанский": "Spanish",
+    "китайский": "Chinese",
+    "Движок озвучивает только по-русски и по-английски: для ES и ZH речь будет английской.":
+      "The engine speaks Russian and English only: for ES and ZH the voice will be English.",
+    "Читает ответы вслух, когда выбран пересказ: сокращает текст, переводит рассуждения и озвучивает мысли. Локальные и бесплатные модели — в начале списка.":
+      "Reads answers aloud when summary mode is on: shortens the text, translates reasoning and voices thoughts. Local and free models come first.",
+    "Отключено": "Off",
+    "Поиск модели": "Search model",
+    "не удалось получить список": "could not load the list",
+    "локальных и бесплатных моделей нет": "no local or free models",
+    "{name} · локальная": "{name} · local",
+    "Показать ещё {n}": "Show {n} more",
+    "всего подходит: {n}": "total matching: {n}",
+    "загружаю…": "loading…",
+    "мост недоступен": "bridge unavailable",
+    "Общие настройки движка: действуют на всех персонажей.": "Engine settings shared by all characters.",
+    "Тихие часы": "Quiet hours",
+    "выкл": "off",
+    "вкл": "on",
+    "Держать движок в памяти": "Keep the engine in memory",
+    "движок занимает ~1.7 ГБ и отвечает за полсекунды": "the engine takes ~1.7 GB and answers in half a second",
+    "по требованию: каждая фраза ~9 с на загрузку, память свободна":
+      "on demand: ~9 s to load each phrase, memory stays free",
+    "▶ Проверить": "▶ Test",
+    "Озвучить пробную фразу голосом текущего персонажа": "Speak a test phrase in the current character's voice",
+    "■ Стоп": "■ Stop",
+    "Заглушить текущую озвучку": "Silence the current speech",
+    "↻ Повторить": "↻ Replay",
+    "Озвучить последний текст ещё раз": "Speak the last text again",
+    "Озвучено ответов: {n} · всего речи: {m} мин {s} с": "Answers spoken: {n} · total speech: {m} min {s} s",
+    "Сбросить": "Reset",
+    "Озвучено ответов: {n} · речи: {m} мин": "Answers spoken: {n} · speech: {m} min",
+    "спит": "asleep",
+    "расстроен": "upset",
+    "Аниме": "Anime",
+    "Пиксельарт": "Pixel art",
+    "Следующий персонаж из пака": "Next character from the pack",
+  },
+  es: {
+    "Данные пользователя": "Datos del usuario",
+    "Настройка персонажей": "Personajes",
+    "Вспомогательная модель": "Modelo auxiliar",
+    "Дополнительно": "Avanzado",
+    "Статистика": "Estadísticas",
+    "← Назад": "← Atrás",
+    "Имя (необязательно)": "Nombre (opcional)",
+    "Как обращаться к тебе в пересказе": "Cómo dirigirse a ti en el resumen",
+    "Не указывать": "No especificar",
+    "Мужской": "Masculino",
+    "Женский": "Femenino",
+    "Пак персонажей": "Paquete de personajes",
+    "Доступен для новых чатов": "Disponible para chats nuevos",
+    "Выключен": "Desactivado",
+    "Выбрать персонажа": "Elegir personaje",
+    "Персонаж выключен": "Personaje desactivado",
+    "Настройки персонажа": "Ajustes del personaje",
+    "Галочка — персонаж доступен в новых чатах и при смене. Снятая — уже выбранного не убирает.":
+      "Marcado: el personaje está disponible en chats nuevos y al cambiar. Desmarcarlo no quita el actual.",
+    "Персонаж выключен: в новых чатах не появится, включить в текущем чате нельзя.":
+      "El personaje está desactivado: no aparecerá en chats nuevos y no se puede activar en este chat.",
+    "Размер персонажа": "Tamaño del personaje",
+    "Голос персонажа": "Voz del personaje",
+    "загружаю голоса…": "cargando voces…",
+    "По умолчанию": "Predeterminado",
+    "сейчас: {v}": "ahora: {v}",
+    "Озвучка ответа": "Voz de la respuesta",
+    "Выключено": "Desactivado",
+    "Кратко": "Breve",
+    "Полностью": "Completo",
+    "озвучки не будет": "sin voz",
+    "Нужно выбрать вспомогательную модель": "Elige primero un modelo auxiliar",
+    "Озвучка рассуждений": "Voz del razonamiento",
+    "Переводить на {lang}": "Traducir a {lang}",
+    "русский": "ruso",
+    "английский": "inglés",
+    "испанский": "español",
+    "китайский": "chino",
+    "Движок озвучивает только по-русски и по-английски: для ES и ZH речь будет английской.":
+      "El motor solo habla ruso e inglés: para ES y ZH la voz será en inglés.",
+    "Читает ответы вслух, когда выбран пересказ: сокращает текст, переводит рассуждения и озвучивает мысли. Локальные и бесплатные модели — в начале списка.":
+      "Lee las respuestas en voz alta con el resumen activado: acorta el texto, traduce el razonamiento y locuta las ideas. Los modelos locales y gratuitos van primero.",
+    "Отключено": "Desactivado",
+    "Поиск модели": "Buscar modelo",
+    "не удалось получить список": "no se pudo cargar la lista",
+    "локальных и бесплатных моделей нет": "no hay modelos locales ni gratuitos",
+    "{name} · локальная": "{name} · local",
+    "Показать ещё {n}": "Mostrar {n} más",
+    "всего подходит: {n}": "coincidencias: {n}",
+    "загружаю…": "cargando…",
+    "мост недоступен": "puente no disponible",
+    "Общие настройки движка: действуют на всех персонажей.": "Ajustes del motor comunes a todos los personajes.",
+    "Тихие часы": "Horas silenciosas",
+    "выкл": "no",
+    "вкл": "sí",
+    "Держать движок в памяти": "Mantener el motor en memoria",
+    "движок занимает ~1.7 ГБ и отвечает за полсекунды": "el motor ocupa ~1.7 GB y responde en medio segundo",
+    "по требованию: каждая фраза ~9 с на загрузку, память свободна":
+      "bajo demanda: ~9 s de carga por frase, memoria libre",
+    "▶ Проверить": "▶ Probar",
+    "Озвучить пробную фразу голосом текущего персонажа": "Locutar una frase de prueba con la voz del personaje actual",
+    "■ Стоп": "■ Parar",
+    "Заглушить текущую озвучку": "Silenciar la locución actual",
+    "↻ Повторить": "↻ Repetir",
+    "Озвучить последний текст ещё раз": "Locutar otra vez el último texto",
+    "Озвучено ответов: {n} · всего речи: {m} мин {s} с": "Respuestas locutadas: {n} · voz total: {m} min {s} s",
+    "Сбросить": "Restablecer",
+    "Озвучено ответов: {n} · речи: {m} мин": "Respuestas locutadas: {n} · voz: {m} min",
+    "спит": "dormido",
+    "расстроен": "triste",
+    "Аниме": "Anime",
+    "Пиксельарт": "Pixel art",
+    "Следующий персонаж из пака": "Siguiente personaje del paquete",
+  },
+  zh: {
+    "Данные пользователя": "用户数据",
+    "Настройка персонажей": "角色设置",
+    "Вспомогательная модель": "辅助模型",
+    "Дополнительно": "高级",
+    "Статистика": "统计",
+    "← Назад": "← 返回",
+    "Имя (необязательно)": "名字（可选）",
+    "Как обращаться к тебе в пересказе": "总结时如何称呼你",
+    "Не указывать": "不指定",
+    "Мужской": "男性",
+    "Женский": "女性",
+    "Пак персонажей": "角色包",
+    "Доступен для новых чатов": "可用于新聊天",
+    "Выключен": "已关闭",
+    "Выбрать персонажа": "选择角色",
+    "Персонаж выключен": "角色已关闭",
+    "Настройки персонажа": "角色设置",
+    "Галочка — персонаж доступен в новых чатах и при смене. Снятая — уже выбранного не убирает.":
+      "勾选表示角色可用于新聊天和切换；取消勾选不会移除当前角色。",
+    "Персонаж выключен: в новых чатах не появится, включить в текущем чате нельзя.":
+      "角色已关闭：不会出现在新聊天中，也无法在当前聊天启用。",
+    "Размер персонажа": "角色大小",
+    "Голос персонажа": "角色声音",
+    "загружаю голоса…": "正在加载声音…",
+    "По умолчанию": "默认",
+    "сейчас: {v}": "当前：{v}",
+    "Озвучка ответа": "回答朗读",
+    "Выключено": "关闭",
+    "Кратко": "简短",
+    "Полностью": "完整",
+    "озвучки не будет": "不会朗读",
+    "Нужно выбрать вспомогательную модель": "请先选择辅助模型",
+    "Озвучка рассуждений": "思考朗读",
+    "Переводить на {lang}": "翻译成{lang}",
+    "русский": "俄语",
+    "английский": "英语",
+    "испанский": "西班牙语",
+    "китайский": "中文",
+    "Движок озвучивает только по-русски и по-английски: для ES и ZH речь будет английской.":
+      "引擎只支持俄语和英语：选择 ES 或 ZH 时语音为英语。",
+    "Читает ответы вслух, когда выбран пересказ: сокращает текст, переводит рассуждения и озвучивает мысли. Локальные и бесплатные модели — в начале списка.":
+      "开启摘要时朗读回答：压缩文本、翻译思考并朗读想法。本地和免费模型排在前面。",
+    "Отключено": "已关闭",
+    "Поиск модели": "搜索模型",
+    "не удалось получить список": "无法获取列表",
+    "локальных и бесплатных моделей нет": "没有本地或免费模型",
+    "{name} · локальная": "{name} · 本地",
+    "Показать ещё {n}": "再显示 {n} 个",
+    "всего подходит: {n}": "共匹配：{n}",
+    "загружаю…": "正在加载…",
+    "мост недоступен": "桥接不可用",
+    "Общие настройки движка: действуют на всех персонажей.": "所有角色共用的引擎设置。",
+    "Тихие часы": "安静时段",
+    "выкл": "关",
+    "вкл": "开",
+    "Держать движок в памяти": "将引擎保留在内存中",
+    "движок занимает ~1.7 ГБ и отвечает за полсекунды": "引擎占用约 1.7 GB，半秒内响应",
+    "по требованию: каждая фраза ~9 с на загрузку, память свободна": "按需加载：每句约 9 秒，内存空闲",
+    "▶ Проверить": "▶ 测试",
+    "Озвучить пробную фразу голосом текущего персонажа": "用当前角色的声音朗读测试句",
+    "■ Стоп": "■ 停止",
+    "Заглушить текущую озвучку": "停止当前朗读",
+    "↻ Повторить": "↻ 重播",
+    "Озвучить последний текст ещё раз": "再次朗读上一段文本",
+    "Озвучено ответов: {n} · всего речи: {m} мин {s} с": "已朗读回答：{n} · 总语音：{m} 分 {s} 秒",
+    "Сбросить": "重置",
+    "Озвучено ответов: {n} · речи: {m} мин": "已朗读回答：{n} · 语音：{m} 分",
+    "спит": "睡眠中",
+    "расстроен": "难过",
+    "Аниме": "动漫",
+    "Пиксельарт": "像素风",
+    "Следующий персонаж из пака": "角色包中的下一个角色",
+  },
+};
+
+const t = (s) => (I18N[activeLang] && I18N[activeLang][s]) || s;
+const tf = (s, vars) => {
+  let out = t(s);
+  for (const k of Object.keys(vars || {})) out = out.split(`{${k}}`).join(String(vars[k]));
+  return out;
+};
+
+// Язык озвучки: движок TeraTTS знает только русский и английский, поэтому
+// для ES и ZH говорим по-английски (интерфейс при этом локализован).
+const voiceLang = () => (activeLang === "ru" ? "ru" : "en");
+const LANG_NAME = { ru: "русский", en: "английский", es: "испанский", zh: "китайский" };
+
+// Голоса по умолчанию для английского: подобраны по полу и характеру
+// русского голоса персонажа. Русские голоса остаются исходными.
+const EN_VOICE_BY_BASE = {
+  ru_f1: "eng_f3",
+  ru_f2: "eng_f5",
+  ru_m1: "eng_m3",
+  ru_m5: "eng_m4",
+  fx_robot: "eng_m3",
+  fx_demon: "eng_m4",
+  fx_demoness: "eng_f3",
+  fx_alien: "eng_f5",
+  fx_cat: "eng_f5",
+  fx_penguin: "eng_m2_whisper",
+  fx_ghost: "eng_f4_whisper",
+};
+const defaultVoiceFor = (base, lang) => {
+  if (lang === "ru") return base;
+  if (EN_VOICE_BY_BASE[base]) return EN_VOICE_BY_BASE[base];
+  return /_m$|^fx_(robot|demon|penguin)$/.test(base) ? "eng_m3" : "eng_f3";
+};
+
 function packVoices(name) {
   const pack = PACKS[name || activePack] || {};
   return Object.keys(pack).filter((voice) => pack[voice] && pack[voice].closed);
@@ -273,7 +550,7 @@ function createView(ctx) {
   const gear = document.createElement("button");
   gear.type = "button";
   gear.textContent = "⚙";
-  gear.title = "Настройки персонажа";
+  gear.title = t("Настройки персонажа");
   gear.style.cssText = [
     "position:absolute",
     "left:0",
@@ -297,7 +574,7 @@ function createView(ctx) {
   const swapBtn = document.createElement("button");
   swapBtn.type = "button";
   swapBtn.textContent = "↻";
-  swapBtn.title = "Следующий персонаж из пака";
+  swapBtn.title = t("Следующий персонаж из пака");
   // Стиль задаём явно: чтение gear.style.cssText нормализует пробелы
   // («top: 2px»), и replace не срабатывал — кнопка накрывала шестерёнку.
   swapBtn.style.cssText = [
@@ -543,7 +820,7 @@ function createView(ctx) {
   const refreshBadge = () => {
     const mins = stats.ms > 0 ? Math.round(stats.ms / 60000) : 0;
     badge.textContent = lastAnswerMs > 0 ? `${stats.count} · ${Math.round(lastAnswerMs / 1000)}с` : `${stats.count}`;
-    badge.title = `Озвучено ответов: ${stats.count} · речи: ${mins} мин`;
+    badge.title = tf("Озвучено ответов: {n} · речи: {m} мин", { n: stats.count, m: mins });
   };
 
   // Позиции прокрутки списков: панель перерисовывается целиком, поэтому
@@ -606,7 +883,7 @@ function createView(ctx) {
     caret.textContent = sectionOpen[key] ? "▾" : "▸";
     caret.style.cssText = "width:10px;opacity:.7";
     const label = document.createElement("span");
-    label.textContent = titleText;
+    label.textContent = t(titleText);
     head.append(caret, label);
     head.onclick = (ev) => {
       ev.stopPropagation();
@@ -623,6 +900,22 @@ function createView(ctx) {
     wrap.append(head, body);
     (parent || panel).appendChild(wrap);
     return body;
+  };
+
+  // Смена языка: интерфейс сразу, сервер — для пересказа и озвучки.
+  const setLang = (code) => {
+    if (!LANGS.some(([c]) => c === code) || code === activeLang) return;
+    activeLang = code;
+    try {
+      localStorage.setItem(LANG_KEY, code);
+    } catch (e) {}
+    gear.title = t("Настройки персонажа");
+    swapBtn.title = t("Следующий персонаж из пака");
+    bridge("/speech", { lang: code }).catch(() => {});
+    if (currentSid) {
+      bridge("/voice", { sid: currentSid, voice: charVoice(voice), name: nameFor(voice) }).catch(() => {});
+    }
+    if (panelOpen) renderPanel();
   };
 
   const renderPanel = () => {
@@ -653,13 +946,14 @@ function createView(ctx) {
     // Подписи голоса и общая строка-кнопка для всех списков панели.
     const labelOf = (id) => {
       const found = (voiceCatalog || []).find((v) => v.id === id);
-      return found ? found.label : id;
+      if (!found) return id;
+      return activeLang === "ru" ? found.label : found.labelEn || found.label;
     };
 
     const vRow = (text, active, onClick, extra) => {
       const row = document.createElement("button");
       row.type = "button";
-      row.textContent = text;
+      row.textContent = t(text);
       row.style.cssText = [
         "display:flex",
         "align-items:center",
@@ -718,7 +1012,7 @@ function createView(ctx) {
       row.style.cssText = "display:flex;flex-direction:column;gap:2px;margin:0 0 8px";
       const backBtn = document.createElement("button");
       backBtn.type = "button";
-      backBtn.textContent = "← Назад";
+      backBtn.textContent = t("← Назад");
       backBtn.style.cssText = [
         "align-self:flex-start",
         "padding:1px 2px",
@@ -737,7 +1031,7 @@ function createView(ctx) {
         go(back || { name: "root" });
       };
       const titleEl = document.createElement("div");
-      titleEl.textContent = title;
+      titleEl.textContent = t(title);
       titleEl.style.cssText = "font-size:12px;font-weight:600;opacity:.95;padding-left:2px";
       row.append(backBtn, titleEl);
       panel.appendChild(row);
@@ -764,7 +1058,7 @@ function createView(ctx) {
         "cursor:pointer",
       ].join(";");
       const label = document.createElement("span");
-      label.textContent = text;
+      label.textContent = t(text);
       const arrow = document.createElement("span");
       arrow.textContent = "›";
       arrow.style.cssText = "opacity:.45;font-size:14px;line-height:1";
@@ -782,7 +1076,7 @@ function createView(ctx) {
       const btn = document.createElement("button");
       btn.type = "button";
       btn.textContent = text;
-      btn.title = title;
+      btn.title = t(title);
       btn.style.cssText = [
         "width:24px",
         "height:24px",
@@ -808,13 +1102,46 @@ function createView(ctx) {
 
     const hint = (text, parent) => {
       const el = document.createElement("div");
-      el.textContent = text;
+      el.textContent = t(text);
       el.style.cssText = "font-size:10px;line-height:1.45;opacity:.5;margin:2px 0 0 2px";
       (parent || panel).appendChild(el);
       return el;
     };
 
     if (view.name === "root") {
+      // Язык: четыре квадратные кнопки справа над меню.
+      const langRow = document.createElement("div");
+      langRow.style.cssText = "display:flex;justify-content:flex-end;gap:4px;margin-bottom:2px";
+      for (const [code, label] of LANGS) {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.textContent = label;
+        btn.title = code.toUpperCase();
+        const on = code === activeLang;
+        btn.style.cssText = [
+          "width:28px",
+          "height:20px",
+          "padding:0",
+          "border-radius:5px",
+          "font:inherit",
+          "font-size:10px",
+          "line-height:1",
+          "cursor:pointer",
+          `border:1px solid ${on ? "rgba(120,180,255,.75)" : "rgba(255,255,255,.16)"}`,
+          `background:${on ? "rgba(80,130,220,.22)" : "rgba(255,255,255,.04)"}`,
+          `color:${on ? "#bcd6ff" : "inherit"}`,
+        ].join(";");
+        btn.onclick = (ev) => {
+          ev.stopPropagation();
+          setLang(code);
+        };
+        langRow.appendChild(btn);
+      }
+      panel.appendChild(langRow);
+      if (activeLang === "es" || activeLang === "zh") {
+        hint("Движок озвучивает только по-русски и по-английски: для ES и ZH речь будет английской.", panel);
+      }
+
       const menu = document.createElement("div");
       menu.style.cssText = "display:flex;flex-direction:column;gap:6px";
       const items = [
@@ -834,7 +1161,7 @@ function createView(ctx) {
       const uInput = document.createElement("input");
       uInput.type = "text";
       uInput.maxLength = 40;
-      uInput.placeholder = "Имя (необязательно)";
+      uInput.placeholder = t("Имя (необязательно)");
       uInput.value = userName;
       uInput.style.cssText =
         "width:100%;box-sizing:border-box;font:inherit;font-size:12px;padding:5px 7px;" +
@@ -843,7 +1170,7 @@ function createView(ctx) {
       box.appendChild(uInput);
 
       const uHint = document.createElement("div");
-      uHint.textContent = "Как обращаться к тебе в пересказе";
+      uHint.textContent = t("Как обращаться к тебе в пересказе");
       uHint.style.cssText = "opacity:.5;font-size:10px;line-height:1.4;margin:3px 0 0 2px";
       box.appendChild(uHint);
 
@@ -900,7 +1227,7 @@ function createView(ctx) {
       for (const name of Object.keys(PACKS)) {
         const count = Object.keys(PACKS[name] || {}).length;
         pList.appendChild(
-          vRow(`${PACK_NAMES[name] || name} · ${count}`, name === activePack, () => {
+          vRow(`${t(PACK_NAMES[name] || name)} · ${count}`, name === activePack, () => {
             switchPack(name);
             renderPanel();
           }),
@@ -1002,8 +1329,17 @@ function createView(ctx) {
 
       // Голос персонажа: свой у каждого, живёт в localStorage.
       const vBody = collapsible("Голос персонажа", "voice", box);
-      const defaultVoiceOf = () => VOICE_ALIAS[key] || key;
-      const pickedVoice = () => charSettingsFor(key).voice || charVoices[key] || "";
+      const defaultVoiceOf = () => defaultVoiceFor(VOICE_ALIAS[key] || key, voiceLang());
+      // Голос хранится отдельно для каждого языка: русский выбор не должен
+      // подставляться, когда включён английский.
+      const pickedVoice = () => {
+        const cs = charSettingsFor(key);
+        const lang = voiceLang();
+        const byLang = cs.voiceByLang || {};
+        if (byLang[lang]) return byLang[lang];
+        if (lang === "ru" && cs.voice) return cs.voice;
+        return "";
+      };
       const isDefaultVoice = () => {
         const picked = pickedVoice();
         return !picked || picked === defaultVoiceOf();
@@ -1020,7 +1356,7 @@ function createView(ctx) {
       // Строки списка голосов: подсветку обновляем на месте, панель не перерисовываем.
       const voiceRows = [];
       const refreshVoiceSelection = () => {
-        vCur.textContent = `сейчас: ${labelOf(pickedVoice() || defaultVoiceOf())}`;
+        vCur.textContent = tf("сейчас: {v}", { v: labelOf(pickedVoice() || defaultVoiceOf()) });
         for (const item of voiceRows) {
           item.row.setActive(item.id ? !isDefaultVoice() && item.id === pickedVoice() : isDefaultVoice());
         }
@@ -1030,7 +1366,10 @@ function createView(ctx) {
         // Пример голоса звучит сразу, не дожидаясь ответа моста.
         playClip((LINES.samples && (LINES.samples[id] || LINES.samples[key])) || null);
         const value = id || defaultVoiceOf();
-        saveCharSetting(key, { voice: value });
+        const lang = voiceLang();
+        const byLang = { ...(charSettingsFor(key).voiceByLang || {}) };
+        byLang[lang] = value;
+        saveCharSetting(key, lang === "ru" ? { voiceByLang: byLang, voice: value } : { voiceByLang: byLang });
         charVoices[key] = value;
         bridge("/charvoice", { charId: key, voice: value }).catch(() => {});
         if (key === packKey(voice) && currentSid) {
@@ -1051,8 +1390,13 @@ function createView(ctx) {
           })
           .catch(() => {});
       } else {
-        for (const v of voiceCatalog) {
-          const row = vRow(v.label, v.id === pickedVoice() && !isDefaultVoice(), () => bindVoice(v.id));
+        const catalog = (voiceCatalog || []).filter((v) => (v.lang || "ru") === voiceLang());
+        for (const v of catalog) {
+          const row = vRow(
+            activeLang === "ru" ? v.label : v.labelEn || v.label,
+            v.id === pickedVoice() && !isDefaultVoice(),
+            () => bindVoice(v.id),
+          );
           voiceRows.push({ id: v.id, row });
           vList.appendChild(row);
         }
@@ -1078,10 +1422,10 @@ function createView(ctx) {
       sList.style.cssText = "max-height:132px;overflow-y:auto;display:flex;flex-direction:column;gap:4px";
       const speechRows = [];
       const speechNote = document.createElement("div");
-      speechNote.textContent = "озвучки не будет";
+      speechNote.textContent = t("озвучки не будет");
       speechNote.style.cssText = "font-size:11px;opacity:.55;margin-top:6px";
       const speechWarn = document.createElement("div");
-      speechWarn.textContent = "Нужно выбрать вспомогательную модель";
+      speechWarn.textContent = t("Нужно выбрать вспомогательную модель");
       speechWarn.style.cssText = "display:none;color:#ff6b6b;font-size:10px;line-height:1.4;margin-top:6px";
 
       const speechFor = () => charSettingsFor(key).speech || speechMode || "summary";
@@ -1116,24 +1460,26 @@ function createView(ctx) {
       const rList = keepScroll(document.createElement("div"), "reason");
       rList.style.cssText = "max-height:132px;overflow-y:auto;display:flex;flex-direction:column;gap:4px";
       const reasonRows = [];
-      const rTrans = document.createElement("div");
-      rTrans.style.cssText = "display:flex;margin-top:6px";
-      const rTransRow = vRow("Переводить на русский", false, () => {
-        const next = !reasonFor().translate;
-        setReason({ translate: next });
-      });
-      rTransRow.style.flex = "1";
-      rTrans.appendChild(rTransRow);
+      const rTrans = document.createElement("label");
+      rTrans.style.cssText =
+        "display:flex;align-items:center;gap:8px;margin-top:6px;font-size:11px;cursor:pointer";
+      const rTransCb = document.createElement("input");
+      rTransCb.type = "checkbox";
+      rTransCb.style.cssText = "width:14px;height:14px;margin:0;accent-color:#5b8dee;cursor:pointer";
+      const rTransText = document.createElement("span");
+      rTransText.textContent = tf("Переводить на {lang}", { lang: t(LANG_NAME[activeLang]) });
+      rTrans.append(rTransCb, rTransText);
+      rTransCb.onchange = () => setReason({ translate: rTransCb.checked });
 
       const reasonFor = () => charSettingsFor(key).reason || reasonState || { mode: "off", translate: true };
       const reasonWarn = document.createElement("div");
-      reasonWarn.textContent = "Нужно выбрать вспомогательную модель";
+      reasonWarn.textContent = t("Нужно выбрать вспомогательную модель");
       reasonWarn.style.cssText = "display:none;color:#ff6b6b;font-size:10px;line-height:1.4;margin-top:6px";
 
       const refreshReason = () => {
         const st = reasonFor();
         for (const item of reasonRows) item.row.setActive(item.mode === st.mode);
-        rTransRow.setActive(Boolean(st.translate));
+        rTransCb.checked = Boolean(st.translate);
         rList.style.opacity = st.mode === "off" ? ".5" : "1";
         reasonWarn.style.display = st.mode !== "off" && modelDisabled === true ? "block" : "none";
       };
@@ -1161,8 +1507,9 @@ function createView(ctx) {
       const box = boxEl();
 
       const desc = document.createElement("div");
-      desc.textContent =
-        "Читает ответы вслух, когда выбран пересказ: сокращает текст, переводит рассуждения на русский и озвучивает мысли. Локальные и бесплатные модели — в начале списка.";
+      desc.textContent = t(
+        "Читает ответы вслух, когда выбран пересказ: сокращает текст, переводит рассуждения и озвучивает мысли. Локальные и бесплатные модели — в начале списка.",
+      );
       desc.style.cssText = "font-size:10px;line-height:1.45;opacity:.55;margin:0 0 2px 2px";
       box.appendChild(desc);
 
@@ -1183,7 +1530,7 @@ function createView(ctx) {
       mList.style.cssText = "max-height:220px;overflow-y:auto;display:flex;flex-direction:column;gap:4px";
       const mSearch = document.createElement("input");
       mSearch.type = "text";
-      mSearch.placeholder = "Поиск модели";
+      mSearch.placeholder = t("Поиск модели");
       mSearch.value = modelQuery;
       mSearch.style.cssText =
         "width:100%;box-sizing:border-box;font:inherit;font-size:11px;padding:4px 7px;margin-bottom:2px;" +
@@ -1215,15 +1562,16 @@ function createView(ctx) {
         const shown = free.slice(0, modelLimit);
         if (!shown.length) {
           const empty = document.createElement("div");
-          empty.textContent =
-            data && data.error ? "не удалось получить список" : "локальных и бесплатных моделей нет";
+          empty.textContent = t(
+            data && data.error ? "не удалось получить список" : "локальных и бесплатных моделей нет",
+          );
           empty.style.cssText = "opacity:.5;font-size:11px";
           mList.appendChild(empty);
           return;
         }
         for (const m of shown) {
           const active = m.providerID === current.providerID && m.id === current.id;
-          const row = vRow(m.local ? `${m.name} · локальная` : m.name, active, () => {
+          const row = vRow(m.local ? tf("{name} · локальная", { name: m.name }) : m.name, active, () => {
             modelDisabled = false;
             offRow.setActive(false);
             for (const item of modelRows) item.row.setActive(item.model === m);
@@ -1236,7 +1584,7 @@ function createView(ctx) {
         if (free.length > shown.length) {
           const more = document.createElement("button");
           more.type = "button";
-          more.textContent = `Показать ещё ${Math.min(40, free.length - shown.length)}`;
+          more.textContent = tf("Показать ещё {n}", { n: Math.min(40, free.length - shown.length) });
           more.style.cssText =
             "margin-top:4px;padding:4px 8px;font:inherit;font-size:11px;cursor:pointer;border-radius:7px;" +
             "border:1px solid rgba(255,255,255,.16);background:rgba(255,255,255,.05);color:inherit";
@@ -1247,7 +1595,7 @@ function createView(ctx) {
           };
           mList.appendChild(more);
           const left = document.createElement("div");
-          left.textContent = `всего подходит: ${free.length}`;
+          left.textContent = tf("всего подходит: {n}", { n: free.length });
           left.style.cssText = "opacity:.4;font-size:10px;padding:2px 7px";
           mList.appendChild(left);
         }
@@ -1263,7 +1611,7 @@ function createView(ctx) {
         modelsLoading = true;
         mList.textContent = "";
         const noteEl = document.createElement("div");
-        noteEl.textContent = "загружаю…";
+        noteEl.textContent = t("загружаю…");
         noteEl.style.cssText = "opacity:.5;font-size:11px";
         mList.appendChild(noteEl);
         bridge("/models")
@@ -1276,7 +1624,7 @@ function createView(ctx) {
           })
           .catch(() => {
             modelsLoading = false;
-            noteEl.textContent = "мост недоступен";
+            noteEl.textContent = t("мост недоступен");
           });
       };
       loadModels();
@@ -1315,13 +1663,13 @@ function createView(ctx) {
       const qTop = document.createElement("div");
       qTop.style.cssText = "display:flex;align-items:center;justify-content:space-between;gap:8px";
       const qLabel = document.createElement("span");
-      qLabel.textContent = "Тихие часы";
+      qLabel.textContent = t("Тихие часы");
       qLabel.style.cssText = "font-size:11px;opacity:.75";
       const qToggle = document.createElement("button");
       qToggle.type = "button";
       qToggle.style.cssText =
         "border:1px solid rgba(255,255,255,.16);background:rgba(255,255,255,.04);color:inherit;border-radius:7px;padding:3px 9px;font-size:11px;cursor:pointer";
-      qToggle.textContent = "выкл";
+      qToggle.textContent = t("выкл");
       const qTimes = document.createElement("div");
       qTimes.style.cssText = "display:flex;align-items:center;gap:6px;font-size:11px;opacity:.8";
       const timeInput = (value) => {
@@ -1341,7 +1689,7 @@ function createView(ctx) {
       qTimes.append(qFrom, qDash, qTo);
 
       const refreshQuiet = () => {
-        qToggle.textContent = quietState.on ? "вкл" : "выкл";
+        qToggle.textContent = t(quietState.on ? "вкл" : "выкл");
         qToggle.style.borderColor = quietState.on ? "rgba(120,180,255,.6)" : "rgba(255,255,255,.16)";
         qToggle.style.background = quietState.on ? "rgba(80,130,220,.18)" : "rgba(255,255,255,.04)";
         qFrom.value = quietState.from;
@@ -1370,15 +1718,17 @@ function createView(ctx) {
       memCb.checked = keepAlive;
       memCb.style.cssText = "width:14px;height:14px;margin:0;accent-color:#5b8dee;cursor:pointer";
       const memText = document.createElement("span");
-      memText.textContent = "Держать движок в памяти";
+      memText.textContent = t("Держать движок в памяти");
       memRow.append(memCb, memText);
       const memHint = document.createElement("div");
       memHint.style.cssText = "font-size:10px;line-height:1.4;opacity:.5;margin:4px 0 0 2px";
       const refreshMem = () => {
         memCb.checked = keepAlive;
-        memHint.textContent = keepAlive
-          ? "движок занимает ~1.7 ГБ и отвечает за полсекунды"
-          : "по требованию: каждая фраза ~9 с на загрузку, память свободна";
+        memHint.textContent = t(
+          keepAlive
+            ? "движок занимает ~1.7 ГБ и отвечает за полсекунды"
+            : "по требованию: каждая фраза ~9 с на загрузку, память свободна",
+        );
       };
       memCb.onchange = () => {
         keepAlive = memCb.checked;
@@ -1394,8 +1744,8 @@ function createView(ctx) {
       const actBtn = (text, title) => {
         const btn = document.createElement("button");
         btn.type = "button";
-        btn.textContent = text;
-        btn.title = title;
+        btn.textContent = t(text);
+        btn.title = t(title);
         btn.style.cssText = [
           "flex:1",
           "padding:5px 8px",
@@ -1436,13 +1786,13 @@ function createView(ctx) {
       stText.style.cssText = "font-size:11px;line-height:1.5;opacity:.8";
       const stReset = document.createElement("button");
       stReset.type = "button";
-      stReset.textContent = "Сбросить";
+      stReset.textContent = t("Сбросить");
       stReset.style.cssText =
         "margin-top:6px;border:1px solid rgba(255,255,255,.16);background:rgba(255,255,255,.04);color:inherit;border-radius:7px;padding:3px 9px;font-size:11px;cursor:pointer;align-self:flex-start";
       const refreshStats = () => {
         const mins = Math.floor(stats.ms / 60000);
         const secs = Math.round((stats.ms % 60000) / 1000);
-        stText.textContent = `Озвучено ответов: ${stats.count} · всего речи: ${mins} мин ${secs} с`;
+        stText.textContent = tf("Озвучено ответов: {n} · всего речи: {m} мин {s} с", { n: stats.count, m: mins, s: secs });
       };
       stReset.onclick = () => {
         stats.count = 0;
@@ -1643,7 +1993,7 @@ function createView(ctx) {
       box.style.animation = "x2ai-breathe 3.6s ease-in-out infinite";
       zzz.style.animation = "x2ai-zzz 2.6s ease-out infinite";
       zzz.style.opacity = "0";
-      root.title = `x2ai · ${nameFor(voice)} · спит`;
+      root.title = `x2ai · ${nameFor(voice)} · ${t("спит")}`;
     } else if (next === "sad") {
       if (!quiet) img.src = frame(voice, "blink");
       img.style.filter = `${SHADOW} grayscale(.55) brightness(.88)`;
@@ -1651,7 +2001,7 @@ function createView(ctx) {
       box.style.transform = "translateY(2px) rotate(-2deg)";
       zzz.style.animation = "";
       zzz.style.opacity = "0";
-      root.title = `x2ai · ${nameFor(voice)} · расстроен`;
+      root.title = `x2ai · ${nameFor(voice)} · ${t("расстроен")}`;
     } else {
       if (!quiet) img.src = frame(voice, "closed");
       img.style.filter = SHADOW;
@@ -1848,7 +2198,12 @@ function createView(ctx) {
   const charVoice = (id) => {
     if (!id) return id;
     const key = packKey(id);
-    return charSettingsFor(key).voice || charVoices[key] || VOICE_ALIAS[id] || VOICE_ALIAS[key] || id;
+    const lang = voiceLang();
+    const cs = charSettingsFor(key);
+    const byLang = cs.voiceByLang || {};
+    if (byLang[lang]) return byLang[lang];
+    if (lang === "en") return defaultVoiceFor(VOICE_ALIAS[key] || key, "en");
+    return cs.voice || charVoices[key] || VOICE_ALIAS[id] || VOICE_ALIAS[key] || id;
   };
   const voiceOf = (id) => (voiceMap && voiceMap[id]) || id;
 
@@ -1912,6 +2267,7 @@ function createView(ctx) {
     return fetch(BRIDGE_URL + route, init).then((r) => r.json());
   };
   bridgeReady = true;
+  bridge("/speech", { lang: activeLang }).catch(() => {});
 
   // Сервер по этому же списку выбирает голос нового чата, поэтому хеш
   // и в окне, и в озвучке даёт одного персонажа.
