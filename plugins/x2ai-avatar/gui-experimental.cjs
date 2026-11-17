@@ -338,7 +338,7 @@ function createView(ctx) {
     const next = list[(index + 1) % list.length] || voice;
     animateSwap(next);
     saveLocal(currentSid, next);
-    if (currentSid) bridge("/voice", { sid: currentSid, voice: charVoice(next) }).catch(() => {});
+    if (currentSid) bridge("/voice", { sid: currentSid, voice: charVoice(next), name: nameFor(next) }).catch(() => {});
     // Реплики есть по голосу, а не по id персонажа.
     const line = pickClip(LINES.lines && (LINES.lines[charVoice(next)] || LINES.lines[next]));
     playClip(line);
@@ -460,7 +460,7 @@ function createView(ctx) {
       if (pick) {
         apply(pick, true);
         saveLocal(currentSid, pick);
-        if (currentSid) bridge("/voice", { sid: currentSid, voice: charVoice(pick) }).catch(() => {});
+        if (currentSid) bridge("/voice", { sid: currentSid, voice: charVoice(pick), name: nameFor(pick) }).catch(() => {});
       }
       // Персонаж называет пак своим голосом.
       const packClips = LINES.packs && LINES.packs[name];
@@ -574,7 +574,7 @@ function createView(ctx) {
       bridge("/charvoice", { charId: voice, voice: id })
         .then((out) => {
           charVoices = (out && out.charVoices) || {};
-          if (currentSid) bridge("/voice", { sid: currentSid, voice: charVoice(voice) }).catch(() => {});
+          if (currentSid) bridge("/voice", { sid: currentSid, voice: charVoice(voice), name: nameFor(voice) }).catch(() => {});
           refreshVoiceSelection();
         })
         .catch(() => {});
@@ -1499,7 +1499,7 @@ function createView(ctx) {
       const picked = localMap[currentSid];
       voiceMap[currentSid] = picked;
       try {
-        bridge("/voice", { sid: currentSid, voice: charVoice(picked) }).catch(() => {});
+        bridge("/voice", { sid: currentSid, voice: charVoice(picked), name: nameFor(picked) }).catch(() => {});
       } catch (e) {}
     }
   };
@@ -1523,7 +1523,18 @@ function createView(ctx) {
   let adoptedKey = "";
   let bridgeSpeaking = false;
   let lastSpeakAt = 0;
+  // Имя персонажа синхронизируем с мостом, чтобы правила в промпте знали пак.
+  let lastSyncedName = "";
+  const syncName = () => {
+    if (!currentSid) return;
+    const nm = nameFor(voice);
+    if (!nm || nm === lastSyncedName) return;
+    lastSyncedName = nm;
+    bridge("/voice", { sid: currentSid, voice: charVoice(voice), name: nm }).catch(() => {});
+  };
+
   const pollBridge = () => {
+    syncName();
     bridge("/state")
       .then((state) => {
         if (!state) return;

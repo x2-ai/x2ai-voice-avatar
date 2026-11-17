@@ -286,6 +286,40 @@ function inQuietHours() {
   return from < to ? cur >= from && cur < to : cur >= from || cur < to;
 }
 
+// Имя персонажа для чата пишет окно (оно знает пак), и список чатов,
+// которым правила уже подмешаны: плагин перезагружается на каждом шаге.
+const NAMES_FILE = `${process.env.HOME}/.config/opencode/x2ai-char-names.json`;
+const RULES_SEEN_FILE = `${process.env.HOME}/.config/opencode/x2ai-rules-seen.json`;
+
+function readCharName(sid) {
+  if (!sid) return "";
+  try {
+    const map = JSON.parse(fs.readFileSync(NAMES_FILE, "utf8"));
+    const name = map && map[sid];
+    return typeof name === "string" ? name : "";
+  } catch (e) {
+    return "";
+  }
+}
+
+function rulesSeen(sid) {
+  try {
+    const list = JSON.parse(fs.readFileSync(RULES_SEEN_FILE, "utf8"));
+    return Array.isArray(list) && list.includes(sid);
+  } catch (e) {
+    return false;
+  }
+}
+
+function markRulesSeen(sid) {
+  try {
+    const list = JSON.parse(fs.readFileSync(RULES_SEEN_FILE, "utf8"));
+    const next = Array.isArray(list) ? list : [];
+    if (!next.includes(sid)) next.push(sid);
+    fs.writeFileSync(RULES_SEEN_FILE, JSON.stringify(next.slice(-200)));
+  } catch (e) {}
+}
+
 // Обращение к пользователю: имя (может быть пустым) и род (m | f | "" — не указан).
 const USER_FILE = `${process.env.HOME}/.config/opencode/x2ai-user.json`;
 function readUser() {
@@ -1019,6 +1053,7 @@ function startBridge(ctx) {
     const value = readJson(voicesFile);
     return value && typeof value === "object" ? value : {};
   };
+  const namesFile = `${process.env.HOME}/.config/opencode/x2ai-char-names.json`;
   const charVoicesFile = `${process.env.HOME}/.config/opencode/x2ai-char-voices.json`;
   const readCharVoices = () => {
     const value = readJson(charVoicesFile);
@@ -1108,6 +1143,7 @@ function startBridge(ctx) {
         at: Number(state.at) || 0,
         voices: readVoices(),
         charVoices: readCharVoices(),
+        names: readJson(namesFile) || {},
       });
       return;
     }
@@ -1152,6 +1188,14 @@ function startBridge(ctx) {
           map[payload.sid] = payload.voice;
           try {
             fs.writeFileSync(voicesFile, JSON.stringify(map, null, 2));
+          } catch (e) {}
+        }
+        // Имя персонажа приходит из окна: только оно знает пак (px_/аниме).
+        if (payload.sid && payload.name) {
+          const names = readJson(namesFile) || {};
+          names[payload.sid] = String(payload.name).slice(0, 40);
+          try {
+            fs.writeFileSync(namesFile, JSON.stringify(names, null, 2));
           } catch (e) {}
         }
         send(res, 200, { ok: true });
@@ -1445,16 +1489,15 @@ module.exports = {
     // Правила общения: подмешиваем в системные инструкции первого запроса чата,
     // поэтому в переписке они не видны вообще.
     try {
-      const greeted = new Set();
       await ctx.session.hook("context", (event) => {
         const sid =
           event.sessionID || (event.session && event.session.id) || (event.metadata && event.metadata.sessionID) || "";
-        if (sid && greeted.has(sid)) return;
+        if (sid && rulesSeen(sid)) return;
         const user = readUser();
         const voice = sid ? effectiveVoice(sid) : "";
         const agentGender = genderOf(voice);
         const rules = [];
-        const charName = nameOf(voice);
+        const charName = readCharName(sid) || nameOf(voice);
         if (charName) {
           rules.push(`Тебя зовут ${charName}. Пользователь может обращаться к тебе по имени.`);
         }
@@ -1470,7 +1513,7 @@ module.exports = {
           rules.push("Пользователь — мужчина. Обращаясь к нему, используй мужской род: «ты проверил», «ты прав».");
         }
         if (!rules.length) return;
-        if (sid) greeted.add(sid);
+        if (sid) markRulesSeen(sid);
         event.system.push({ type: "text", text: `[Правила общения]\n${rules.join("\n")}` });
         log("PROMPT_RULES:", sid || "-", rules.length);
       });
