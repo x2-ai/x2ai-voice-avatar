@@ -40,7 +40,8 @@ const CHAR_NAMES = {
 // Имя зависит от пака: в пиксельном свои названия, в аниме — прежние.
 function nameFor(voice) {
   const pack = CHAR_NAMES[activePack] || {};
-  return pack[voice] || CHAR_NAMES.anime[voice] || voice;
+  const key = packKey(voice);
+  return pack[key] || CHAR_NAMES.anime[key] || CHAR_NAMES.anime[voice] || voice;
 }
 const HEIGHT = 224; // px на экране (спрайты 336 px)
 
@@ -95,8 +96,21 @@ function setPack(name) {
   } catch (e) {}
 }
 
-function frame(voice, state) {
+// Ключ персонажа внутри пака: у пиксельного пака id с префиксом px_,
+// а голос чата может быть без него (ru_f1 вместо px_ru_f1).
+function packKey(voice) {
   const key = SPRITE_ALIAS[voice] || voice;
+  const pack = PACKS[activePack] || {};
+  if (pack[key]) return key;
+  const prefixed = "px_" + key;
+  if (pack[prefixed]) return prefixed;
+  const bare = key.replace(/^px_/, "");
+  if (pack[bare]) return bare;
+  return key;
+}
+
+function frame(voice, state) {
+  const key = packKey(voice);
   const pack = PACKS[activePack] || {};
   const base = PACKS.anime || {};
   const set = pack[key] || base[key] || base.ru_f1 || Object.values(PACKS)[0].ru_f1;
