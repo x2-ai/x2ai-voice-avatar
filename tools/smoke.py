@@ -8,7 +8,6 @@
 from __future__ import annotations
 
 import json
-import re
 import subprocess
 import sys
 import urllib.request
@@ -68,7 +67,7 @@ def check_bundle_markers() -> None:
         "x2ai-avatar:stats",
         "pingReset",
         "voiceGender",
-        "sayWhenFree" if False else "bridge(\"/say\"",
+        'bridge("/say"',
         "centerActive",
         "x2ai-active",
         "x2ai-avatar:lang",
@@ -135,7 +134,7 @@ def check_tts_markers() -> None:
         "function stripCode",
         "function decorate",
         "function llmReason",
-        "reasonSeen",
+        "claimReason",
         "function readReason",
         "inQuietHours",
         "FULL_MAX_CHARS",
@@ -150,12 +149,24 @@ def check_tts_markers() -> None:
         "function readMuted",
         "function limitFor",
         "x2ai-limits.json",
+        "readJsonCached",
+        "x2ai-name-state.json",
+        "function installedVoices",
+        "function speakSay",
     ]
     for marker in markers:
         if marker in text:
             ok(f"tts: «{marker}»")
         else:
             bad(f"tts: нет «{marker}»")
+    # Удалённое не должно возвращаться: piper и say-движок остались в прошлом
+    # (say — только аварийный фоллбек внутри speak), дедуп рассуждений живёт
+    # только в claimReason.
+    for gone in ("speakPiper(", "TTS_ENGINE", "pickVoice(", "reasonSeen"):
+        if gone in text:
+            bad(f"tts: вернулся удалённый код «{gone}»")
+        else:
+            ok(f"tts: удалено «{gone}»")
 
 
 def check_server() -> None:
@@ -177,6 +188,11 @@ def check_server() -> None:
             ok(f"server: «{marker}»")
         else:
             bad(f"server: нет «{marker}»")
+    for gone in ("_socket_alive", "stop_players", "players: list"):
+        if gone in text:
+            bad(f"server: вернулся удалённый код «{gone}»")
+        else:
+            ok(f"server: удалено «{gone}»")
 
 
 def get(path: str) -> dict | None:
@@ -235,17 +251,20 @@ def check_bridge() -> None:
 
 
 def check_deploy() -> None:
+    """Сверяет живые копии с репозиторием: «задеплоено» без проверки байт врёт."""
     home = Path.home()
-    deployed = [
-        home / ".config/opencode/plugins/x2ai-avatar/gui-experimental.cjs",
-        home / ".config/opencode/plugins/x2ai-tts-done.js",
-        home / ".config/opencode/x2ai-teratts/server.py",
+    pairs = [
+        (PLUGIN, home / ".config/opencode/plugins/x2ai-avatar/gui-experimental.cjs"),
+        (TTS, home / ".config/opencode/plugins/x2ai-tts-done.js"),
+        (SERVER, home / ".config/opencode/x2ai-teratts/server.py"),
     ]
-    for path in deployed:
-        if path.exists():
-            ok(f"задеплоено: {path.name}")
+    for src, dst in pairs:
+        if not dst.exists():
+            bad(f"не задеплоено: {dst}")
+        elif dst.read_bytes() != src.read_bytes():
+            bad(f"устарело: {dst.name} — скопируй {src.relative_to(ROOT)}")
         else:
-            bad(f"не задеплоено: {path}")
+            ok(f"задеплоено: {dst.name}")
 
 
 def main() -> int:

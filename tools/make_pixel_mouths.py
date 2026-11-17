@@ -154,7 +154,7 @@ def make_blink(closed: np.ndarray) -> np.ndarray:
     return arr
 
 
-def build(voice_dir: Path, dry: bool) -> list[tuple[str, np.ndarray]]:
+def build(voice_dir: Path) -> list[tuple[str, np.ndarray]]:
     closed = load(voice_dir / "closed.png")
     opened = load(voice_dir / "open.png")
     if closed.shape != opened.shape:
@@ -199,7 +199,7 @@ def main() -> int:
         if all((voice_dir / f"{s}.png").exists() for s in STATES):
             print(f"  {voice_dir.name}: все кадры на месте — пропуск")
             continue
-        frames = build(voice_dir, dry)
+        frames = build(voice_dir)
         for state, arr in frames:
             if not dry:
                 save(arr, voice_dir / f"{state}.png")

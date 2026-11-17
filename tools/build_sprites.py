@@ -86,7 +86,7 @@ def tint_region(img: Image.Image, color: tuple[int, int, int], strength: float, 
 def decorate(canvas: Image.Image, spec: dict, model: dict) -> None:
     """Дорисовывает детали поверх готового кадра."""
     head = model["anchors"]["head"]
-    cx, cy, rx, ry = head["cx"], head["cy"], head["rx"], head["ry"]
+    cx, rx = head["cx"], head["rx"]
     top = model["anchors"]["top_y"]
     d = ImageDraw.Draw(canvas)
 

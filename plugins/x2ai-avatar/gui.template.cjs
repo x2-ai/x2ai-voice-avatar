@@ -22,7 +22,6 @@ const CLICKS = __CLICKS__;
 // Реплики панели: lines (при смене персонажа), packs (при смене пака), samples (пример голоса).
 const LINES = __LINES__;
 
-const VOICES = ["ru_f1","ru_f2","ru_m1","ru_m5","fx_robot","fx_demoness","fx_alien","fx_cat","fx_penguin","fx_ghost"];
 // Мужской «демон» остался голосом в меню, но спрайт у него тот же — демонесса.
 const SPRITE_ALIAS = {};
 const CHAR_NAMES = {
@@ -173,7 +172,7 @@ try {
   else if (!PACKS.pixel || !Object.keys(PACKS.pixel).length) activePack = "anime";
 } catch (e) {}
 
-// Язык интерфейса: кнопки EN/RU/ES/ZH справа вверху главного меню.
+// Язык интерфейса: кнопки EN/RU справа вверху главного меню.
 // Ключ словаря — русская строка, поэтому t() можно звать где угодно и она
 // вернёт исходник, если перевода нет (имена персонажей и моделей не трогаем).
 const LANG_KEY = "x2ai-avatar:lang";
@@ -280,8 +279,7 @@ const tf = (s, vars) => {
   return out;
 };
 
-// Язык озвучки: движок TeraTTS знает только русский и английский, поэтому
-// для ES и ZH говорим по-английски (интерфейс при этом локализован).
+// Язык озвучки: движок TeraTTSv2 знает только русский и английский.
 const voiceLang = () => (activeLang === "ru" ? "ru" : "en");
 const LANG_NAME = { ru: "русский", en: "английский" };
 
@@ -540,6 +538,8 @@ function createView(ctx) {
   box.appendChild(panel);
 
   let voiceCatalog = null;
+  let installedVoices = null; // папки teratts-model/styles; null = ещё не спросили
+  let ttsEngine = null; // установлен ли движок TeraTTS; null = ещё не спросили
   let speechMode = null; // "full" | "summary" | "silent"; null = ещё не загружен
   let speechSpeed = null; // 0.7–1.8; null = ещё не загружена
   let reasonState = null; // { mode: off|brief|full, translate: bool }
@@ -669,7 +669,7 @@ function createView(ctx) {
   function pickClip(list) {
     return list && list.length ? list[Math.floor(Math.random() * list.length)] : null;
   }
-  function playClip(item) {
+  function playClip(item, text = "") {
     if (!item || !item.src) return 0;
     stopClick();
     try {
@@ -678,8 +678,11 @@ function createView(ctx) {
     } catch (e) {
       clickAudio = null;
     }
-    startSpeaking(item.ms > 0 ? item.ms : 1200);
-    return item.ms || 1200;
+    const ms = item.ms > 0 ? item.ms : 1200;
+    // Артикуляцию запускаем здесь же: вызывающие раньше звали startSpeaking
+    // вторым разом, и первая, бестекстовая, партитура тут же сбрасывалась.
+    startSpeaking(ms, "", text || item.text || "");
+    return ms;
   }
 
   // Следующий персонаж пака вместе с его голосом: и по кнопке, и по правому клику.
@@ -724,8 +727,7 @@ function createView(ctx) {
     } else {
       // Реплики есть по голосу, а не по id персонажа.
       const line = pickClip(LINES.lines && (LINES.lines[clipVoice(next)] || LINES.lines[next]));
-      playClip(line);
-      if (line && line.text) startSpeaking(line.ms || 1200, "", line.text);
+      playClip(line, line && line.text);
     }
     return next;
   };
@@ -1126,7 +1128,7 @@ function createView(ctx) {
     if (view.name === "root") {
       // Язык: четыре квадратные кнопки справа над меню.
       const langRow = document.createElement("div");
-      langRow.style.cssText = "display:flex;justify-content:flex-end;gap:4px;margin-bottom:2px";
+      langRow.style.cssText = "display:flex;justify-content:flex-end;gap:4px;margin-bottom:10px";
       for (const [code, label] of LANGS) {
         const btn = document.createElement("button");
         btn.type = "button";
@@ -1322,6 +1324,12 @@ function createView(ctx) {
       head(charName(key), { name: "chars" });
       const box = boxEl();
 
+      // Голоса ставятся отдельно: если их нет, персонаж молчит — пишем красным
+      // вверху, а не прячем внутрь свёрнутого блока голоса.
+      const voiceWarn = document.createElement("div");
+      voiceWarn.style.cssText = "display:none;color:#ff6b6b;font-size:10px;line-height:1.4;margin:0 0 6px";
+      box.appendChild(voiceWarn);
+
       // Имя персонажа: поле ввода, как имя пользователя. Пусто — дефолтное имя.
       const nameInput = document.createElement("input");
       nameInput.type = "text";
@@ -1390,6 +1398,22 @@ function createView(ctx) {
         return !picked || picked === defaultVoiceOf();
       };
 
+      // Проверка установки: сравниваем базовый голос (px_ru_f1 → ru_f1)
+      // со списком папок teratts-model/styles. Нет списка — молчим.
+      const refreshVoiceWarn = () => {
+        const base = VOICE_ALIAS[pickedVoice() || defaultVoiceOf()] || pickedVoice() || defaultVoiceOf();
+        let msg = "";
+        if (ttsEngine === false) {
+          msg = t("Движок TeraTTS не установлен — поставь его, иначе персонаж говорит системным голосом без артикуляции.");
+        } else if (installedVoices && installedVoices.length === 0) {
+          msg = t("Голоса TeraTTS не установлены — поставь их в teratts-model/styles, иначе персонаж молчит.");
+        } else if (installedVoices && installedVoices.length && base && !installedVoices.includes(base)) {
+          msg = tf("Голос «{v}» не установлен — поставь его, иначе персонаж молчит.", { v: base });
+        }
+        voiceWarn.textContent = msg;
+        voiceWarn.style.display = msg ? "block" : "none";
+      };
+
       const vCur = document.createElement("div");
       vCur.style.cssText = "font-size:11px;opacity:.7;margin-bottom:6px";
       vBody.appendChild(vCur);
@@ -1402,6 +1426,7 @@ function createView(ctx) {
       const voiceRows = [];
       const refreshVoiceSelection = () => {
         vCur.textContent = tf("сейчас: {v}", { v: labelOf(pickedVoice() || defaultVoiceOf()) });
+        refreshVoiceWarn();
         for (const item of voiceRows) {
           item.row.setActive(item.id ? !isDefaultVoice() && item.id === pickedVoice() : isDefaultVoice());
         }
@@ -1428,7 +1453,7 @@ function createView(ctx) {
         refreshVoiceSelection();
       };
 
-      if (!voiceCatalog) {
+      if (!voiceCatalog || !installedVoices) {
         const loading = document.createElement("div");
         loading.textContent = "загружаю голоса…";
         loading.style.cssText = "opacity:.5;font-size:11px";
@@ -1436,6 +1461,9 @@ function createView(ctx) {
         bridge("/voices")
           .then((data) => {
             voiceCatalog = (data && data.voices) || [];
+            // Старые сборки моста не знают про installed: тогда пусто.
+            installedVoices = Array.isArray(data && data.installed) ? data.installed : [];
+            ttsEngine = data && data.engine !== false;
             renderPanel();
           })
           .catch(() => {});
@@ -2428,15 +2456,24 @@ function createView(ctx) {
             lastSpeakAt = at;
             stopClick();
             stopSynth();
-            stats.count += 1;
-            if (state.ms > 0) stats.ms += state.ms;
+            // state.ms — остаток, а elapsed уже прошёл: считаем полную
+            // длительность, и только ответы (рассуждения — не «ответы»).
+            if (state.kind !== "reason") {
+              stats.count += 1;
+              if (state.ms > 0) stats.ms += state.ms + elapsed;
+            }
             saveStats();
             refreshBadge();
             const total = state.ms > 0 ? state.ms + elapsed : 9000;
             startSpeaking(total, state.kind || "", state.text || "", elapsed);
           }
         } else {
-          bridgeSpeaking = false;
+          // Звучит другой чат: если рот уже шёл (переключились посреди фразы),
+          // гасим его — иначе артикуляция первого чата продолжается во втором.
+          if (bridgeSpeaking) {
+            bridgeSpeaking = false;
+            stopSpeaking();
+          }
         }
       })
       .catch(() => {});
@@ -2573,8 +2610,7 @@ function createView(ctx) {
         return;
       }
       const clip = pickClip(CLICKS[clipVoice(voice)] || CLICKS.ru_f1);
-      playClip(clip);
-      if (clip && clip.text) startSpeaking(clip.ms || 1200, "", clip.text);
+      playClip(clip, clip && clip.text);
     }
   };
 
@@ -2633,13 +2669,26 @@ function createView(ctx) {
           );
         } catch (err) {
         }
+        let answerStartedAt = 0;
         for (const name of ["session.execution.succeeded", "session.execution.interrupted"]) {
           try {
-            offs.push(data.on(name, onSpeak(name)));
+            offs.push(
+              data.on(name, (event) => {
+                onSpeak(name)(event);
+                // Длительность ответа считаем на том же событии, что и
+                // артикуляцию: второй обработчик на succeeded не нужен.
+                if (name !== "session.execution.succeeded") return;
+                markActive(currentSid);
+                if (answerStartedAt > 0) {
+                  lastAnswerMs = Date.now() - answerStartedAt;
+                  answerStartedAt = 0;
+                  refreshBadge();
+                }
+              }),
+            );
           } catch (err) {
           }
         }
-        let answerStartedAt = 0;
         for (const name of ["session.execution.started"]) {
           try {
             offs.push(
@@ -2665,24 +2714,7 @@ function createView(ctx) {
           } catch (err) {
           }
         }
-        for (const name of [
-          "session.execution.succeeded",
-        ]) {
-          try {
-            offs.push(
-              data.on(name, () => {
-                markActive(currentSid);
-                if (answerStartedAt > 0) {
-                  lastAnswerMs = Date.now() - answerStartedAt;
-                  answerStartedAt = 0;
-                  refreshBadge();
-                }
-              }),
-            );
-          } catch (err) {
-          }
-        }
-        // Инструмент упал — персонаж на пару секунд грустнеет.
+        // Инструмент работает — просто отмечаем, что чат активен.
         for (const name of ["session.tool.progress", "session.tool.input.started", "session.tool.input.ended"]) {
           try {
             offs.push(
@@ -2744,15 +2776,18 @@ function createView(ctx) {
   } catch (e) {
   }
 
+  // Единая уборка: таймеры, опросы, подписка и слушатель документа.
   const teardown = () => {
     pingReset();
     clearTimeout(blinkTimer);
     clearTimeout(idleTimer);
     clearTimeout(moodTimer);
     clearTimeout(speakTimer);
+    clearTimeout(talkTimeout);
     clearTimeout(bridgeTimer);
     clearInterval(sidePoll);
     if (talkTimer) clearInterval(talkTimer);
+    document.removeEventListener("mousedown", onDocDown, true);
     if (typeof unsub === "function") {
       try {
         unsub();
@@ -2761,22 +2796,7 @@ function createView(ctx) {
   };
   globalThis.__x2aiAvatarTeardown = teardown;
 
-  root.destroy = () => {
-    pingReset();
-    clearTimeout(blinkTimer);
-    clearTimeout(idleTimer);
-    clearTimeout(moodTimer);
-    clearTimeout(speakTimer);
-    clearInterval(sidePoll);
-    clearTimeout(bridgeTimer);
-    document.removeEventListener("mousedown", onDocDown, true);
-    if (talkTimer) clearInterval(talkTimer);
-    if (typeof unsub === "function") {
-      try {
-        unsub();
-      } catch (e) {}
-    }
-  };
+  root.destroy = teardown;
 
   return root;
 }

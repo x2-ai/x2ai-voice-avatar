@@ -12,7 +12,7 @@
     TERATTS_SOCK   unix-сокет (по умолчанию /tmp/x2ai-teratts.sock)
     TERATTS_VOICE  голос (ru_f1, ru_f2, ru_m1, ru_m5; по умолчанию ru_f1)
     TERATTS_ACCENT dictionary|full (по умолчанию dictionary)
-    TERATTS_IDLE   секунд простоя до выхода (по умолчанию 900)
+    TERATTS_IDLE   секунд простоя до выхода (по умолчанию 600)
 """
 from __future__ import annotations
 
@@ -73,8 +73,6 @@ LIMIT_THR = float(os.environ.get("TERATTS_LIMIT", "0.97"))
 
 def _limit(y, thr: float, block: int):
     """Мягкий лимитер: режет только пики, громкость фразы не трогает."""
-    import numpy as np
-
     a = np.abs(y)
     if a.size == 0 or a.max() <= thr:
         return y
@@ -92,8 +90,6 @@ def _limit(y, thr: float, block: int):
 
 def loudify(audio):
     """Выровнять громкость фразы: RMS к цели, пики — лимитером."""
-    import numpy as np
-
     if audio.size == 0:
         return audio
     target = 10 ** (TARGET_DB / 20.0)
@@ -128,8 +124,6 @@ FX = {
 
 def _resample(y, k: float):
     """Скорость и высота вместе: k > 1 — выше и короче."""
-    import numpy as np
-
     if abs(k - 1.0) < 1e-3:
         return y
     n = max(1, int(len(y) / k))
@@ -138,8 +132,6 @@ def _resample(y, k: float):
 
 
 def _vibrato(y, freq: float, depth: float):
-    import numpy as np
-
     n = len(y)
     t = np.arange(n) / SR
     rate = 1.0 + depth * np.sin(2 * np.pi * freq * t)
@@ -149,8 +141,6 @@ def _vibrato(y, freq: float, depth: float):
 
 
 def _reverb(y, amount: float):
-    import numpy as np
-
     out = y.astype(np.float32).copy()
     for delay, gain in ((0.07, 0.45), (0.13, 0.30), (0.21, 0.18)):
         d = int(delay * SR)
@@ -237,8 +227,6 @@ def fx_spec(voice: str, emotion: str | None = None) -> dict | None:
 
 def apply_fx(voice: str, audio, emotion: str | None = None):
     """Прогоняет базовый голос через характерную обработку."""
-    import numpy as np
-
     spec = fx_spec(voice, emotion)
     if not spec:
         return audio
@@ -269,22 +257,6 @@ def apply_fx(voice: str, audio, emotion: str | None = None):
 def resolve_voice(voice: str) -> str:
     spec = FX.get(voice)
     return spec["base"] if spec else voice
-
-
-def _socket_alive(path: Path) -> bool:
-    """Есть ли уже живой сервер на этом сокете."""
-    probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    probe.settimeout(1.0)
-    try:
-        probe.connect(str(path))
-        return True
-    except OSError:
-        return False
-    finally:
-        try:
-            probe.close()
-        except OSError:
-            pass
 
 
 LOCK = Path("/tmp/x2ai-teratts.lock")
@@ -352,7 +324,6 @@ def main() -> int:
     log(f"loaded in {time.time() - started:.1f}s voice={VOICE} accent={ACCENT}")
 
 
-    players: list[subprocess.Popen] = []
     # Очередь воспроизведения: разные чаты не перебивают друг друга,
     # а ждут своей очереди. Ответы важнее реплик ожидания.
     play_q: "queue.Queue[dict]" = queue.Queue(maxsize=6)
@@ -438,19 +409,6 @@ def main() -> int:
             except Exception:
                 pass
 
-    def stop_players() -> int:
-        """Оборвать текущее воспроизведение: одна реплика за раз."""
-        stopped = 0
-        for p in players:
-            if p.poll() is None:
-                try:
-                    p.terminate()
-                    stopped += 1
-                except Exception:
-                    pass
-        players.clear()
-        return stopped
-
     sweep_wavs(0)
     while True:
         try:
@@ -502,10 +460,15 @@ def main() -> int:
                                 it["wav"].unlink()
                             except OSError:
                                 pass
-                    try:
-                        STATE.write_text(json.dumps({"speaking": False, "ms": 0, "at": 0, "sid": ""}))
-                    except Exception:
-                        pass
+                    # STATE гасим, только если замолчал «свой» звук: стоп
+                    # чужого чата не должен убирать артикуляцию у того,
+                    # кто говорит прямо сейчас.
+                    cur_sid = cur_item.get("sid")
+                    if not stop_sid or not cur_sid or cur_sid == stop_sid:
+                        try:
+                            STATE.write_text(json.dumps({"speaking": False, "ms": 0, "at": 0, "sid": ""}))
+                        except Exception:
+                            pass
                     log(f"stop {stopped}")
                     conn.sendall(json.dumps({"ok": True, "stopped": stopped}).encode() + b"\n")
                     continue

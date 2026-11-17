@@ -1,11 +1,11 @@
 #!/bin/bash
 # x2ai-teratts-set — выбрать голос TeraTTS и перезапустить сервер.
 #   x2ai-teratts-set            показать текущий голос
-#   x2ai-teratts-set ru_m5      переключить (ru_f1 | ru_f2 | ru_m1 | ru_m5)
+#   x2ai-teratts-set ru_m5      переключить (базовый или fx-голос, см. ниже)
 set -uo pipefail
 
 FILE="$HOME/.config/opencode/teratts-voice.txt"
-VOICES="ru_f1 ru_f2 ru_m1 ru_m5"
+VOICES="ru_f1 ru_f2 ru_m1 ru_m5 fx_robot fx_demon fx_demoness fx_alien fx_cat fx_penguin fx_ghost"
 
 if [ $# -eq 0 ]; then
   cur="$(cat "$FILE" 2>/dev/null || echo ru_f1)"

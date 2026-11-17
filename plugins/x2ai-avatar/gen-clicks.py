@@ -4,7 +4,7 @@
 Для каждого из четырёх голосов синтезирует набор коротких реплик,
 сжимает в m4a (48 кбит/с, моно) и складывает JSON с data-URI и длительностью:
 
-    ~/.config/opencode/x2ai-avatar/clicks.json
+    plugins/x2ai-avatar/clicks.json (рядом со скриптом)
 
 Запуск (нужен venv с onnxruntime):
 

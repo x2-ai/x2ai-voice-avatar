@@ -1,19 +1,47 @@
-// x2ai-tts-done — озвучка ответов ассистента через macOS `say`.
+// x2ai-tts-done — озвучка ответов ассистента локальным TeraTTSv2.
 // API: V2 ({ id, setup }) — события только через ctx.event.subscribe().
 const { spawn, spawnSync } = require("node:child_process");
 const fs = require("node:fs");
 
-// Порядок предпочтений: берём первый установленный в системе.
-const VOICES = ["Yuri", "Milena"];
-// Нейросетевой синтез (piper) звучит заметно лучше системного Milena.
-const PIPER = `${process.env.HOME}/.config/opencode/piper-venv/bin/piper`;
-const PIPER_DIR = `${process.env.HOME}/.config/opencode/piper-voices`;
-const PIPER_VOICE = "irina"; // irina (жен) | dmitri (муж)
+// Настройки читаются на каждый ответ и на каждый опрос /state: кэш по mtime
+// избавляет от повторного JSON.parse одного и того же файла.
+const jsonCache = new Map();
+function readJsonCached(file) {
+  try {
+    const mtime = fs.statSync(file).mtimeMs;
+    const hit = jsonCache.get(file);
+    if (hit && hit.mtime === mtime) return hit.value;
+    const value = JSON.parse(fs.readFileSync(file, "utf8")) || {};
+    jsonCache.set(file, { mtime, value });
+    return value;
+  } catch (e) {
+    jsonCache.delete(file);
+    return null;
+  }
+}
 
-// Движок озвучки: teratts (локальный нейросинтез TeraTTSv2) | piper | say | auto.
-// auto = teratts, если он установлен, иначе piper, иначе say.
-const ENGINE = (process.env.TTS_ENGINE || "auto").toLowerCase();
+// Движок TeraTTSv2 ставится отдельно. Если его нет — остаётся аварийный
+// системный голос (say), иначе персонаж молчал бы совсем.
 const TERATTS = `${process.env.HOME}/.config/opencode/x2ai-teratts/x2ai-teratts-speak`;
+const TERATTS_STYLES = `${process.env.HOME}/.config/opencode/teratts-model/styles`;
+
+// Установленные голоса: папки в teratts-model/styles. Нужны окну, чтобы
+// красным предупредить, что озвучки не будет. Кэш 5 с — /voices дёргается
+// при каждом открытии панели.
+let voicesCache = { at: 0, list: [] };
+function installedVoices() {
+  const now = Date.now();
+  if (now - voicesCache.at < 5000) return voicesCache.list;
+  let list = [];
+  try {
+    list = fs
+      .readdirSync(TERATTS_STYLES, { withFileTypes: true })
+      .filter((d) => d.isDirectory())
+      .map((d) => d.name);
+  } catch (e) {}
+  voicesCache = { at: now, list };
+  return list;
+}
 
 // Голос TeraTTS: "chat" — свой у каждого чата (детерминированно по sessionID),
 // "fixed" — всегда голос из teratts-voice.txt, "random" — новый на каждый ответ.
@@ -192,25 +220,17 @@ const LOCAL_PROVIDERS = /ollama|lmstudio|lm-studio|llamacpp|llama-cpp|vllm|local
 // Модель пересказа меняется в настройках (панель шестерёнки): выбор лежит
 // в x2ai-tts-model.json. Нет файла или стоит disabled — модель выключена.
 const sumModel = () => {
-  try {
-    const raw = require("node:fs").readFileSync(
-      `${process.env.HOME}/.config/opencode/x2ai-tts-model.json`,
-      "utf8",
-    );
-    const value = JSON.parse(raw);
-    if (value && value.disabled) return null;
-    if (value && value.id && value.providerID) return value;
-  } catch (e) {}
+  const value = readJsonCached(`${process.env.HOME}/.config/opencode/x2ai-tts-model.json`);
+  if (value && value.disabled) return null;
+  if (value && value.id && value.providerID) return value;
   // Свежая установка: вспомогательная модель выключена, пока её не выберут.
   return null;
 };
-const LLM_SUMMARY = true;
 const LLM_TIMEOUT = 12000;
 let genText = null;
 const MAX_CHARS = 400;
 const FULL_MAX_CHARS = 4000;
 const MIN_CHARS = 15;
-const DEBUG = true;
 
 const LOG = `${process.env.HOME}/.config/opencode/x2ai-tts-done.log`;
 const MARK = "/tmp/x2ai-tts-done.mark";
@@ -224,31 +244,20 @@ const OFF_FILE = `${process.env.HOME}/.config/opencode/x2ai-tts-done.disabled`;
 const SPEECH_FILE = `${process.env.HOME}/.config/opencode/x2ai-speech.json`;
 const SPEECH_MODES = ["full", "summary", "silent"];
 function readSpeech() {
-  try {
-    const value = JSON.parse(fs.readFileSync(SPEECH_FILE, "utf8"));
-    const mode = value && typeof value.mode === "string" ? value.mode : "";
-    return SPEECH_MODES.includes(mode) ? mode : "summary";
-  } catch (e) {
-    return "summary";
-  }
+  const value = readJsonCached(SPEECH_FILE);
+  const mode = value && typeof value.mode === "string" ? value.mode : "";
+  return SPEECH_MODES.includes(mode) ? mode : "summary";
 }
 
 // Держать движок в памяти (true) или поднимать на каждую фразу (false).
 function readKeepAlive() {
-  try {
-    const raw = JSON.parse(fs.readFileSync(SPEECH_FILE, "utf8"));
-    return raw && raw.keepAlive === false ? false : true;
-  } catch (e) {
-    return true;
-  }
+  const raw = readJsonCached(SPEECH_FILE);
+  return !(raw && raw.keepAlive === false);
 }
 
 function readSpeed() {
-  try {
-    const raw = JSON.parse(fs.readFileSync(SPEECH_FILE, "utf8"));
-    const v = Number(raw && raw.speed);
-    if (Number.isFinite(v) && v >= 0.7 && v <= 1.8) return v;
-  } catch (e) {}
+  const v = Number(readJsonCached(SPEECH_FILE)?.speed);
+  if (Number.isFinite(v) && v >= 0.7 && v <= 1.8) return v;
   return 1.0;
 }
 
@@ -258,47 +267,31 @@ function validTime(v) {
   return typeof v === "string" && /^([01]\d|2[0-3]):[0-5]\d$/.test(v);
 }
 function readQuiet() {
-  try {
-    const raw = JSON.parse(fs.readFileSync(SPEECH_FILE, "utf8"));
-    const q = raw && raw.quiet;
-    if (!q || typeof q !== "object") return { ...QUIET_DEFAULT };
-    return {
-      on: Boolean(q.on),
-      from: validTime(q.from) ? q.from : QUIET_DEFAULT.from,
-      to: validTime(q.to) ? q.to : QUIET_DEFAULT.to,
-    };
-  } catch (e) {
-    return { ...QUIET_DEFAULT };
-  }
+  const q = readJsonCached(SPEECH_FILE)?.quiet;
+  if (!q || typeof q !== "object") return { ...QUIET_DEFAULT };
+  return {
+    on: Boolean(q.on),
+    from: validTime(q.from) ? q.from : QUIET_DEFAULT.from,
+    to: validTime(q.to) ? q.to : QUIET_DEFAULT.to,
+  };
 }
 // Озвучка рассуждений: off | brief | full, плюс перевод на русский.
 const REASON_MODES = ["off", "brief", "full"];
 const REASON_DEFAULT = { mode: "off", translate: true };
 function readReason() {
-  try {
-    const raw = JSON.parse(fs.readFileSync(SPEECH_FILE, "utf8"));
-    const r = raw && raw.reason;
-    if (!r || typeof r !== "object") return { ...REASON_DEFAULT };
-    return {
-      mode: REASON_MODES.includes(r.mode) ? r.mode : REASON_DEFAULT.mode,
-      translate: r.translate === undefined ? REASON_DEFAULT.translate : Boolean(r.translate),
-    };
-  } catch (e) {
-    return { ...REASON_DEFAULT };
-  }
+  const r = readJsonCached(SPEECH_FILE)?.reason;
+  if (!r || typeof r !== "object") return { ...REASON_DEFAULT };
+  return {
+    mode: REASON_MODES.includes(r.mode) ? r.mode : REASON_DEFAULT.mode,
+    translate: r.translate === undefined ? REASON_DEFAULT.translate : Boolean(r.translate),
+  };
 }
 
-// Язык панели и озвучки: ru | en | es | zh. Движок TeraTTS знает только
-// русский и английский, поэтому для es/zh говорим по-английски.
+// Язык панели и озвучки: ru | en — других TeraTTSv2 не знает.
 const LANGS = ["ru", "en"];
 function readLang() {
-  try {
-    const raw = JSON.parse(fs.readFileSync(SPEECH_FILE, "utf8"));
-    const v = raw && raw.lang;
-    return LANGS.includes(v) ? v : "ru";
-  } catch (e) {
-    return "ru";
-  }
+  const v = readJsonCached(SPEECH_FILE)?.lang;
+  return LANGS.includes(v) ? v : "ru";
 }
 
 function voiceLang() {
@@ -330,12 +323,7 @@ function limitFor(sid, voice, kind) {
 }
 
 function readMuted() {
-  try {
-    const raw = JSON.parse(fs.readFileSync(SPEECH_FILE, "utf8"));
-    return raw && raw.muted === true;
-  } catch (e) {
-    return false;
-  }
+  return readJsonCached(SPEECH_FILE)?.muted === true;
 }
 
 function inQuietHours() {
@@ -411,7 +399,6 @@ function enabled() {
 }
 
 function log(...args) {
-  if (!DEBUG) return;
   try {
     const line = `[${new Date().toISOString()}] ${args
       .map((a) => {
@@ -515,22 +502,6 @@ function stripCode(text) {
   return t;
 }
 
-let voiceCache;
-
-// `say -v Yuri` без установленного голоса молча падает — выбираем существующий.
-function pickVoice() {
-  if (voiceCache !== undefined) return voiceCache;
-  try {
-    const out = spawnSync("say", ["-v", "?"], { encoding: "utf8" });
-    const list = String(out.stdout || "");
-    voiceCache = VOICES.find((v) => new RegExp(`^${v}\\s`, "m").test(list)) || null;
-  } catch (e) {
-    voiceCache = null;
-  }
-  log("VOICE:", voiceCache || "system default");
-  return voiceCache;
-}
-
 // Доля кириллицы среди букв: нужно, чтобы не читать английский английским голосом.
 function cyrRatio(text) {
   const letters = String(text).match(/[A-Za-zА-Яа-яЁё]/g) || [];
@@ -591,59 +562,6 @@ function bufTake(sid) {
   } catch (e) {}
   if (Date.now() - Number(entry.at || 0) > BUF_TTL) return "";
   return typeof entry.text === "string" ? entry.text : "";
-}
-
-function piperModel() {
-  const model = `${PIPER_DIR}/ru_RU-${PIPER_VOICE}-medium.onnx`;
-  try {
-    if (fs.existsSync(PIPER) && fs.existsSync(model)) return model;
-  } catch (e) {}
-  return null;
-}
-
-function speakSay(text) {
-  const voice = pickVoice();
-  const args = voice ? ["-v", voice, text] : [text];
-  try {
-    const p = spawn("say", args, { stdio: "ignore", detached: true });
-    p.on("error", (err) => log("SAY_ERR", err?.message));
-    p.unref();
-  } catch (e) {
-    log("SAY_CATCH", e?.message);
-  }
-}
-
-function speakPiper(text, model) {
-  const wav = `/tmp/x2ai-tts-done-${process.pid}-${Date.now()}.wav`;
-  try {
-    const p = spawn(PIPER, ["-m", model, "-f", wav], {
-      stdio: ["pipe", "ignore", "ignore"],
-      detached: true,
-    });
-    p.on("error", (e) => {
-      log("PIPER_ERR", e?.message);
-      speakSay(text);
-    });
-    p.on("close", (code) => {
-      if (code !== 0) {
-        log("PIPER_EXIT", code);
-        return speakSay(text);
-      }
-      const a = spawn("sh", ["-c", `afplay '${wav}'; rm -f '${wav}'`], {
-        stdio: "ignore",
-        detached: true,
-      });
-      a.on("error", (e) => log("AFPLAY_ERR", e?.message));
-      a.unref();
-    });
-    p.stdin.on("error", () => {});
-    p.stdin.write(text);
-    p.stdin.end();
-    p.unref();
-  } catch (e) {
-    log("PIPER_CATCH", e?.message);
-    speakSay(text);
-  }
 }
 
 // Отбираем только «человеческие» строки: без таблиц, заголовков, кода, путей.
@@ -770,25 +688,52 @@ function translateRu(text) {
 const NAME_GAP_MIN = 4;
 const NAME_GAP_MAX = 6;
 const NAME_COOLDOWN_MS = 10 * 60 * 1000;
-const nameGreeted = new Set();
-let nameSkip = 0;
-let nameLastAt = 0;
+// Плагин перезагружается на каждом шаге хода, поэтому счётчики имени живут
+// в файле: иначе Set и переменные сбрасывались и имя звучало слишком часто.
+const NAME_STATE = `${process.env.HOME}/.config/opencode/x2ai-name-state.json`;
+const nameState = (() => {
+  try {
+    const raw = JSON.parse(fs.readFileSync(NAME_STATE, "utf8")) || {};
+    return {
+      greeted: Array.isArray(raw.greeted) ? raw.greeted : [],
+      skip: Number(raw.skip) || 0,
+      at: Number(raw.at) || 0,
+      rSkip: Number(raw.rSkip) || 0,
+      rAt: Number(raw.rAt) || 0,
+    };
+  } catch (e) {
+    return { greeted: [], skip: 0, at: 0, rSkip: 0, rAt: 0 };
+  }
+})();
+
+function saveNameState() {
+  try {
+    // Список приветствованных чатов не должен расти бесконечно.
+    if (nameState.greeted.length > 60) nameState.greeted = nameState.greeted.slice(-60);
+    fs.writeFileSync(NAME_STATE, JSON.stringify(nameState));
+  } catch (e) {}
+}
+
+const pickGap = (min, max) => min + Math.floor(Math.random() * (max - min + 1));
 
 function shouldUseName(sid) {
   const now = Date.now();
-  if (sid && !nameGreeted.has(sid)) {
-    nameGreeted.add(sid);
-    nameSkip = NAME_GAP_MIN + Math.floor(Math.random() * (NAME_GAP_MAX - NAME_GAP_MIN + 1));
-    nameLastAt = now;
+  if (sid && !nameState.greeted.includes(sid)) {
+    nameState.greeted.push(sid);
+    nameState.skip = pickGap(NAME_GAP_MIN, NAME_GAP_MAX);
+    nameState.at = now;
+    saveNameState();
     return true;
   }
-  if (nameSkip > 0) {
-    nameSkip--;
+  if (nameState.skip > 0) {
+    nameState.skip--;
+    saveNameState();
     return false;
   }
-  if (now - nameLastAt < NAME_COOLDOWN_MS) return false;
-  nameSkip = NAME_GAP_MIN + Math.floor(Math.random() * (NAME_GAP_MAX - NAME_GAP_MIN + 1));
-  nameLastAt = now;
+  if (now - nameState.at < NAME_COOLDOWN_MS) return false;
+  nameState.skip = pickGap(NAME_GAP_MIN, NAME_GAP_MAX);
+  nameState.at = now;
+  saveNameState();
   return true;
 }
 
@@ -796,18 +741,18 @@ function shouldUseName(sid) {
 const R_NAME_GAP_MIN = 5;
 const R_NAME_GAP_MAX = 8;
 const R_NAME_COOLDOWN_MS = 10 * 60 * 1000;
-const reasonNameSkip = { left: 0 };
-let reasonNameLastAt = 0;
 
 function shouldUseReasonName() {
   const now = Date.now();
-  if (reasonNameSkip.left > 0) {
-    reasonNameSkip.left--;
+  if (nameState.rSkip > 0) {
+    nameState.rSkip--;
+    saveNameState();
     return false;
   }
-  if (now - reasonNameLastAt < R_NAME_COOLDOWN_MS) return false;
-  reasonNameSkip.left = R_NAME_GAP_MIN + Math.floor(Math.random() * (R_NAME_GAP_MAX - R_NAME_GAP_MIN + 1));
-  reasonNameLastAt = now;
+  if (now - nameState.rAt < R_NAME_COOLDOWN_MS) return false;
+  nameState.rSkip = pickGap(R_NAME_GAP_MIN, R_NAME_GAP_MAX);
+  nameState.rAt = now;
+  saveNameState();
   return true;
 }
 
@@ -861,7 +806,7 @@ async function llmSummaryEn(src, user, sid, style) {
 
 // Пересказ моделью (бесплатной, без сессии). Пустая строка = не получилось.
 async function llmSummary(raw, gender, user = readUser(), sid = "", style = "") {
-  if (!LLM_SUMMARY || !genText || !sumModel()) return "";
+  if (!genText || !sumModel()) return "";
   const src = stripCode(raw).slice(0, 6000).trim();
   if (src.length < 40) return "";
   if (voiceLang() === "en") return llmSummaryEn(src, user, sid, style);
@@ -1031,8 +976,6 @@ async function llmReason(raw, gender, translate, sid, user = readUser()) {
 
 // Дедуп рассуждений: одна и та же мысль не читается дважды.
 // Файл общий для всех копий плагина — иначе каждая читает своё.
-const reasonSeen = new Map();
-const REASON_MARK = "/tmp/x2ai-reason.mark";
 
 // Захват мысли через файл: копии плагина не должны читать одно и то же.
 const REASON_CLAIMS = "/tmp/x2ai-reason-claims";
@@ -1056,21 +999,6 @@ function claimReason(key) {
   }
 }
 
-function reasonSpokenRecently(key) {
-  try {
-    const raw = fs.readFileSync(REASON_MARK, "utf8").split("\n");
-    return raw[1] === key && Date.now() - Number(raw[0]) < 180000;
-  } catch (e) {
-    return false;
-  }
-}
-
-function markReasonSpoken(key) {
-  try {
-    fs.writeFileSync(REASON_MARK, `${Date.now()}\n${key}`);
-  } catch (e) {}
-}
-
 // Озвучка рассуждений: вызывается после паузы в потоке, чтобы не перечитывать куски.
 const reasonTimers = new Map();
 
@@ -1083,7 +1011,7 @@ async function speakReason(rsid, rtext) {
   }
   const norm = String(rtext).replace(/\s+/g, " ").trim().slice(0, 400);
   const rkey = hash(norm);
-  if (!claimReason(rkey) || Date.now() - (reasonSeen.get(rkey) || 0) < 180000) {
+  if (!claimReason(rkey)) {
     log("SKIP: reason duplicate");
     return;
   }
@@ -1118,9 +1046,6 @@ async function speakReason(rsid, rtext) {
     log("SKIP: reason empty");
     return;
   }
-  reasonSeen.set(rkey, Date.now());
-  markReasonSpoken(rkey);
-  if (reasonSeen.size > 500) reasonSeen.clear();
   log("REASON:", rsid, reason.mode, reason.translate ? "tr" : "-", out.length);
   speak(
     out,
@@ -1175,6 +1100,48 @@ function speakTera(text, sid, forced, emotion, kind) {
   }
 }
 
+// Аварийный системный голос: только когда TeraTTS не установлен. Артикуляция
+// при этом не двигается — state-файл пишет только TeraTTS.
+let sayVoiceCache = null;
+function sayVoiceName() {
+  if (sayVoiceCache !== null) return sayVoiceCache;
+  sayVoiceCache = "";
+  const lang = voiceLang();
+  const prefer =
+    lang === "en" ? ["Samantha", "Alex", "Daniel", "Karen"] : ["Yuri", "Milena", "Anna", "Irina"];
+  try {
+    const out = spawnSync("say", ["-v", "?"], { encoding: "utf8", timeout: 3000 });
+    const lines = String(out.stdout || "").split("\n");
+    const col = (line, i) => line.trim().split(/\s+/)[i] || "";
+    const names = lines.map((l) => col(l, 0)).filter(Boolean);
+    for (const name of prefer) {
+      if (names.includes(name)) {
+        sayVoiceCache = name;
+        break;
+      }
+    }
+    if (!sayVoiceCache) {
+      // Знакомых имён нет — берём любой голос нужного языка.
+      const want = lang === "en" ? /^en[-_]/i : /^ru[-_]/i;
+      const hit = lines.find((l) => want.test(col(l, 1)));
+      if (hit) sayVoiceCache = col(hit, 0);
+    }
+  } catch (e) {}
+  return sayVoiceCache;
+}
+
+function speakSay(text) {
+  const voice = sayVoiceName();
+  const args = voice ? ["-v", voice, text] : [text];
+  try {
+    const p = spawn("say", args, { stdio: "ignore", detached: true });
+    p.on("error", (e) => log("SAY_ERR", e?.message));
+    p.unref();
+  } catch (e) {
+    log("SAY_CATCH", e?.message);
+  }
+}
+
 // Последняя озвученная фраза — для кнопки «Повторить».
 let lastSpeak = null;
 
@@ -1203,16 +1170,12 @@ function speak(text, sid, voice, maxChars = MAX_CHARS, emotion = null, kind = nu
   }
   lastSpeak = { text: toSay, sid: sid || "", voice: voice || "", max: limit, emotion, kind };
   log("SPEAK:", toSay.slice(0, 100));
-  if (ENGINE === "say") return speakSay(toSay);
-  if (ENGINE === "teratts" || ENGINE === "auto") {
-    if (speakTera(toSay, sid, voice, emotion, kind)) return;
-    if (ENGINE === "teratts") {
-      log("TERA: unavailable, fallback piper");
-    }
+  // TeraTTS главный; если его нет — аварийный системный голос, чтобы чат
+  // не замолкал совсем (губы при этом не двигаются).
+  if (!speakTera(toSay, sid, voice, emotion, kind)) {
+    log("TERA: unavailable, fallback say");
+    speakSay(toSay);
   }
-  const model = piperModel();
-  if (model) return speakPiper(toSay, model);
-  return speakSay(toSay);
 }
 
 
@@ -1370,7 +1333,12 @@ function startBridge(ctx) {
       return;
     }
     if (req.method === "GET" && route === "/voices") {
-      send(res, 200, { voices: VOICE_LIST, charVoices: readCharVoices() });
+      send(res, 200, {
+        voices: VOICE_LIST,
+        charVoices: readCharVoices(),
+        installed: installedVoices(),
+        engine: fs.existsSync(TERATTS),
+      });
       return;
     }
     if (req.method === "GET" && route === "/speech") {
@@ -1518,17 +1486,7 @@ function startBridge(ctx) {
         } catch (e) {
           log("SPEECH_WRITE_ERR", String(e));
         }
-        send(res, 200, {
-          ok: true,
-          mode: readSpeech(),
-          speed: readSpeed(),
-          quiet: readQuiet(),
-          reason: readReason(),
-          keepAlive: readKeepAlive(),
-          lang: readLang(),
-          langs: LANGS,
-          muted: readMuted(),
-        });
+        send(res, 200, { ok: true, ...next, langs: LANGS });
         return;
       }
       if (req.method === "POST" && route === "/say") {
@@ -1633,9 +1591,6 @@ module.exports = {
 
     genText = ctx?.experimental?.generate?.text || ctx?.generate?.text || null;
     log("SETUP: subscribed", genText ? "llm=on" : "llm=off");
-    try {
-      console.warn("[x2ai-tts-done] setup subscribed, voice=%s", pickVoice());
-    } catch (e) {}
     // Подписку НЕ глушим при перезагрузке: событие завершения хода могло
     // прийти ровно в этот момент и терялось. Дубли гасятся дедупом по хешу.
     const ac = new AbortController();
@@ -1707,11 +1662,6 @@ module.exports = {
             log("TRIGGER: too short after strip", clean.length);
             continue;
           }
-          const key = hash(clean);
-          if (alreadySpoken(key)) {
-            log("TRIGGER: duplicate, skipped");
-            continue;
-          }
           const voice = effectiveVoice(sid);
           const gender = genderOf(voice);
           const mode = readSpeech();
@@ -1721,6 +1671,12 @@ module.exports = {
           }
           if (inQuietHours()) {
             log("SKIP: quiet hours");
+            continue;
+          }
+          // Дедуп — только после проверок «молчать»: иначе фраза помечалась
+          // произнесённой, хотя её не озвучивали, и больше не звучала.
+          if (alreadySpoken(hash(clean))) {
+            log("TRIGGER: duplicate, skipped");
             continue;
           }
           const LONG_TEXT = 3000;
