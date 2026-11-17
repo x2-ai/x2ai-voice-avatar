@@ -354,6 +354,7 @@ function createView(ctx) {
   let modelsLoaded = false;
   let modelsLoading = false;
   let speechLoaded = false;
+  let modelDisabled = null; // null = ещё не знаем, true = вспомогательная выключена
   const REASON_LABELS = [
     ["off", "Выключено"],
     ["brief", "Кратко"],
@@ -391,6 +392,42 @@ function createView(ctx) {
       }
     }
   }
+  // Общие настройки движка приходят с моста один раз: режимы, скорость,
+  // тихие часы, память. Панель после этого перерисовывается сама.
+  const applySpeechGlobals = (data) => {
+    if (!data) return;
+    if (data.mode) speechMode = data.mode;
+    const sp = Number(data.speed);
+    if (Number.isFinite(sp) && sp >= 0.7 && sp <= 1.8) speechSpeed = sp;
+    if (data.keepAlive !== undefined) keepAlive = Boolean(data.keepAlive);
+    const rs = data.reason;
+    if (rs && typeof rs === "object") {
+      reasonState = {
+        mode: REASON_LABELS.some(([m]) => m === rs.mode) ? rs.mode : "off",
+        translate: rs.translate === undefined ? true : Boolean(rs.translate),
+      };
+    }
+    const q = data.quiet;
+    if (q && typeof q === "object") {
+      quietState = {
+        on: Boolean(q.on),
+        from: typeof q.from === "string" ? q.from : quietState.from,
+        to: typeof q.to === "string" ? q.to : quietState.to,
+      };
+    }
+    seedPackSettings();
+  };
+  const loadSpeechOnce = () => {
+    if (speechLoaded) return;
+    speechLoaded = true;
+    bridge("/speech")
+      .then((data) => {
+        applySpeechGlobals(data);
+        if (panelOpen) renderPanel();
+      })
+      .catch(() => {});
+  };
+
   // У персонажей пака ещё нет своих настроек — запоминаем текущие общие,
   // дальше каждый живёт отдельно.
   function seedPackSettings() {
@@ -590,6 +627,7 @@ function createView(ctx) {
 
   const renderPanel = () => {
     panel.textContent = "";
+    loadSpeechOnce();
     const view = panelView || { name: "root" };
     const go = (next) => {
       panelView = next;
@@ -783,6 +821,7 @@ function createView(ctx) {
         ["Данные пользователя", "user"],
         ["Настройка персонажей", "chars"],
         ["Вспомогательная модель", "model"],
+        ["Дополнительно", "extra"],
         ["Статистика", "stats"],
       ];
       for (const [text, name] of items) menu.appendChild(menuRow(text, () => go({ name })));
@@ -1028,12 +1067,12 @@ function createView(ctx) {
         refreshVoiceSelection();
       }
 
-      // Озвучка ответа: полное чтение, пересказ или тишина — своё у каждого персонажа.
+      // Озвучка ответа: выключено, кратко или полностью — своё у каждого персонажа.
       const sBody = collapsible("Озвучка ответа", "speech", box);
       const SPEECH_LABELS = [
-        ["full", "Полное прочтение ответа"],
-        ["summary", "Пересказ"],
-        ["silent", "Молчание"],
+        ["silent", "Выключено"],
+        ["summary", "Кратко"],
+        ["full", "Полностью"],
       ];
       const sList = keepScroll(document.createElement("div"), "speech");
       sList.style.cssText = "max-height:132px;overflow-y:auto;display:flex;flex-direction:column;gap:4px";
@@ -1041,12 +1080,16 @@ function createView(ctx) {
       const speechNote = document.createElement("div");
       speechNote.textContent = "озвучки не будет";
       speechNote.style.cssText = "font-size:11px;opacity:.55;margin-top:6px";
+      const speechWarn = document.createElement("div");
+      speechWarn.textContent = "Нужно выбрать вспомогательную модель";
+      speechWarn.style.cssText = "display:none;color:#ff6b6b;font-size:10px;line-height:1.4;margin-top:6px";
 
       const speechFor = () => charSettingsFor(key).speech || speechMode || "summary";
       const refreshSpeech = () => {
         const cur = speechFor();
         for (const item of speechRows) item.row.setActive(item.mode === cur);
         speechNote.style.display = cur === "silent" ? "block" : "none";
+        speechWarn.style.display = cur !== "silent" && modelDisabled === true ? "block" : "none";
       };
 
       const setSpeech = (mode) => {
@@ -1065,11 +1108,186 @@ function createView(ctx) {
       }
       sBody.appendChild(sList);
       sBody.appendChild(speechNote);
+      sBody.appendChild(speechWarn);
       refreshSpeech();
 
-      // Скорость речи: общая для движка, применяется к следующей озвучке.
+      // Озвучка рассуждений: своя у каждого персонажа.
+      const rBody = collapsible("Озвучка рассуждений", "reason", box);
+      const rList = keepScroll(document.createElement("div"), "reason");
+      rList.style.cssText = "max-height:132px;overflow-y:auto;display:flex;flex-direction:column;gap:4px";
+      const reasonRows = [];
+      const rTrans = document.createElement("div");
+      rTrans.style.cssText = "display:flex;margin-top:6px";
+      const rTransRow = vRow("Переводить на русский", false, () => {
+        const next = !reasonFor().translate;
+        setReason({ translate: next });
+      });
+      rTransRow.style.flex = "1";
+      rTrans.appendChild(rTransRow);
+
+      const reasonFor = () => charSettingsFor(key).reason || reasonState || { mode: "off", translate: true };
+      const reasonWarn = document.createElement("div");
+      reasonWarn.textContent = "Нужно выбрать вспомогательную модель";
+      reasonWarn.style.cssText = "display:none;color:#ff6b6b;font-size:10px;line-height:1.4;margin-top:6px";
+
+      const refreshReason = () => {
+        const st = reasonFor();
+        for (const item of reasonRows) item.row.setActive(item.mode === st.mode);
+        rTransRow.setActive(Boolean(st.translate));
+        rList.style.opacity = st.mode === "off" ? ".5" : "1";
+        reasonWarn.style.display = st.mode !== "off" && modelDisabled === true ? "block" : "none";
+      };
+
+      const setReason = (patch) => {
+        const next = { ...reasonFor(), ...patch };
+        saveCharSetting(key, { reason: next });
+        if (key === packKey(voice)) {
+          reasonState = next;
+          bridge("/speech", { reason: next }).catch(() => {});
+        }
+        refreshReason();
+      };
+
+      for (const [value, text] of REASON_LABELS) {
+        const row = vRow(text, false, () => setReason({ mode: value }));
+        reasonRows.push({ mode: value, row });
+        rList.appendChild(row);
+      }
+      refreshReason();
+      rBody.append(rList, rTrans, reasonWarn);
+
+    } else if (view.name === "model") {
+      head("Вспомогательная модель");
+      const box = boxEl();
+
+      const desc = document.createElement("div");
+      desc.textContent =
+        "Читает ответы вслух, когда выбран пересказ: сокращает текст, переводит рассуждения на русский и озвучивает мысли. Локальные и бесплатные модели — в начале списка.";
+      desc.style.cssText = "font-size:10px;line-height:1.45;opacity:.55;margin:0 0 2px 2px";
+      box.appendChild(desc);
+
+      // Выключить вспомогательную модель совсем: пересказ и перевод не зовут LLM.
+      const offRow = vRow(
+        "Отключено",
+        modelDisabled === true,
+        () => {
+          modelDisabled = true;
+          offRow.setActive(true);
+          bridge("/model", { disabled: true }).catch(() => {});
+        },
+        "justify-content:center;margin-bottom:4px",
+      );
+      box.appendChild(offRow);
+
+      const mList = keepScroll(document.createElement("div"), "model");
+      mList.style.cssText = "max-height:220px;overflow-y:auto;display:flex;flex-direction:column;gap:4px";
+      const mSearch = document.createElement("input");
+      mSearch.type = "text";
+      mSearch.placeholder = "Поиск модели";
+      mSearch.value = modelQuery;
+      mSearch.style.cssText =
+        "width:100%;box-sizing:border-box;font:inherit;font-size:11px;padding:4px 7px;margin-bottom:2px;" +
+        "border:1px solid rgba(255,255,255,.16);border-radius:7px;background:rgba(255,255,255,.04);color:inherit";
+      mSearch.oninput = () => {
+        modelQuery = mSearch.value;
+        modelLimit = 40;
+        renderModels();
+      };
+      mSearch.onclick = (ev) => ev.stopPropagation();
+      box.append(mSearch, mList);
+
+      const modelRows = [];
+
+      const renderModels = (data) => {
+        if (data) modelsData = data;
+        offRow.setActive(modelDisabled === true);
+        mList.textContent = "";
+        modelRows.length = 0;
+        const models = (modelsData && modelsData.models) || [];
+        const current = (modelsData && modelsData.current) || {};
+        // Порядок приходит с моста: локальные, затем бесплатные.
+        const q = modelQuery.trim().toLowerCase();
+        const free = models.filter((m) => {
+          if (!(m.local || m.free)) return false;
+          if (!q) return true;
+          return `${m.name} ${m.providerID}/${m.id}`.toLowerCase().includes(q);
+        });
+        const shown = free.slice(0, modelLimit);
+        if (!shown.length) {
+          const empty = document.createElement("div");
+          empty.textContent =
+            data && data.error ? "не удалось получить список" : "локальных и бесплатных моделей нет";
+          empty.style.cssText = "opacity:.5;font-size:11px";
+          mList.appendChild(empty);
+          return;
+        }
+        for (const m of shown) {
+          const active = m.providerID === current.providerID && m.id === current.id;
+          const row = vRow(m.local ? `${m.name} · локальная` : m.name, active, () => {
+            modelDisabled = false;
+            offRow.setActive(false);
+            for (const item of modelRows) item.row.setActive(item.model === m);
+            bridge("/model", { providerID: m.providerID, id: m.id }).catch(() => {});
+          });
+          row.title = `${m.providerID}/${m.id}`;
+          modelRows.push({ model: m, row });
+          mList.appendChild(row);
+        }
+        if (free.length > shown.length) {
+          const more = document.createElement("button");
+          more.type = "button";
+          more.textContent = `Показать ещё ${Math.min(40, free.length - shown.length)}`;
+          more.style.cssText =
+            "margin-top:4px;padding:4px 8px;font:inherit;font-size:11px;cursor:pointer;border-radius:7px;" +
+            "border:1px solid rgba(255,255,255,.16);background:rgba(255,255,255,.05);color:inherit";
+          more.onclick = (ev) => {
+            ev.stopPropagation();
+            modelLimit += 40;
+            renderModels();
+          };
+          mList.appendChild(more);
+          const left = document.createElement("div");
+          left.textContent = `всего подходит: ${free.length}`;
+          left.style.cssText = "opacity:.4;font-size:10px;padding:2px 7px";
+          mList.appendChild(left);
+        }
+      };
+
+      const loadModels = () => {
+        if (modelsLoaded) {
+          renderModels();
+          centerActive("model");
+          return;
+        }
+        if (modelsLoading) return;
+        modelsLoading = true;
+        mList.textContent = "";
+        const noteEl = document.createElement("div");
+        noteEl.textContent = "загружаю…";
+        noteEl.style.cssText = "opacity:.5;font-size:11px";
+        mList.appendChild(noteEl);
+        bridge("/models")
+          .then((data) => {
+            modelsLoaded = true;
+            modelsLoading = false;
+            if (data && data.disabled !== undefined) modelDisabled = Boolean(data.disabled);
+            renderModels(data);
+            centerActive("model");
+          })
+          .catch(() => {
+            modelsLoading = false;
+            noteEl.textContent = "мост недоступен";
+          });
+      };
+      loadModels();
+    } else if (view.name === "extra") {
+      head("Дополнительно");
+      const box = boxEl();
+      hint("Общие настройки движка: действуют на всех персонажей.", box);
+
+      // Скорость речи: применяется к следующей озвучке.
       const spRow = document.createElement("div");
-      spRow.style.cssText = "display:flex;align-items:center;gap:8px;margin-top:8px";
+      spRow.style.cssText = "display:flex;align-items:center;gap:8px;margin-top:4px";
       const spInput = document.createElement("input");
       spInput.type = "range";
       spInput.min = "0.7";
@@ -1089,46 +1307,7 @@ function createView(ctx) {
         bridge("/speech", { speed: speechSpeed }).catch(() => {});
       };
       spRow.append(spInput, spVal);
-      sBody.appendChild(spRow);
-
-      // Кнопки: проверить скорость своим голосом и заглушить текущую озвучку.
-      const actRow = document.createElement("div");
-      actRow.style.cssText = "display:flex;gap:6px;margin-top:8px";
-      const actBtn = (text, title) => {
-        const btn = document.createElement("button");
-        btn.type = "button";
-        btn.textContent = text;
-        btn.title = title;
-        btn.style.cssText = [
-          "flex:1",
-          "padding:5px 8px",
-          "border-radius:7px",
-          "cursor:pointer",
-          "font:inherit",
-          "font-size:11px",
-          "color:inherit",
-          "text-align:center",
-          "border:1px solid rgba(255,255,255,.16)",
-          "background:rgba(255,255,255,.05)",
-        ].join(";");
-        btn.onclick = (ev) => {
-          ev.stopPropagation();
-          btn.onclickAction && btn.onclickAction();
-        };
-        return btn;
-      };
-      const testBtn = actBtn("▶ Проверить", "Озвучить пробную фразу голосом этого персонажа");
-      testBtn.onclickAction = () => {
-        bridge("/test", { voice: charVoice(key), sid: currentSid }).catch(() => {});
-      };
-      const stopBtn = actBtn("■ Стоп", "Заглушить текущую озвучку");
-      stopBtn.onclickAction = () => {
-        stopAll();
-      };
-      const replayBtn = actBtn("↻ Повторить", "Озвучить последний текст ещё раз");
-      replayBtn.onclickAction = () => {
-        bridge("/replay", {}).catch(() => {});
-      };
+      box.appendChild(spRow);
 
       // Тихие часы: в этом окне персонаж молчит сам, режим озвучки не меняется.
       const qBox = document.createElement("div");
@@ -1180,216 +1359,75 @@ function createView(ctx) {
       qTop.append(qLabel, qToggle);
       qBox.append(qTop, qTimes);
       refreshQuiet();
-      sBody.appendChild(qBox);
+      box.appendChild(qBox);
 
       // Память против скорости: держать движок загруженным или поднимать на фразу.
-      const memRow = document.createElement("div");
-      memRow.style.cssText = "display:flex;flex-direction:column;gap:4px;margin-top:10px";
-      const memBtn = vRow("Держать движок в памяти", keepAlive, () => {
-        keepAlive = !keepAlive;
-        refreshMem();
-        bridge("/speech", { keepAlive }).catch(() => {});
-      });
+      const memRow = document.createElement("label");
+      memRow.style.cssText =
+        "display:flex;align-items:center;gap:8px;margin-top:10px;font-size:11px;cursor:pointer";
+      const memCb = document.createElement("input");
+      memCb.type = "checkbox";
+      memCb.checked = keepAlive;
+      memCb.style.cssText = "width:14px;height:14px;margin:0;accent-color:#5b8dee;cursor:pointer";
+      const memText = document.createElement("span");
+      memText.textContent = "Держать движок в памяти";
+      memRow.append(memCb, memText);
       const memHint = document.createElement("div");
-      memHint.style.cssText = "font-size:10px;line-height:1.4;opacity:.5";
+      memHint.style.cssText = "font-size:10px;line-height:1.4;opacity:.5;margin:4px 0 0 2px";
       const refreshMem = () => {
-        memBtn.setActive(keepAlive);
+        memCb.checked = keepAlive;
         memHint.textContent = keepAlive
           ? "движок занимает ~1.7 ГБ и отвечает за полсекунды"
           : "по требованию: каждая фраза ~9 с на загрузку, память свободна";
       };
-      memRow.append(memBtn, memHint);
+      memCb.onchange = () => {
+        keepAlive = memCb.checked;
+        refreshMem();
+        bridge("/speech", { keepAlive }).catch(() => {});
+      };
       refreshMem();
-      sBody.appendChild(memRow);
+      box.append(memRow, memHint);
 
+      // Кнопки: проверить голосом текущего персонажа и управлять озвучкой.
+      const actRow = document.createElement("div");
+      actRow.style.cssText = "display:flex;gap:6px;margin-top:10px";
+      const actBtn = (text, title) => {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.textContent = text;
+        btn.title = title;
+        btn.style.cssText = [
+          "flex:1",
+          "padding:5px 8px",
+          "border-radius:7px",
+          "cursor:pointer",
+          "font:inherit",
+          "font-size:11px",
+          "color:inherit",
+          "text-align:center",
+          "border:1px solid rgba(255,255,255,.16)",
+          "background:rgba(255,255,255,.05)",
+        ].join(";");
+        btn.onclick = (ev) => {
+          ev.stopPropagation();
+          btn.onclickAction && btn.onclickAction();
+        };
+        return btn;
+      };
+      const testBtn = actBtn("▶ Проверить", "Озвучить пробную фразу голосом текущего персонажа");
+      testBtn.onclickAction = () => {
+        bridge("/test", { voice: charVoice(voice), sid: currentSid }).catch(() => {});
+      };
+      const stopBtn = actBtn("■ Стоп", "Заглушить текущую озвучку");
+      stopBtn.onclickAction = () => {
+        stopAll();
+      };
+      const replayBtn = actBtn("↻ Повторить", "Озвучить последний текст ещё раз");
+      replayBtn.onclickAction = () => {
+        bridge("/replay", {}).catch(() => {});
+      };
       actRow.append(testBtn, replayBtn, stopBtn);
-      sBody.appendChild(actRow);
-
-      // Озвучка рассуждений: своя у каждого персонажа.
-      const rBody = collapsible("Озвучка рассуждений", "reason", box);
-      const rList = keepScroll(document.createElement("div"), "reason");
-      rList.style.cssText = "max-height:132px;overflow-y:auto;display:flex;flex-direction:column;gap:4px";
-      const reasonRows = [];
-      const rTrans = document.createElement("div");
-      rTrans.style.cssText = "display:flex;margin-top:6px";
-      const rTransRow = vRow("Переводить на русский", false, () => {
-        const next = !reasonFor().translate;
-        setReason({ translate: next });
-      });
-      rTransRow.style.flex = "1";
-      rTrans.appendChild(rTransRow);
-
-      const reasonFor = () => charSettingsFor(key).reason || reasonState || { mode: "off", translate: true };
-      const refreshReason = () => {
-        const st = reasonFor();
-        for (const item of reasonRows) item.row.setActive(item.mode === st.mode);
-        rTransRow.setActive(Boolean(st.translate));
-        rList.style.opacity = st.mode === "off" ? ".5" : "1";
-      };
-
-      const setReason = (patch) => {
-        const next = { ...reasonFor(), ...patch };
-        saveCharSetting(key, { reason: next });
-        if (key === packKey(voice)) {
-          reasonState = next;
-          bridge("/speech", { reason: next }).catch(() => {});
-        }
-        refreshReason();
-      };
-
-      for (const [value, text] of REASON_LABELS) {
-        const row = vRow(text, false, () => setReason({ mode: value }));
-        reasonRows.push({ mode: value, row });
-        rList.appendChild(row);
-      }
-      refreshReason();
-      rBody.append(rList, rTrans);
-
-      const applySpeechState = (data) => {
-        if (!data) return;
-        if (data.mode) speechMode = data.mode;
-        const sp = Number(data.speed);
-        if (Number.isFinite(sp) && sp >= 0.7 && sp <= 1.8) {
-          speechSpeed = sp;
-          spInput.value = String(sp);
-          spVal.textContent = `${sp.toFixed(2)}×`;
-        }
-        if (data.keepAlive !== undefined) {
-          keepAlive = Boolean(data.keepAlive);
-          refreshMem();
-        }
-        const rs = data.reason;
-        if (rs && typeof rs === "object") {
-          reasonState = {
-            mode: REASON_LABELS.some(([m]) => m === rs.mode) ? rs.mode : "off",
-            translate: rs.translate === undefined ? true : Boolean(rs.translate),
-          };
-        }
-        const q = data.quiet;
-        if (q && typeof q === "object") {
-          quietState = {
-            on: Boolean(q.on),
-            from: typeof q.from === "string" ? q.from : quietState.from,
-            to: typeof q.to === "string" ? q.to : quietState.to,
-          };
-          refreshQuiet();
-        }
-        seedPackSettings();
-        refreshSpeech();
-        refreshReason();
-      };
-
-      if (!speechLoaded) {
-        speechLoaded = true;
-        bridge("/speech")
-          .then(applySpeechState)
-          .catch(() => {});
-      }
-    } else if (view.name === "model") {
-      head("Вспомогательная модель");
-      const box = boxEl();
-
-      const desc = document.createElement("div");
-      desc.textContent =
-        "Читает ответы вслух, когда выбран пересказ: сокращает текст, переводит рассуждения на русский и озвучивает мысли. Локальные и бесплатные модели — в начале списка.";
-      desc.style.cssText = "font-size:10px;line-height:1.45;opacity:.55;margin:0 0 2px 2px";
-      box.appendChild(desc);
-
-      const mList = keepScroll(document.createElement("div"), "model");
-      mList.style.cssText = "max-height:220px;overflow-y:auto;display:flex;flex-direction:column;gap:4px";
-      const mSearch = document.createElement("input");
-      mSearch.type = "text";
-      mSearch.placeholder = "Поиск модели";
-      mSearch.value = modelQuery;
-      mSearch.style.cssText =
-        "width:100%;box-sizing:border-box;font:inherit;font-size:11px;padding:4px 7px;margin-bottom:2px;" +
-        "border:1px solid rgba(255,255,255,.16);border-radius:7px;background:rgba(255,255,255,.04);color:inherit";
-      mSearch.oninput = () => {
-        modelQuery = mSearch.value;
-        modelLimit = 40;
-        renderModels();
-      };
-      mSearch.onclick = (ev) => ev.stopPropagation();
-      box.append(mSearch, mList);
-
-      const modelRows = [];
-
-      const renderModels = (data) => {
-        if (data) modelsData = data;
-        mList.textContent = "";
-        modelRows.length = 0;
-        const models = (modelsData && modelsData.models) || [];
-        const current = (modelsData && modelsData.current) || {};
-        // Порядок приходит с моста: локальные, затем бесплатные.
-        const q = modelQuery.trim().toLowerCase();
-        const free = models.filter((m) => {
-          if (!(m.local || m.free)) return false;
-          if (!q) return true;
-          return `${m.name} ${m.providerID}/${m.id}`.toLowerCase().includes(q);
-        });
-        const shown = free.slice(0, modelLimit);
-        if (!shown.length) {
-          const empty = document.createElement("div");
-          empty.textContent =
-            data && data.error ? "не удалось получить список" : "локальных и бесплатных моделей нет";
-          empty.style.cssText = "opacity:.5;font-size:11px";
-          mList.appendChild(empty);
-          return;
-        }
-        for (const m of shown) {
-          const active = m.providerID === current.providerID && m.id === current.id;
-          const row = vRow(m.local ? `${m.name} · локальная` : m.name, active, () => {
-            for (const item of modelRows) item.row.setActive(item.model === m);
-            bridge("/model", { providerID: m.providerID, id: m.id }).catch(() => {});
-          });
-          row.title = `${m.providerID}/${m.id}`;
-          modelRows.push({ model: m, row });
-          mList.appendChild(row);
-        }
-        if (free.length > shown.length) {
-          const more = document.createElement("button");
-          more.type = "button";
-          more.textContent = `Показать ещё ${Math.min(40, free.length - shown.length)}`;
-          more.style.cssText =
-            "margin-top:4px;padding:4px 8px;font:inherit;font-size:11px;cursor:pointer;border-radius:7px;" +
-            "border:1px solid rgba(255,255,255,.16);background:rgba(255,255,255,.05);color:inherit";
-          more.onclick = (ev) => {
-            ev.stopPropagation();
-            modelLimit += 40;
-            renderModels();
-          };
-          mList.appendChild(more);
-          const left = document.createElement("div");
-          left.textContent = `всего подходит: ${free.length}`;
-          left.style.cssText = "opacity:.4;font-size:10px;padding:2px 7px";
-          mList.appendChild(left);
-        }
-      };
-
-      const loadModels = () => {
-        if (modelsLoaded) {
-          renderModels();
-          return;
-        }
-        if (modelsLoading) return;
-        modelsLoading = true;
-        mList.textContent = "";
-        const noteEl = document.createElement("div");
-        noteEl.textContent = "загружаю…";
-        noteEl.style.cssText = "opacity:.5;font-size:11px";
-        mList.appendChild(noteEl);
-        bridge("/models")
-          .then((data) => {
-            modelsLoaded = true;
-            modelsLoading = false;
-            renderModels(data);
-          })
-          .catch(() => {
-            modelsLoading = false;
-            noteEl.textContent = "мост недоступен";
-          });
-      };
-      loadModels();
+      box.appendChild(actRow);
     } else if (view.name === "stats") {
       head("Статистика");
       const box = boxEl();
@@ -1913,6 +1951,13 @@ function createView(ctx) {
     bridge("/state")
       .then((state) => {
         if (!state) return;
+        if (state.modelDisabled !== undefined) {
+          const off = Boolean(state.modelDisabled);
+          if (off !== modelDisabled) {
+            modelDisabled = off;
+            if (panelOpen) renderPanel();
+          }
+        }
         const key = JSON.stringify([state.voices || {}, state.charVoices || {}]);
         if (key !== adoptedKey) {
           adoptedKey = key;

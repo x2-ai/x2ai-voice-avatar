@@ -187,12 +187,10 @@ function teraVoice(sid) {
   return pool[Math.abs(Number(hash(key)) | 0) % pool.length];
 }
 
-// Пересказ через бесплатную модель OpenCode: без сессии, истории и инструментов.
-const SUM_MODEL_DEFAULT = { providerID: "opencode-go", id: "iceman-contributor-free" };
 // Провайдеры локального инференса: их модели ставим в начало списка.
 const LOCAL_PROVIDERS = /ollama|lmstudio|lm-studio|llamacpp|llama-cpp|vllm|localai|gpt4all|kobold|jan|text-generation-webui|mlx|local/i;
-// Модель пересказа меняется в настройках персонажа (панель шестерёнки):
-// выбор лежит в x2ai-tts-model.json, иначе берём бесплатную по умолчанию.
+// Модель пересказа меняется в настройках (панель шестерёнки): выбор лежит
+// в x2ai-tts-model.json. Нет файла или стоит disabled — модель выключена.
 const sumModel = () => {
   try {
     const raw = require("node:fs").readFileSync(
@@ -200,9 +198,11 @@ const sumModel = () => {
       "utf8",
     );
     const value = JSON.parse(raw);
+    if (value && value.disabled) return null;
     if (value && value.id && value.providerID) return value;
   } catch (e) {}
-  return SUM_MODEL_DEFAULT;
+  // Свежая установка: вспомогательная модель выключена, пока её не выберут.
+  return null;
 };
 const LLM_SUMMARY = true;
 const LLM_TIMEOUT = 12000;
@@ -655,7 +655,7 @@ function dedupeSentences(text, maxSentences = 3) {
 
 // Если модель ответила не по-русски — один раз просим перевод.
 async function translateRu(text) {
-  if (!genText) return "";
+  if (!genText || !sumModel()) return "";
   try {
     const out = await Promise.race([
       genText({
@@ -727,7 +727,7 @@ function shouldUseReasonName() {
 
 // Пересказ моделью (бесплатной, без сессии). Пустая строка = не получилось.
 async function llmSummary(raw, gender, user = readUser(), sid = "", style = "") {
-  if (!LLM_SUMMARY || !genText) return "";
+  if (!LLM_SUMMARY || !genText || !sumModel()) return "";
   const src = stripCode(raw).slice(0, 6000).trim();
   if (src.length < 40) return "";
   // Род ассистента (голос) и род пользователя — разные вещи: первый про «я», второй про «ты».
@@ -794,7 +794,7 @@ async function llmSummary(raw, gender, user = readUser(), sid = "", style = "") 
 
 // Рассуждения модели: одним запросом — перевод (если нужно) и сжатие (если «кратко»).
 async function llmReason(raw, gender, translate, sid, user = readUser()) {
-  if (!genText) return "";
+  if (!genText || !sumModel()) return "";
   const src = stripCode(String(raw || "")).replace(/\s+/g, " ").trim().slice(0, 6000);
   if (src.length < 30) return "";
   const task = translate
@@ -1159,6 +1159,7 @@ function startBridge(ctx) {
         voices: readVoices(),
         charVoices: readCharVoices(),
         names: readJson(namesFile) || {},
+        modelDisabled: !sumModel(),
       });
       return;
     }
@@ -1183,8 +1184,8 @@ function startBridge(ctx) {
     }
     if (req.method === "GET" && route === "/models") {
       listModels()
-        .then((out) => send(res, 200, { ...out, current: readModel() || SUM_MODEL_DEFAULT }))
-        .catch(() => send(res, 200, { models: [], source: "error", current: readModel() || SUM_MODEL_DEFAULT }));
+        .then((out) => send(res, 200, { ...out, current: readModel(), disabled: !sumModel() }))
+        .catch(() => send(res, 200, { models: [], source: "error", current: readModel(), disabled: !sumModel() }));
       return;
     }
     let body = "";
@@ -1239,7 +1240,11 @@ function startBridge(ctx) {
         return;
       }
       if (req.method === "POST" && route === "/model") {
-        if (payload.providerID && payload.id) {
+        if (payload.disabled) {
+          try {
+            fs.writeFileSync(modelFile, JSON.stringify({ disabled: true }, null, 2));
+          } catch (e) {}
+        } else if (payload.providerID && payload.id) {
           try {
             fs.writeFileSync(
               modelFile,
@@ -1247,7 +1252,7 @@ function startBridge(ctx) {
             );
           } catch (e) {}
         }
-        send(res, 200, { ok: true, current: readModel() || SUM_MODEL_DEFAULT });
+        send(res, 200, { ok: true, current: readModel(), disabled: !sumModel() });
         return;
       }
       if (req.method === "POST" && route === "/user") {
