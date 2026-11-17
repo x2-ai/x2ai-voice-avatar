@@ -70,6 +70,28 @@ const CHAR_NAMES = {
   px_fx_penguin: "Инопланетянин", px_ru_m1: "Программист",
 };
 
+// Характер персонажа: короткая манера речи, которая уходит в правила чата,
+// когда в настройках персонажа включена галочка «Характер». Пиксельные
+// персонажи — отдельные роли со своим id, поэтому ключи пака тоже здесь.
+const TEMPER_TEXT = {
+  ru_f1: "мягкая и заботливая, немного застенчивая: говори тепло, подбадривай",
+  ru_f2: "живая болтушка: много энтузиазма, шути и радуйся мелочам",
+  ru_m1: "спокойный и деловитый: ценишь точность, говоришь коротко и по делу",
+  ru_m5: "уверенный, чуть ворчливый наставник: говоришь прямо, подкалываешь по-доброму",
+  fx_robot: "говори короткими ровными фразами, без эмоций, иногда по-машинному точно",
+  fx_demon: "мрачный и язвительный: говори с ленцой, люби мрачные шутки, но не оскорбляй",
+  fx_demoness: "дерзкая и самоуверенная: язви и подкалывай, люби, когда с тобой спорят",
+  fx_alien: "любопытная и странная: удивляйся обычным человеческим вещам, задавай вопросы",
+  fx_cat: "ленивый и своенравный кот: говори нехотя, вставляй «мяу», люби поспать и поесть",
+  fx_penguin: "суетливый и очень деловитый: любишь порядок, всё проверяешь, волнуешься о мелочах",
+  fx_ghost: "тихая и загадочная: говори намёками и шёпотом, иногда неожиданно пугай",
+  px_ru_f1: "живая и тёплая помощница: говори по-человечески, подбадривай, иногда кокетничай",
+  px_ru_m1: "спокойный программист: говори по делу, люби примеры из кода, сдержанно шути про баги",
+  px_fx_robot: "говори короткими ровными фразами, без эмоций, иногда по-машинному точно",
+  px_fx_demoness: "дерзкая и самоуверенная: язви и подкалывай, люби, когда с тобой спорят",
+  px_fx_penguin: "любопытный пришелец: удивляйся обычным человеческим вещам, сравнивай их со своей планетой",
+};
+
 function nameOf(voice) {
   const id = String(voice || "");
   return CHAR_NAMES[id] || CHAR_NAMES[id.replace(/^px_/, "")] || "";
@@ -322,8 +344,79 @@ function limitFor(sid, voice, kind) {
   return MAX_CHARS;
 }
 
-function readMuted() {
-  return readJsonCached(SPEECH_FILE)?.muted === true;
+// Mute — не глобальный, а на чат: в одном чате звук выключен, в другом
+// говорит. Новый чат наследует значение предыдущего открытого (last), но
+// дальше живёт своей настройкой.
+const MUTED_FILE = `${process.env.HOME}/.config/opencode/x2ai-muted.json`;
+function readMutedMap() {
+  const rec = readJsonCached(MUTED_FILE);
+  if (!rec || typeof rec !== "object" || Array.isArray(rec)) {
+    // Первый запуск после перехода на per-chat mute: забираем прежний
+    // глобальный флаг, иначе выключенный звук «включится» сам.
+    const seed = { last: readJsonCached(SPEECH_FILE)?.muted === true, bySid: {} };
+    saveMutedMap(seed);
+    return seed;
+  }
+  return {
+    last: rec.last === true,
+    bySid: rec.bySid && typeof rec.bySid === "object" ? rec.bySid : {},
+  };
+}
+function saveMutedMap(map) {
+  try {
+    fs.writeFileSync(MUTED_FILE, JSON.stringify(map));
+  } catch (e) {}
+}
+// Нет записи для чата — берём значение предыдущего открытого и запоминаем его
+// за этим чатом, чтобы дальше он не зависел от соседей.
+function readMutedFor(sid) {
+  const map = readMutedMap();
+  const key = String(sid || "");
+  if (!key) return map.last;
+  let dirty = false;
+  if (typeof map.bySid[key] !== "boolean") {
+    // Первый раз видим этот чат — наследуем от предыдущего открытого.
+    map.bySid[key] = map.last;
+    dirty = true;
+  }
+  const value = map.bySid[key];
+  // «Предыдущий открытый» — тот, что окно спросило последним.
+  if (map.last !== value) {
+    map.last = value;
+    dirty = true;
+  }
+  if (dirty) saveMutedMap(map);
+  return value;
+}
+function writeMutedFor(sid, value) {
+  const map = readMutedMap();
+  const on = Boolean(value);
+  const key = String(sid || "");
+  if (key) map.bySid[key] = on;
+  map.last = on;
+  // Старые чаты не плодим бесконечно: держим последние двести.
+  const keys = Object.keys(map.bySid);
+  if (keys.length > 200) {
+    for (const old of keys.slice(0, keys.length - 200)) delete map.bySid[old];
+  }
+  saveMutedMap(map);
+}
+
+// Вкладка закрыта: окно присылает список открытых чатов. Файла нет, он
+// устарел или в нём нет ни одного sid — не мешаем озвучке (окно могло не
+// загрузиться, и молчание было бы хуже лишней фразы).
+function tabOpen(sid) {
+  if (!sid) return true;
+  let reg = null;
+  try {
+    reg = JSON.parse(fs.readFileSync(OPEN_FILE, "utf8"));
+  } catch (e) {
+    return true;
+  }
+  const ids = reg && Array.isArray(reg.ids) ? reg.ids : [];
+  if (!ids.length) return true;
+  if (Date.now() - (Number(reg.at) || 0) > OPEN_TTL) return true;
+  return ids.includes(sid);
 }
 
 function inQuietHours() {
@@ -343,6 +436,61 @@ function inQuietHours() {
 // которым правила уже подмешаны: плагин перезагружается на каждом шаге.
 const NAMES_FILE = `${process.env.HOME}/.config/opencode/x2ai-char-names.json`;
 const RULES_SEEN_FILE = `${process.env.HOME}/.config/opencode/x2ai-rules-seen.json`;
+// Характер включается галочкой в настройках персонажа: окно знает ключ пака
+// (px_/аниме), сервер — только голос, поэтому храним { key, on } на чат.
+const TEMPER_FILE = `${process.env.HOME}/.config/opencode/x2ai-char-temper.json`;
+// Манера озвучки персонажа (скорость/окраска).
+const STYLE_FILE = `${process.env.HOME}/.config/opencode/x2ai-char-style.json`;
+// Паки спрайтов: по файлу на пак, окно грузит только выбранный.
+const PACK_DIR = `${process.env.HOME}/.config/opencode/plugins/x2ai-avatar/packs`;
+const EXT_PACK_DIR = `${process.env.HOME}/.config/opencode/x2ai-avatar-packs`;
+// Резервная копия настроек персонажей из окна (кнопки в «Дополнительно»).
+const SETTINGS_BACKUP = `${process.env.HOME}/.config/opencode/x2ai-avatar-settings.json`;
+// Открытые вкладки окна: { at, ids }. Окно шлёт список при изменении и как
+// heartbeat; устаревший файл игнорируем, иначе без окна озвучка бы онемела.
+const OPEN_FILE = `${process.env.HOME}/.config/opencode/x2ai-open-sessions.json`;
+const OPEN_TTL = 30000;
+
+function readTemper(sid) {
+  if (!sid) return { key: "", on: false, text: "" };
+  try {
+    const map = JSON.parse(fs.readFileSync(TEMPER_FILE, "utf8"));
+    const rec = map && map[sid];
+    if (!rec || typeof rec !== "object") return { key: "", on: false, text: "" };
+    return { key: String(rec.key || ""), on: Boolean(rec.on), text: String(rec.text || "").slice(0, 400) };
+  } catch (e) {
+    return { key: "", on: false, text: "" };
+  }
+}
+
+// Скорость (0.7–1.8) и окраска (up|think|down) конкретного чата.
+function readStyle(sid) {
+  if (!sid) return { speed: 0, emotion: "" };
+  try {
+    const map = JSON.parse(fs.readFileSync(STYLE_FILE, "utf8"));
+    const rec = map && map[sid];
+    if (!rec || typeof rec !== "object") return { speed: 0, emotion: "" };
+    const speed = Number(rec.speed);
+    const emotion = ["up", "think", "down"].includes(rec.emotion) ? rec.emotion : "";
+    return {
+      speed: Number.isFinite(speed) && speed >= 0.7 && speed <= 1.8 ? speed : 0,
+      emotion,
+    };
+  } catch (e) {
+    return { speed: 0, emotion: "" };
+  }
+}
+
+// Характер поменялся — снимаем отметку, чтобы правила пересобрались
+// при следующем запросе этого чата (они подмешиваются один раз).
+function unmarkRulesSeen(sid) {
+  if (!sid) return;
+  try {
+    const list = JSON.parse(fs.readFileSync(RULES_SEEN_FILE, "utf8"));
+    if (!Array.isArray(list) || !list.includes(sid)) return;
+    fs.writeFileSync(RULES_SEEN_FILE, JSON.stringify(list.filter((id) => id !== sid)));
+  } catch (e) {}
+}
 
 function readCharName(sid) {
   if (!sid) return "";
@@ -1005,8 +1153,14 @@ const reasonTimers = new Map();
 async function speakReason(rsid, rtext) {
   const reason = readReason();
   if (reason.mode === "off") return;
-  if (readSpeech() === "silent" || readMuted() || inQuietHours()) {
-    log("SKIP: reason muted");
+  // «Озвучка ответа: выключено» главнее пузыря — молчим полностью.
+  if (readSpeech() === "silent") {
+    log("SKIP: reason silent mode");
+    return;
+  }
+  // Вкладку закрыли, пока модель думала: не тратим перевод и не звучим.
+  if (!tabOpen(rsid)) {
+    log("SKIP: reason tab closed", rsid || "");
     return;
   }
   const norm = String(rtext).replace(/\s+/g, " ").trim().slice(0, 400);
@@ -1047,6 +1201,12 @@ async function speakReason(rsid, rtext) {
     return;
   }
   log("REASON:", rsid, reason.mode, reason.translate ? "tr" : "-", out.length);
+  // Звук выключен (в этом чате) — фразу отдаём окну текстом, как для озвучки.
+  if (readMutedFor(rsid) || inQuietHours()) {
+    noteSilent(out, rsid, "reason");
+    log("SKIP: reason muted, bubble only");
+    return;
+  }
   speak(
     out,
     rsid,
@@ -1057,15 +1217,20 @@ async function speakReason(rsid, rtext) {
   );
 }
 
-function speakTera(text, sid, forced, emotion, kind) {
+function speakTera(text, sid, forced, emotion, kind, styleOverride) {
   try {
     if (!fs.existsSync(TERATTS)) return false;
   } catch (e) {
     return false;
   }
   try {
+    // Язык озвучки — кнопка EN/RU в панели, по тексту он больше не угадывается.
     const lang = voiceLang();
     let voice = forced || teraVoice(sid);
+    // styleOverride — предпросмотр манеры из панели: скорость и окраску
+    // применяем сразу, не дожидаясь записи файла за этим чатом.
+    const style = { ...readStyle(sid), ...(styleOverride || {}) };
+    const emotionOut = emotion || style.emotion || null;
     let payload = text;
     if (lang === "en") {
       // Движок понимает только <ru>/<en>. Выбранный английский голос уважаем,
@@ -1077,15 +1242,17 @@ function speakTera(text, sid, forced, emotion, kind) {
     const env = { ...process.env };
     if (voice) env.X2AI_TTS_VOICE = voice;
     if (sid) env.X2AI_TTS_SID = sid;
-    env.X2AI_TTS_SCALE = String(readSpeed());
-    if (emotion) env.X2AI_TTS_EMOTION = emotion;
+    // Общего ползунка темпа больше нет: у каждого персонажа свой (окраска
+    // или «Настроить»), а без него — ровно 1.0.
+    env.X2AI_TTS_SCALE = String(style.speed || 1);
+    if (emotionOut) env.X2AI_TTS_EMOTION = emotionOut;
     else delete env.X2AI_TTS_EMOTION;
     if (kind) env.X2AI_TTS_KIND = kind;
     else delete env.X2AI_TTS_KIND;
     if (readKeepAlive()) delete env.X2AI_TTS_ONESHOT;
     else env.X2AI_TTS_ONESHOT = "1";
     delete env.X2AI_TTS_TEXT;
-    log("TERA_VOICE:", voice || "(default)", sid || "", emotion ? `emotion=${emotion}` : "");
+    log("TERA_VOICE:", voice || "(default)", sid || "", emotionOut ? `emotion=${emotionOut}` : "");
     const p = spawn(TERATTS, [], { stdio: ["pipe", "ignore", "ignore"], detached: true, env });
     p.on("error", (e) => log("TERA_ERR", e?.message));
     p.on("close", (code) => log("TERA_EXIT", code));
@@ -1142,10 +1309,31 @@ function speakSay(text) {
   }
 }
 
-// Последняя озвученная фраза — для кнопки «Повторить».
-let lastSpeak = null;
+// Звук выключен, но текст всё равно отдаём окну: пузырь показывает фразу
+// без озвучки и без артикуляции.
+// Заметка обязана жить в файле: плагин перезагружается на каждом шаге, и
+// заметка в памяти исчезала раньше, чем окно успевало её опросить.
+const NOTE_FILE = `${process.env.HOME}/.config/opencode/x2ai-avatar-note.json`;
+const NOTE_TTL = 10 * 60 * 1000;
+function readNote(sid) {
+  const rec = readJsonCached(NOTE_FILE) || {};
+  if (!rec || typeof rec.text !== "string" || !rec.text) return null;
+  if (Date.now() - Number(rec.at || 0) >= NOTE_TTL) return null;
+  // Заметка адресная: чат видит только свою мысль, чужие не всплывают.
+  const want = String(sid || "");
+  if (want && String(rec.sid || "") !== want) return null;
+  return rec;
+}
+function noteSilent(text, sid, kind) {
+  const clean = stripCode(String(text || "")).replace(/\s+/g, " ").trim();
+  if (!clean) return;
+  const rec = { text: clean.slice(0, 600), sid: sid || "", kind: kind || "", at: Date.now() };
+  try {
+    fs.writeFileSync(NOTE_FILE, JSON.stringify(rec));
+  } catch (e) {}
+}
 
-function speak(text, sid, voice, maxChars = MAX_CHARS, emotion = null, kind = null) {
+function speak(text, sid, voice, maxChars = MAX_CHARS, emotion = null, kind = null, styleOverride = null) {
   const limit = Math.max(60, Number(maxChars) || MAX_CHARS);
   let toSay = decorate(text);
   if (toSay.length > limit) {
@@ -1155,11 +1343,17 @@ function speak(text, sid, voice, maxChars = MAX_CHARS, emotion = null, kind = nu
   }
   toSay = stripCode(toSay).replace(/\s+/g, " ").trim();
   if (!toSay) return;
+  // Вкладку закрыли: ответ и рассуждения закрытого чата молчат, ручные
+  // реплики (/say, /test) сюда не идут — они уже из открытого окна.
+  if (!tabOpen(sid)) {
+    log("SKIP: tab closed", sid || "");
+    return;
+  }
   // Страховка от чужого языка: блокируем только когда текста на языке
   // озвучки меньше, чем на другом.
-  const speakLang = voiceLang();
   const cyrCount = (toSay.match(/[А-Яа-яЁё]/g) || []).length;
   const latCount = (toSay.match(/[A-Za-z]/g) || []).length;
+  const speakLang = voiceLang();
   if (speakLang === "ru" && cyrCount < 20 && latCount > cyrCount) {
     log("SKIP: not russian", cyrRatio(toSay).toFixed(2), toSay.slice(0, 60));
     return;
@@ -1168,11 +1362,10 @@ function speak(text, sid, voice, maxChars = MAX_CHARS, emotion = null, kind = nu
     log("SKIP: not english", langRatio(toSay, "en").toFixed(2), toSay.slice(0, 60));
     return;
   }
-  lastSpeak = { text: toSay, sid: sid || "", voice: voice || "", max: limit, emotion, kind };
   log("SPEAK:", toSay.slice(0, 100));
   // TeraTTS главный; если его нет — аварийный системный голос, чтобы чат
   // не замолкал совсем (губы при этом не двигаются).
-  if (!speakTera(toSay, sid, voice, emotion, kind)) {
+  if (!speakTera(toSay, sid, voice, emotion, kind, styleOverride)) {
     log("TERA: unavailable, fallback say");
     speakSay(toSay);
   }
@@ -1308,6 +1501,7 @@ function startBridge(ctx) {
 
   const server = http.createServer((req, res) => {
     const route = String(req.url || "/").split("?")[0];
+    const query = new URLSearchParams(String(req.url || "").split("?")[1] || "");
     if (req.method === "OPTIONS") {
       res.writeHead(204, CORS);
       res.end();
@@ -1329,6 +1523,10 @@ function startBridge(ctx) {
         charVoices: readCharVoices(),
         names: readJson(namesFile) || {},
         modelDisabled: !sumModel(),
+        // Пока фраза свежая: текст для пузыря, когда звук выключен.
+        note: readNote(query.get("sid") || ""),
+        // Mute — на конкретный чат: окно передаёт свой sid в запросе.
+        muted: readMutedFor(query.get("sid") || ""),
       });
       return;
     }
@@ -1338,7 +1536,63 @@ function startBridge(ctx) {
         charVoices: readCharVoices(),
         installed: installedVoices(),
         engine: fs.existsSync(TERATTS),
+        // Готовые описания характеров: окно показывает их плейсхолдером
+        // в поле «свой характер».
+        tempers: TEMPER_TEXT,
       });
+      return;
+    }
+    // Паки спрайтов: список (манифест + внешние папки) и кадры одного пака.
+    // В бандл окна кадры не зашиты — оно грузит только выбранный пак.
+    if (req.method === "GET" && route === "/packs") {
+      const packs = {};
+      try {
+        const index = JSON.parse(fs.readFileSync(`${PACK_DIR}/index.json`, "utf8"));
+        for (const [name, voices] of Object.entries(index || {})) {
+          packs[name] = { voices: Array.isArray(voices) ? voices : [] };
+        }
+      } catch (e) {}
+      try {
+        for (const dir of fs.readdirSync(EXT_PACK_DIR)) {
+          const file = `${EXT_PACK_DIR}/${dir}/sprites.json`;
+          if (!fs.existsSync(file)) continue;
+          const data = JSON.parse(fs.readFileSync(file, "utf8"));
+          if (data && typeof data === "object" && !packs[dir]) {
+            packs[dir] = { voices: Object.keys(data), external: true };
+          }
+        }
+      } catch (e) {}
+      send(res, 200, { packs });
+      return;
+    }
+    if (req.method === "GET" && route === "/pack") {
+      const name = String(new URLSearchParams(String(req.url || "").split("?")[1] || "").get("name") || "")
+        .replace(/[^\w-]/g, "")
+        .slice(0, 40);
+      if (!name) {
+        send(res, 400, { error: "name" });
+        return;
+      }
+      for (const file of [`${PACK_DIR}/${name}.json`, `${EXT_PACK_DIR}/${name}/sprites.json`]) {
+        try {
+          if (fs.existsSync(file)) {
+            send(res, 200, JSON.parse(fs.readFileSync(file, "utf8")));
+            return;
+          }
+        } catch (e) {}
+      }
+      send(res, 404, { error: "no pack" });
+      return;
+    }
+    // Настройки персонажей: файл и обратно — перенос между окнами и машинами.
+    // POST /settings/export живёт в блоке разбора тела, ниже: ему нужен payload.
+    if (req.method === "GET" && route === "/settings/import") {
+      try {
+        const data = JSON.parse(fs.readFileSync(SETTINGS_BACKUP, "utf8"));
+        send(res, 200, data && typeof data === "object" ? data : {});
+      } catch (e) {
+        send(res, 200, {});
+      }
       return;
     }
     if (req.method === "GET" && route === "/speech") {
@@ -1351,7 +1605,8 @@ function startBridge(ctx) {
         keepAlive: readKeepAlive(),
         lang: readLang(),
         langs: LANGS,
-        muted: readMuted(),
+        // Окно спрашивает про свой чат: у каждого свой mute.
+        muted: readMutedFor(query.get("sid") || ""),
       });
       return;
     }
@@ -1375,6 +1630,23 @@ function startBridge(ctx) {
       try {
         payload = body ? JSON.parse(body) : {};
       } catch (e) {}
+      // Настройки персонажей в файл: перенос между окнами и машинами.
+      if (req.method === "POST" && route === "/settings/export") {
+        const data = {
+          at: new Date().toISOString(),
+          chars: payload && typeof payload.chars === "object" ? payload.chars : {},
+          ui: payload && typeof payload.ui === "object" ? payload.ui : {},
+          pack: typeof payload.pack === "string" ? payload.pack : "",
+          lang: typeof payload.lang === "string" ? payload.lang : "",
+        };
+        try {
+          fs.writeFileSync(SETTINGS_BACKUP, JSON.stringify(data, null, 2));
+          send(res, 200, { ok: true, path: SETTINGS_BACKUP });
+        } catch (e) {
+          send(res, 200, { ok: false });
+        }
+        return;
+      }
       if (req.method === "POST" && route === "/voice") {
         if (payload.sid && payload.voice) {
           const map = readVoices();
@@ -1390,6 +1662,57 @@ function startBridge(ctx) {
           try {
             fs.writeFileSync(namesFile, JSON.stringify(names, null, 2));
           } catch (e) {}
+        }
+        // Характер: галочка в настройках персонажа. Ключ пака нужен, потому
+        // что px_ru_f1 (Тянка) и ru_f1 (Аня) — разные персонажи на одном голосе.
+        if (
+          payload.sid &&
+          (payload.charKey !== undefined || payload.temper !== undefined || payload.temperText !== undefined)
+        ) {
+          const map = readJson(TEMPER_FILE) || {};
+          const prev = map[payload.sid] && typeof map[payload.sid] === "object" ? map[payload.sid] : {};
+          const next = {
+            key: payload.charKey !== undefined ? String(payload.charKey).slice(0, 40) : String(prev.key || ""),
+            on: payload.temper !== undefined ? Boolean(payload.temper) : Boolean(prev.on),
+            // Свой текст характера: пусто — берётся готовый пресет персонажа.
+            text:
+              payload.temperText !== undefined
+                ? String(payload.temperText).replace(/\s+/g, " ").trim().slice(0, 400)
+                : String(prev.text || ""),
+          };
+          if (next.key !== prev.key || next.on !== prev.on || next.text !== prev.text) {
+            map[payload.sid] = next;
+            try {
+              fs.writeFileSync(TEMPER_FILE, JSON.stringify(map, null, 2));
+            } catch (e) {}
+            unmarkRulesSeen(payload.sid);
+          }
+        }
+        // Манера озвучки персонажа: 0 — как в общих настройках.
+        if (payload.sid && (payload.speed !== undefined || payload.emotion !== undefined)) {
+          const map = readJson(STYLE_FILE) || {};
+          const prev = map[payload.sid] && typeof map[payload.sid] === "object" ? map[payload.sid] : {};
+          const rawSpeed = Number(payload.speed);
+          const next = {
+            speed:
+              payload.speed !== undefined
+                ? Number.isFinite(rawSpeed) && rawSpeed >= 0.7 && rawSpeed <= 1.8
+                  ? Math.round(rawSpeed * 100) / 100
+                  : 0
+                : Number(prev.speed) || 0,
+            emotion:
+              payload.emotion !== undefined
+                ? ["up", "think", "down"].includes(payload.emotion)
+                  ? payload.emotion
+                  : ""
+                : String(prev.emotion || ""),
+          };
+          if (next.speed !== prev.speed || next.emotion !== prev.emotion) {
+            map[payload.sid] = next;
+            try {
+              fs.writeFileSync(STYLE_FILE, JSON.stringify(map, null, 2));
+            } catch (e) {}
+          }
         }
         send(res, 200, { ok: true });
         return;
@@ -1417,15 +1740,25 @@ function startBridge(ctx) {
         return;
       }
       if (req.method === "POST" && route === "/model") {
+        // Выключение не стирает выбранную модель: иначе «Включено» нечего
+        // возвращать, и селект в панели отскакивал назад на «Отключено».
+        const prev = readJsonCached(modelFile) || {};
         if (payload.disabled) {
           try {
-            fs.writeFileSync(modelFile, JSON.stringify({ disabled: true }, null, 2));
+            fs.writeFileSync(modelFile, JSON.stringify({ ...prev, disabled: true }, null, 2));
           } catch (e) {}
         } else if (payload.providerID && payload.id) {
           try {
             fs.writeFileSync(
               modelFile,
               JSON.stringify({ providerID: payload.providerID, id: payload.id }, null, 2),
+            );
+          } catch (e) {}
+        } else if (prev.disabled && prev.providerID && prev.id) {
+          try {
+            fs.writeFileSync(
+              modelFile,
+              JSON.stringify({ providerID: prev.providerID, id: prev.id }, null, 2),
             );
           } catch (e) {}
         }
@@ -1455,8 +1788,8 @@ function startBridge(ctx) {
           quiet: readQuiet(),
           reason: readReason(),
           keepAlive: readKeepAlive(),
-          lang: readLang(),
-          muted: readMuted(),
+            lang: readLang(),
+          muted: readMutedFor(payload.sid || ""),
         };
         if (SPEECH_MODES.includes(payload.mode)) next.mode = payload.mode;
         const sp = Number(payload.speed);
@@ -1465,7 +1798,11 @@ function startBridge(ctx) {
         }
         if (payload.keepAlive !== undefined) next.keepAlive = Boolean(payload.keepAlive);
         if (LANGS.includes(payload.lang)) next.lang = payload.lang;
-        if (payload.muted !== undefined) next.muted = Boolean(payload.muted);
+        if (payload.muted !== undefined) {
+          // Пишем только за этот чат: соседние вкладки не глушим.
+          writeMutedFor(payload.sid, payload.muted);
+          next.muted = Boolean(payload.muted);
+        }
         if (payload.reason && typeof payload.reason === "object") {
           const cur = next.reason || readReason();
           next.reason = {
@@ -1517,15 +1854,6 @@ function startBridge(ctx) {
         send(res, 200, { ok: true });
         return;
       }
-      if (req.method === "POST" && route === "/replay") {
-        if (!lastSpeak || !lastSpeak.text) {
-          send(res, 200, { ok: false, reason: "empty" });
-          return;
-        }
-        speak(lastSpeak.text, lastSpeak.sid, lastSpeak.voice, lastSpeak.max, lastSpeak.emotion, lastSpeak.kind);
-        send(res, 200, { ok: true, chars: lastSpeak.text.length });
-        return;
-      }
       if (req.method === "POST" && route === "/limits") {
         const voice = String(payload.voice || "").replace(/^px_/, "");
         if (voice) {
@@ -1547,11 +1875,44 @@ function startBridge(ctx) {
       if (req.method === "POST" && route === "/test") {
         // Пробная фраза текущим голосом и с текущей скоростью. Через speak(),
         // чтобы сервер записал state с текстом — тогда двигаются губы.
+        // speed/emotion приходят из панели: ползунок проигрывает реплику
+        // сразу, ещё до сохранения настроек за чатом.
         const phrase =
           voiceLang() === "en"
             ? "Testing the voice. One, two, three."
             : "Проверка озвучки. Раз, два, три.";
-        speak(phrase, String(payload.sid || ""), payload.voice || null, MAX_CHARS);
+        const style = {};
+        const speed = Number(payload.speed);
+        if (speed >= 0.5 && speed <= 2.5) style.speed = Math.round(speed * 100) / 100;
+        const emo = String(payload.emotion || "");
+        if (emo === "up" || emo === "think" || emo === "down") style.emotion = emo;
+        speak(
+          phrase,
+          String(payload.sid || ""),
+          payload.voice || null,
+          MAX_CHARS,
+          style.emotion || null,
+          null,
+          style,
+        );
+        send(res, 200, { ok: true });
+        return;
+      }
+      if (req.method === "POST" && route === "/open") {
+        // Окно сообщает, какие вкладки открыты. Пропавшие чаты глушим сразу,
+        // иначе фраза, начатая до закрытия, доиграет в закрытой вкладке.
+        const ids = Array.isArray(payload.ids)
+          ? payload.ids.map((v) => String(v || "").slice(0, 60)).filter(Boolean).slice(0, 200)
+          : [];
+        let prev = [];
+        try {
+          const old = JSON.parse(fs.readFileSync(OPEN_FILE, "utf8"));
+          prev = old && Array.isArray(old.ids) ? old.ids : [];
+        } catch (e) {}
+        try {
+          fs.writeFileSync(OPEN_FILE, JSON.stringify({ at: Date.now(), ids }));
+        } catch (e) {}
+        for (const gone of prev) if (!ids.includes(gone)) stopTts(gone);
         send(res, 200, { ok: true });
         return;
       }
@@ -1665,12 +2026,10 @@ module.exports = {
           const voice = effectiveVoice(sid);
           const gender = genderOf(voice);
           const mode = readSpeech();
-          if (mode === "silent" || readMuted()) {
+          // Только «озвучка выключена» глушит полностью; mute — повод показать
+          // фразу текстом в пузыре (текст считаем так же, как для голоса).
+          if (mode === "silent") {
             log("SKIP: silent mode");
-            continue;
-          }
-          if (inQuietHours()) {
-            log("SKIP: quiet hours");
             continue;
           }
           // Дедуп — только после проверок «молчать»: иначе фраза помечалась
@@ -1704,6 +2063,12 @@ module.exports = {
             log("SKIP: not " + voiceLang(), summary.slice(0, 60));
             continue;
           }
+          // Звук выключен в этом чате (mute или тихие часы) — отдаём текст в пузырь.
+          if (readMutedFor(sid) || inQuietHours()) {
+            noteSilent(summary, sid, "");
+            log("SKIP: muted, bubble only");
+            continue;
+          }
           speak(summary, sid, voice, mode === "full" ? FULL_MAX_CHARS : limitFor(sid, voice, "speech"), "up");
         }
       } catch (e) {
@@ -1730,6 +2095,19 @@ module.exports = {
           rules.push("Ты — женский персонаж. О себе говори в женском роде: «я проверила», «я сделала», «я нашла».");
         } else if (agentGender === "m") {
           rules.push("Ты — мужской персонаж. О себе говори в мужском роде: «я проверил», «я сделал», «я нашёл».");
+        }
+        // Характер: краткая манера речи персонажа, если её включили в настройках.
+        const temper = readTemper(sid);
+        const temperText = !temper.on
+          ? ""
+          : temper.text ||
+            TEMPER_TEXT[temper.key] ||
+            TEMPER_TEXT[temper.key.replace(/^px_/, "")] ||
+            "";
+        if (temperText) {
+          rules.push(
+            `Твой характер: ${temperText}. Держи эту манеру речи в ответах, но факты, код и команды не искажай.`
+          );
         }
         if (user.name) rules.push(`Пользователя зовут ${user.name}.`);
         if (user.gender === "f") {

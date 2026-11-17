@@ -17,8 +17,17 @@ const { createEffect, onCleanup } = require("solid-js");
 // окно просто опрашивает /state и не зависит от main-процесса.
 const BRIDGE_URL = "http://127.0.0.1:47821";
 
-const PACKS = __SPRITES__;
+// Кадры паков в бандл не зашиты: они лежат файлами (plugins/x2ai-avatar/packs)
+// и приходят с моста /pack — окно грузит только выбранный пак. Здесь только
+// манифест: какие паки есть и какие персонажи в них.
+const PACKS = {};
+const PACK_INDEX = __PACK_INDEX__;
+const packList = () => Object.keys(PACK_INDEX);
 const CLICKS = __CLICKS__;
+// Партитура рта: чистые функции из plugins/x2ai-avatar/talk-plan.js — та же
+// логика проверяется тестом tools/test_talk_plan.js.
+__TALK_PLAN__
+const TALKPLAN = x2aiTalkPlanModule();
 // Реплики панели: lines (при смене персонажа), packs (при смене пака), samples (пример голоса).
 const LINES = __LINES__;
 
@@ -82,6 +91,37 @@ const saveCharSetting = (key, patch) => {
   } catch (e) {}
 };
 
+// Кошельки для доната: список пуст — в панели вежливая заглушка.
+// Формат записи: { net: "TON", addr: "UQ…" }.
+const DONATE = [
+  // Адреса добавим, когда кошельки будут готовы.
+];
+
+// Окно: мелочи интерфейса, которые не касаются движка и живут в localStorage.
+const UI_KEY = "x2ai-avatar:ui";
+// Пузырь с текстом: "off" — не показывать, "mute" — только при выключенном
+// звуке (по умолчанию), "always" — показывать всегда.
+const BUBBLE_MODES = ["off", "mute", "always"];
+const UI_DEFAULT = { bubble: "mute", keys: true, react: true };
+let uiPrefs = { ...UI_DEFAULT };
+try {
+  const raw = JSON.parse(localStorage.getItem(UI_KEY) || "{}");
+  if (raw && typeof raw === "object") {
+    // Старая настройка была галочкой: true/false превращаем в режим.
+    // Старый чекбокс: включён — показывали всегда, значит «always» (а не «mute»),
+    // иначе после обновления пузырь у тех, кто его включил, молча исчезает.
+    if (typeof raw.bubble === "boolean") raw.bubble = raw.bubble ? "always" : "off";
+    if (!BUBBLE_MODES.includes(raw.bubble)) delete raw.bubble;
+    uiPrefs = { ...UI_DEFAULT, ...raw };
+  }
+} catch (e) {}
+const saveUiPref = (patch) => {
+  uiPrefs = { ...uiPrefs, ...patch };
+  try {
+    localStorage.setItem(UI_KEY, JSON.stringify(uiPrefs));
+  } catch (e) {}
+};
+
 // Дефолтные имена по-английски. Своё имя, введённое пользователем, важнее
 // и никогда не переводится.
 const CHAR_NAMES_EN = {
@@ -97,6 +137,24 @@ const charName = (key) => {
   if (custom) return custom;
   const base = nameFor(k);
   return activeLang === "ru" ? base : CHAR_NAMES_EN[k] || base;
+};
+// Характер — галочка в настройках персонажа: сервер добавляет в правила чата
+// не только имя и род, но и манеру речи. По умолчанию выключен.
+const charTemper = (key) => Boolean(charSettingsFor(packKey(key)).temper);
+// По умолчанию персонаж реагирует на ошибки: выключено только явно.
+const charReact = (key) => charSettingsFor(packKey(key)).react !== false;
+
+// Окраска — это и интонация, и темп. Значения в шкале движка (множитель
+// длительности): 0.87 — быстрее, 1.18 — медленнее. 0 = общий темп.
+const EMO_SPEED = { "": 0, up: 0.87, think: 1, down: 1.18 };
+const emoSpeed = (emo) =>
+  Object.prototype.hasOwnProperty.call(EMO_SPEED, emo) ? EMO_SPEED[emo] : 0;
+// «Настроить»: окраска выбирается по темпу — быстро бодро, медленно устало.
+const speedEmotion = (engine) => {
+  const shown = 1 / (Number(engine) || 1);
+  if (shown >= 1.15) return "up";
+  if (shown <= 0.88) return "down";
+  return "";
 };
 
 // Какие персонажи пака доступны: для новых чатов и для кнопки смены.
@@ -168,9 +226,10 @@ const PACK_KEY = "x2ai-avatar:pack";
 let activePack = "pixel";
 try {
   const saved = localStorage.getItem(PACK_KEY);
-  if (saved && PACKS[saved]) activePack = saved;
-  else if (!PACKS.pixel || !Object.keys(PACKS.pixel).length) activePack = "anime";
+  if (saved && PACK_INDEX[saved]) activePack = saved;
+  else if (!PACK_INDEX.pixel || !PACK_INDEX.pixel.length) activePack = "anime";
 } catch (e) {}
+if (!PACK_INDEX[activePack]) activePack = packList()[0] || "pixel";
 
 // Язык интерфейса: кнопки EN/RU справа вверху главного меню.
 // Ключ словаря — русская строка, поэтому t() можно звать где угодно и она
@@ -193,8 +252,45 @@ const I18N = {
     "Настройка персонажей": "Characters",
     "Вспомогательная модель": "Helper model",
     "Дополнительно": "Advanced",
-    "Статистика": "Statistics",
+    "Общие настройки": "General settings",
+    "Поддержать автора": "Support the author",
+    "Плагин бесплатный и работает офлайн. Если он пригодился — вот кошельки.":
+      "The plugin is free and works offline. If it helped, here are the wallets.",
+    "Кошельки скоро появятся.": "Wallets will appear here soon.",
+    "Нажми, чтобы скопировать": "Click to copy",
+    "Скопировано": "Copied",
+    "Модель не выбрана": "No model selected",
     "← Назад": "← Back",
+    "Свой характер (пусто — готовый)": "Custom character (empty — preset)",
+    "Например: «говори дерзко, подкалывай, но по делу». Пусто — готовый характер.":
+      "For example: “speak boldly, tease, but stay on point”. Empty — the preset.",
+    "Манера речи": "Speech style",
+    "Окраска": "Tone",
+    "Без окраски": "Neutral",
+    "Настроить": "Custom",
+    "Бодро": "Cheerful",
+    "Задумчиво": "Thoughtful",
+    "Устало": "Tired",
+    "Окраска задаёт и интонацию, и темп: бодро — быстрее, устало — медленнее. «Настроить» — свой темп, окраска подберётся по нему. Реплика прозвучит сразу после изменения.":
+      "Tone sets both intonation and tempo: cheerful is faster, tired is slower. Custom sets your own tempo and picks the tone for it. A sample plays right after you change them.",
+    "Активировать": "Enable",
+    "Пузырь с текстом": "Text bubble",
+    "Не показывать": "Don't show",
+    "Только при отключённом звуке": "Only when muted",
+    "Показывать всегда": "Always show",
+    "Короткая фраза, которую персонаж говорит сейчас. Если озвучка ответа или рассуждений выключена, пузырь не появляется.":
+      "The short line the character is saying now. If answer or reasoning speech is off, the bubble never shows.",
+    "Короткая фраза, которую персонаж говорит сейчас.": "The short phrase being spoken now.",
+    "Горячие клавиши": "Hotkeys",
+    "⌘/Ctrl+Shift+M — звук, +S — стоп, +A — панель.": "⌘/Ctrl+Shift+M — mute, +S — stop, +A — panel.",
+    "Живой персонаж": "Living character",
+    "Хмурится, когда инструмент или ответ упал.": "Frowns when a tool or an answer fails.",
+    "Экспортировать настройки": "Export settings",
+    "Импортировать настройки": "Import settings",
+    "Сохранено: {p}": "Saved: {p}",
+    "Не сохранилось": "Not saved",
+    "Файла нет": "No file",
+    "Загружено персонажей: {n}": "Characters loaded: {n}",
     "Имя (необязательно)": "Name (optional)",
     "Как обращаться к тебе в пересказе": "How to address you in the summary",
     "Не указан": "Not specified",
@@ -228,11 +324,10 @@ const I18N = {
     "Переводить на {lang}": "Translate into {lang}",
     "русский": "Russian",
     "английский": "English",
-    "Движок озвучивает только по-русски и по-английски: для ES и ZH речь будет английской.":
-      "The engine speaks Russian and English only: for ES and ZH the voice will be English.",
-    "Читает ответы вслух, когда выбран пересказ: сокращает текст, переводит рассуждения и озвучивает мысли. Локальные и бесплатные модели — в начале списка.":
-      "Reads answers aloud when summary mode is on: shortens the text, translates reasoning and voices thoughts. Local and free models come first.",
+    "Не читает и не озвучивает ответы сама: сжимает текст для «Кратко» и переводит рассуждения на язык озвучки, если включён перевод. Локальные и бесплатные модели — в начале списка.":
+      "Does not read or voice answers itself: it shortens the text for Brief mode and translates reasoning into the speech language when translation is on. Local and free models come first.",
     "Отключено": "Off",
+    "Включено": "On",
     "Поиск модели": "Search model",
     "не удалось получить список": "could not load the list",
     "локальных и бесплатных моделей нет": "no local or free models",
@@ -249,22 +344,18 @@ const I18N = {
     "движок занимает ~1.7 ГБ и отвечает за полсекунды": "the engine takes ~1.7 GB and answers in half a second",
     "по требованию: каждая фраза ~9 с на загрузку, память свободна":
       "on demand: ~9 s to load each phrase, memory stays free",
-    "▶ Проверить": "▶ Test",
-    "Озвучить пробную фразу голосом текущего персонажа": "Speak a test phrase in the current character's voice",
-    "■ Стоп": "■ Stop",
-    "Заглушить текущую озвучку": "Silence the current speech",
-    "↻ Повторить": "↻ Replay",
-    "↻ Повторить последний текст": "↻ Replay the last text",
     "Короче": "Shorter",
     "Подробнее": "More detail",
     "≈ {n} символов": "≈ {n} characters",
-    "Озвучить последний текст ещё раз": "Speak the last text again",
     "Озвучено ответов: {n} · всего речи: {m} мин {s} с": "Answers spoken: {n} · total speech: {m} min {s} s",
     "Сбросить": "Reset",
     "Озвучено ответов: {n} · речи: {m} мин": "Answers spoken: {n} · speech: {m} min",
     "спит": "asleep",
-    "расстроен": "upset",
+    "злится": "angry",
     "Аниме": "Anime",
+    "Характер": "Character",
+    "Добавляет в чат манеру речи персонажа: как он шутит, злится и разговаривает.":
+      "Adds the character's way of speaking to the chat: how they joke, get annoyed and talk.",
     "Пиксельарт": "Pixel art",
     "Следующий персонаж из пака": "Next character from the pack",
     "Выключить озвучку": "Mute speech",
@@ -307,13 +398,16 @@ const defaultVoiceFor = (base, lang, key) => {
   return /_m$|^fx_(robot|demon|penguin)$/.test(base) ? "eng_m3" : "eng_f3";
 };
 
+// Персонажи пака известны из манифеста, кадры могут быть ещё не загружены.
 function packVoices(name) {
-  const pack = PACKS[name || activePack] || {};
-  return Object.keys(pack).filter((voice) => pack[voice] && pack[voice].closed);
+  const key = name || activePack;
+  const pack = PACKS[key] || {};
+  const list = Object.keys(pack).length ? Object.keys(pack) : PACK_INDEX[key] || [];
+  return list.filter((voice) => !pack[voice] || (pack[voice] && pack[voice].closed));
 }
 
 function setPack(name) {
-  if (!PACKS[name]) return;
+  if (!PACK_INDEX[name]) return;
   activePack = name;
   try {
     localStorage.setItem(PACK_KEY, name);
@@ -324,21 +418,27 @@ function setPack(name) {
 // а голос чата может быть без него (ru_f1 вместо px_ru_f1).
 function packKey(voice) {
   const key = SPRITE_ALIAS[voice] || voice;
-  const pack = PACKS[activePack] || {};
-  if (pack[key]) return key;
+  const known = packVoices();
+  if (known.includes(key)) return key;
   const prefixed = "px_" + key;
-  if (pack[prefixed]) return prefixed;
+  if (known.includes(prefixed)) return prefixed;
   const bare = key.replace(/^px_/, "");
-  if (pack[bare]) return bare;
+  if (known.includes(bare)) return bare;
   return key;
 }
+
+// Прозрачный пиксель: кадры пака приходят с моста асинхронно, и до ответа
+// картинка не должна ломаться (битый src вместо пустого места).
+const EMPTY_FRAME =
+  "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
 
 function frame(voice, state) {
   const key = packKey(voice);
   const pack = PACKS[activePack] || {};
   const base = PACKS.anime || {};
-  const set = pack[key] || base[key] || base.ru_f1 || Object.values(PACKS)[0].ru_f1;
-  return set[state] || set.closed;
+  const set = pack[key] || base[key] || base.ru_f1 || EMPTY_FRAME;
+  if (typeof set === "string") return set; // пустой пак ещё не загружен
+  return set[state] || set.closed || EMPTY_FRAME;
 }
 
 // Таймеры пинга живут на уровне модуля: при повторном рендере слота старый
@@ -419,7 +519,7 @@ function createView(ctx) {
   const apply = (next, force) => {
     if (!next || (next === voice && !force)) return;
     voice = next;
-    img.src = frame(voice, moodState.value === "awake" ? "closed" : "blink");
+    img.src = frame(voice, moodFrame());
     if (moodState.value !== "awake") setMood(moodState.value, true);
     root.title = `x2ai · ${charName(voice)} · ${voice}`;
     applyHeightFor(packKey(next));
@@ -453,6 +553,9 @@ function createView(ctx) {
   // Между настройками и сменой персонажа — включение/выключение озвучки.
   // Это отдельный флаг: настройки персонажа (режим, рассуждения) не меняются.
   let mutedState = false;
+  // Пузырь объявлен ниже: тихая ссылка, чтобы mute и загрузка настроек могли
+  // перерисовать его, не зная порядка объявлений.
+  let repaintBubble = () => {};
   const muteBtn = document.createElement("button");
   muteBtn.type = "button";
   muteBtn.textContent = "🔊";
@@ -481,8 +584,12 @@ function createView(ctx) {
   const setMuted = (next) => {
     mutedState = Boolean(next);
     paintMute();
-    bridge("/speech", { muted: mutedState }).catch(() => {});
+    // Mute только для этого чата: соседние вкладки продолжают говорить.
+    bridge("/speech", { muted: mutedState, sid: currentSid || "" }).catch(() => {});
+    // Глушим звук и артикуляцию, но текст остаётся: при режиме «только при
+    // отключённом звуке» пузырь как раз в этот момент и появляется.
     if (mutedState) stopAll();
+    repaintBubble();
   };
   muteBtn.onclick = (ev) => {
     ev.stopPropagation();
@@ -539,9 +646,9 @@ function createView(ctx) {
 
   let voiceCatalog = null;
   let installedVoices = null; // папки teratts-model/styles; null = ещё не спросили
+  let temperPresets = null; // готовые описания характеров с моста (/voices)
   let ttsEngine = null; // установлен ли движок TeraTTS; null = ещё не спросили
   let speechMode = null; // "full" | "summary" | "silent"; null = ещё не загружен
-  let speechSpeed = null; // 0.7–1.8; null = ещё не загружена
   let reasonState = null; // { mode: off|brief|full, translate: bool }
   let keepAlive = true; // держать движок в памяти
   let quietState = { on: false, from: "23:00", to: "09:00" };
@@ -610,8 +717,6 @@ function createView(ctx) {
   const applySpeechGlobals = (data) => {
     if (!data) return;
     if (data.mode) speechMode = data.mode;
-    const sp = Number(data.speed);
-    if (Number.isFinite(sp) && sp >= 0.7 && sp <= 1.8) speechSpeed = sp;
     if (data.keepAlive !== undefined) keepAlive = Boolean(data.keepAlive);
     if (data.muted !== undefined) {
       mutedState = Boolean(data.muted);
@@ -636,10 +741,14 @@ function createView(ctx) {
   };
   const loadSpeechOnce = () => {
     if (speechLoaded) return;
-    speechLoaded = true;
-    bridge("/speech")
+    bridge(`/speech?sid=${encodeURIComponent(currentSid || "")}`)
       .then((data) => {
+        // Флаг ставим только после успеха: иначе первый запрос после Cmd+R
+        // уходил в ещё не поднятый мост и mute не подхватывался никогда.
+        speechLoaded = true;
         applySpeechGlobals(data);
+        // mute мог прийти с моста — пузырь надо перерисовать под новый режим.
+        repaintBubble();
         if (panelOpen) renderPanel();
       })
       .catch(() => {});
@@ -671,6 +780,12 @@ function createView(ctx) {
   }
   function playClip(item, text = "") {
     if (!item || !item.src) return 0;
+    // Звук выключен — клика не слышно, но текст реплики уходит в пузырь
+    // (если пузырь вообще разрешён настройкой).
+    if (mutedState) {
+      showLineOnly(text || item.text);
+      return 0;
+    }
     stopClick();
     try {
       clickAudio = new Audio(item.src);
@@ -684,6 +799,19 @@ function createView(ctx) {
     startSpeaking(ms, "", text || item.text || "");
     return ms;
   }
+
+  // Реплика при выключенном звуке: без аудио и без артикуляции, только текст в
+  // пузыре. Настройки пузыря («не показывать» / «только при mute» / «всегда»)
+  // решают, появится он или нет.
+  const showLineOnly = (text) => {
+    const clean = String(text || "").trim();
+    if (!clean) return false;
+    bubbleKind = "answer";
+    bubbleThinking = false;
+    setBubbleText(bubbleLine(clean));
+    paintBubble();
+    return true;
+  };
 
   // Следующий персонаж пака вместе с его голосом: и по кнопке, и по правому клику.
   // Смена персонажа с анимацией: старый ныряет вниз, новый выныривает сверху.
@@ -720,10 +848,13 @@ function createView(ctx) {
     stopAll();
     animateSwap(next);
     saveLocal(currentSid, next);
-    if (currentSid) bridge("/voice", { sid: currentSid, voice: charVoice(next), name: charName(next) }).catch(() => {});
+    if (currentSid) bridge("/voice", voicePayload(currentSid, next)).catch(() => {});
     if (voiceLang() === "en") {
       const text = tf(pickClip(EN_SUMMON), { name: charName(next) });
-      if (text) bridge("/say", { text, sid: currentSid, voice: charVoice(next) }).catch(() => {});
+      if (text) {
+        if (mutedState) showLineOnly(text);
+        else bridge("/say", { text, sid: currentSid, voice: charVoice(next) }).catch(() => {});
+      }
     } else {
       // Реплики есть по голосу, а не по id персонажа.
       const line = pickClip(LINES.lines && (LINES.lines[clipVoice(next)] || LINES.lines[next]));
@@ -754,7 +885,7 @@ function createView(ctx) {
   };
 
   // Раскрывающиеся блоки настроек: по умолчанию свёрнуты.
-  const sectionOpen = { pack: false, voice: false, char: false, speech: false, model: false, user: false, stats: false, reason: false };
+  const sectionOpen = { pack: false, voice: false, char: false, speech: false, model: false, user: false, stats: false, reason: false, temper: false };
 
   // Статистика: сколько ответов озвучено и сколько всего речи. Живёт в localStorage.
   const STATS_KEY = "x2ai-avatar:stats";
@@ -869,7 +1000,7 @@ function createView(ctx) {
     swapBtn.title = t("Следующий персонаж из пака");
     bridge("/speech", { lang: code }).catch(() => {});
     if (currentSid) {
-      bridge("/voice", { sid: currentSid, voice: charVoice(voice), name: charName(voice) }).catch(() => {});
+      bridge("/voice", voicePayload(currentSid, voice)).catch(() => {});
     }
     if (panelOpen) renderPanel();
   };
@@ -883,8 +1014,9 @@ function createView(ctx) {
       renderPanel();
     };
 
-    const switchPack = (name) => {
+    const switchPack = async (name) => {
       setPack(name);
+      await ensurePack(name);
       seedPackSettings();
       syncEnabled();
       const list = enabledChars();
@@ -892,7 +1024,7 @@ function createView(ctx) {
       if (pick) {
         apply(pick, true);
         saveLocal(currentSid, pick);
-        if (currentSid) bridge("/voice", { sid: currentSid, voice: charVoice(pick), name: charName(pick) }).catch(() => {});
+        if (currentSid) bridge("/voice", voicePayload(currentSid, pick)).catch(() => {});
       }
       // Персонаж называет пак своим голосом.
       if (voiceLang() === "ru") {
@@ -1162,8 +1294,8 @@ function createView(ctx) {
         ["Данные пользователя", "user"],
         ["Настройка персонажей", "chars"],
         ["Вспомогательная модель", "model"],
-        ["Дополнительно", "extra"],
-        ["Статистика", "stats"],
+        ["Общие настройки", "extra"],
+        ["Дополнительно", "stats"],
       ];
       for (const [text, name] of items) menu.appendChild(menuRow(text, () => go({ name })));
       panel.appendChild(menu);
@@ -1244,10 +1376,11 @@ function createView(ctx) {
       const pBody = collapsible("Пак персонажей", "pack", box);
 
       // Список паков — кнопки, как в остальных блоках (со скроллом на будущее).
+      loadExternalPacks();
       const pList = keepScroll(document.createElement("div"), "pack");
       pList.style.cssText = "max-height:132px;overflow-y:auto;display:flex;flex-direction:column;gap:4px";
-      for (const name of Object.keys(PACKS)) {
-        const count = Object.keys(PACKS[name] || {}).length;
+      for (const name of packList()) {
+        const count = packVoices(name).length;
         pList.appendChild(
           vRow(`${t(PACK_NAMES[name] || name)} · ${count}`, name === activePack, () => {
             switchPack(name);
@@ -1345,7 +1478,7 @@ function createView(ctx) {
         const clean = nameInput.value.replace(/\s+/g, " ").trim().slice(0, 40);
         saveCharSetting(key, { name: clean });
         if (key === packKey(voice) && currentSid) {
-          bridge("/voice", { sid: currentSid, voice: charVoice(voice), name: charName(key) }).catch(() => {});
+          bridge("/voice", voicePayload(currentSid, key)).catch(() => {});
         }
         renderPanel();
       });
@@ -1354,6 +1487,185 @@ function createView(ctx) {
       });
       box.appendChild(nameInput);
       hint("Пусто — имя по умолчанию. Своё имя не переводится.", box);
+
+      // Живость персонажа: одна галочка на два поведения — злится на
+      // ошибках и засыпает, когда ничего не происходит. По умолчанию включена.
+      const reactRow = document.createElement("label");
+      reactRow.style.cssText =
+        "display:flex;align-items:center;gap:8px;margin-top:10px;font-size:11px;cursor:pointer";
+      const reactCb = document.createElement("input");
+      reactCb.type = "checkbox";
+      reactCb.checked = charSettingsFor(packKey(key)).react !== false;
+      reactCb.style.cssText = "width:14px;height:14px;margin:0;accent-color:#5b8dee;cursor:pointer";
+      const reactLabel = document.createElement("span");
+      reactLabel.textContent = t("Живой персонаж");
+      reactRow.append(reactCb, reactLabel);
+      reactRow.onclick = (ev) => ev.stopPropagation();
+      reactCb.onchange = () => {
+        saveCharSetting(packKey(key), { react: reactCb.checked });
+        // Выключили живость — сразу поднять, если он успел заснуть.
+        if (!reactCb.checked && moodState.value !== "awake") {
+          if (moodTimer) clearTimeout(moodTimer);
+          setMood("awake");
+        }
+        resetIdle();
+      };
+      box.appendChild(reactRow);
+      hint("Хмурится, когда инструмент или ответ упал, и засыпает, если ничего не происходит.", box);
+
+      // Характер: галочка «Активировать», своё описание и манера озвучки —
+      // всё в одном блоке: в правила чата уходит именно манера речи
+      // персонажа, а не только имя и род.
+      const tBody = collapsible("Характер", "temper", box);
+      const temperRow = document.createElement("label");
+      temperRow.style.cssText = "display:flex;align-items:center;gap:8px;font-size:11px;cursor:pointer";
+      const temperCb = document.createElement("input");
+      temperCb.type = "checkbox";
+      temperCb.checked = charTemper(key);
+      temperCb.style.cssText = "width:14px;height:14px;margin:0;accent-color:#5b8dee;cursor:pointer";
+      const temperLabel = document.createElement("span");
+      temperLabel.textContent = t("Активировать");
+      temperRow.append(temperCb, temperLabel);
+      temperRow.onclick = (ev) => ev.stopPropagation();
+      temperCb.onchange = () => {
+        saveCharSetting(packKey(key), { temper: temperCb.checked });
+        if (packKey(key) === packKey(voice) && currentSid) {
+          bridge("/voice", voicePayload(currentSid, key)).catch(() => {});
+        }
+      };
+      tBody.appendChild(temperRow);
+      hint("Добавляет в чат манеру речи персонажа: как он шутит, злится и разговаривает.", tBody);
+
+      // Свой текст характера важнее готового описания персонажа. В пустом
+      // поле серым видно готовое описание — от него и правим.
+      const temperPreset =
+        (temperPresets && (temperPresets[packKey(key)] || temperPresets[key])) || "";
+      const temperText = document.createElement("textarea");
+      temperText.rows = 3;
+      temperText.maxLength = 400;
+      temperText.placeholder = temperPreset || t("Свой характер (пусто — готовый)");
+      temperText.value = String(charSettingsFor(packKey(key)).temperText || "");
+      temperText.style.cssText =
+        "width:100%;box-sizing:border-box;min-height:66px;resize:vertical;display:block;" +
+        "font:inherit;font-size:11px;line-height:1.4;padding:6px 8px;margin-top:6px;" +
+        "border:1px solid rgba(255,255,255,.16);border-radius:7px;" +
+        "background:rgba(255,255,255,.05);color:inherit;outline:none";
+      temperText.onclick = (ev) => ev.stopPropagation();
+      temperText.addEventListener("change", () => {
+        const clean = temperText.value.replace(/\s+/g, " ").trim().slice(0, 400);
+        saveCharSetting(packKey(key), { temperText: clean });
+        if (packKey(key) === packKey(voice) && currentSid) {
+          bridge("/voice", voicePayload(currentSid, key)).catch(() => {});
+        }
+      });
+      // Enter в многострочном поле — перенос строки, применяем по Cmd/Ctrl+Enter.
+      temperText.addEventListener("keydown", (ev) => {
+        if (ev.key === "Enter" && (ev.metaKey || ev.ctrlKey)) temperText.blur();
+      });
+      tBody.appendChild(temperText);
+      hint("Например: «говори дерзко, подкалывай, но по делу». Пусто — готовый характер.", tBody);
+
+      // Манера озвучки: скорость и окраска (эмоция движка) этого персонажа.
+      const mTitle = document.createElement("div");
+      mTitle.textContent = t("Манера речи");
+      mTitle.style.cssText = "font-size:11px;font-weight:600;opacity:.85;margin:12px 0 6px";
+      tBody.appendChild(mTitle);
+      // Ползунок скрыт, пока в «Окраске» не выбрано «Настроить». Движок
+      // понимает значение как множитель ДЛИТЕЛЬНОСТИ, поэтому на панели
+      // показываем обратное: вправо — быстрее.
+      const mRow = document.createElement("div");
+      mRow.style.cssText = "display:none;align-items:center;gap:8px;margin:6px 0";
+      const mInput = document.createElement("input");
+      mInput.type = "range";
+      mInput.min = "0.6";
+      mInput.max = "1.4";
+      mInput.step = "0.05";
+      const curSpeed = Number(charSettingsFor(packKey(key)).speed) || 1;
+      // Движок берёт множитель ДЛИТЕЛЬНОСТИ, а на панели показываем скорость:
+      // длительность 1.25 — это 0.8× скорости. Больше на ползунке — быстрее.
+      const clampSpeed = (v) => Math.min(1.4, Math.max(0.6, v));
+      const showSpeed = (engine) => Math.round(clampSpeed(1 / (Number(engine) || 1)) * 100) / 100;
+      const engineSpeed = (shown) => Math.round((1 / Number(shown)) * 100) / 100;
+      mInput.value = String(showSpeed(curSpeed));
+      mInput.style.cssText = "flex:1;accent-color:#5b8dee;cursor:pointer";
+      const mVal = document.createElement("span");
+      mVal.textContent = `${showSpeed(curSpeed).toFixed(2)}×`;
+      mVal.style.cssText = "font-size:11px;opacity:.7;width:44px;text-align:right";
+      mInput.oninput = () => {
+        mVal.textContent = `${Number(mInput.value).toFixed(2)}×`;
+      };
+      mInput.onchange = () => {
+        const speed = engineSpeed(mInput.value);
+        saveCharSetting(packKey(key), { speed });
+        if (packKey(key) === packKey(voice) && currentSid) {
+          bridge("/voice", voicePayload(currentSid, key)).catch(() => {});
+        }
+        // Сразу слышно, что стало: искать «Проверить» больше не нужно.
+        previewManner();
+      };
+      mRow.append(mInput, mVal);
+
+      const emoRow = document.createElement("div");
+      emoRow.style.cssText = "display:flex;align-items:center;gap:6px;font-size:11px";
+      const emoLabel = document.createElement("span");
+      emoLabel.textContent = t("Окраска");
+      emoLabel.style.opacity = ".7";
+      const emoSelect = document.createElement("select");
+      emoSelect.style.cssText =
+        "flex:1;border:1px solid rgba(255,255,255,.16);background:rgba(255,255,255,.05);" +
+        "color:inherit;border-radius:7px;padding:3px 5px;font:inherit;font-size:11px";
+      emoSelect.style.colorScheme = "dark";
+      const savedStyle = charSettingsFor(packKey(key));
+      let curEmo = savedStyle.emotion || "";
+      // Старые персонажи со своим темпом: раньше ползунок применялся всегда,
+      // теперь он живёт внутри «Настроить» — не теряем их настройку.
+      if (!curEmo && Number(savedStyle.speed) && Math.abs(Number(savedStyle.speed) - 1) > 0.01) {
+        curEmo = "custom";
+      }
+      for (const [value, label] of [
+        ["", "Без окраски"],
+        ["up", "Бодро"],
+        ["think", "Задумчиво"],
+        ["down", "Устало"],
+        ["custom", "Настроить"],
+      ]) {
+        const opt = document.createElement("option");
+        opt.value = value;
+        opt.textContent = t(label);
+        opt.selected = value === curEmo;
+        emoSelect.appendChild(opt);
+      }
+      const syncSpeedRow = () => {
+        mRow.style.display = emoSelect.value === "custom" ? "flex" : "none";
+      };
+      emoSelect.onchange = () => {
+        syncSpeedRow();
+        saveCharSetting(packKey(key), { emotion: emoSelect.value });
+        if (packKey(key) === packKey(voice) && currentSid) {
+          bridge("/voice", voicePayload(currentSid, key)).catch(() => {});
+        }
+        previewManner();
+      };
+      emoRow.append(emoLabel, emoSelect);
+      // Предпросмотр манеры: пробная фраза этим персонажем, скорость и окраска
+      // с элементов панели уходят прямо в /test, не дожидаясь записи за чатом.
+      const previewManner = () => {
+        const custom = emoSelect.value === "custom";
+        const engine = custom ? engineSpeed(mInput.value) : emoSpeed(emoSelect.value);
+        bridge("/test", {
+          sid: currentSid || "",
+          voice: charVoice(key),
+          speed: engine,
+          emotion: custom ? speedEmotion(engine) : emoSelect.value,
+        }).catch(() => {});
+      };
+      tBody.appendChild(emoRow);
+      tBody.appendChild(mRow);
+      syncSpeedRow();
+      hint(
+        "Окраска задаёт и интонацию, и темп: бодро — быстрее, устало — медленнее. «Настроить» — свой темп, окраска подберётся по нему. Реплика прозвучит сразу после изменения.",
+        tBody,
+      );
 
       if (!isCharEnabled(key)) {
         hint("Персонаж выключен: в новых чатах не появится, включить в текущем чате нельзя.", box);
@@ -1439,7 +1751,10 @@ function createView(ctx) {
           playClip((LINES.samples && (LINES.samples[id] || LINES.samples[key])) || null);
         } else {
           const text = pickClip(EN_SAMPLE);
-          if (text) bridge("/say", { text, sid: currentSid, voice: value }).catch(() => {});
+          if (text) {
+            if (mutedState) showLineOnly(text);
+            else bridge("/say", { text, sid: currentSid, voice: value }).catch(() => {});
+          }
         }
         const lang = voiceLang();
         const byLang = { ...(charSettingsFor(key).voiceByLang || {}) };
@@ -1448,7 +1763,7 @@ function createView(ctx) {
         charVoices[key] = value;
         bridge("/charvoice", { charId: key, voice: value }).catch(() => {});
         if (key === packKey(voice) && currentSid) {
-          bridge("/voice", { sid: currentSid, voice: value, name: charName(key) }).catch(() => {});
+          bridge("/voice", { ...voicePayload(currentSid, key), voice: value }).catch(() => {});
         }
         refreshVoiceSelection();
       };
@@ -1463,6 +1778,7 @@ function createView(ctx) {
             voiceCatalog = (data && data.voices) || [];
             // Старые сборки моста не знают про installed: тогда пусто.
             installedVoices = Array.isArray(data && data.installed) ? data.installed : [];
+            temperPresets = (data && data.tempers) || temperPresets;
             ttsEngine = data && data.engine !== false;
             renderPanel();
           })
@@ -1604,32 +1920,69 @@ function createView(ctx) {
 
       const desc = document.createElement("div");
       desc.textContent = t(
-        "Читает ответы вслух, когда выбран пересказ: сокращает текст, переводит рассуждения и озвучивает мысли. Локальные и бесплатные модели — в начале списка.",
+        "Не читает и не озвучивает ответы сама: сжимает текст для «Кратко» и переводит рассуждения на язык озвучки, если включён перевод. Локальные и бесплатные модели — в начале списка.",
       );
       desc.style.cssText = "font-size:10px;line-height:1.45;opacity:.55;margin:0 0 2px 2px";
       box.appendChild(desc);
 
-      // Выключить вспомогательную модель совсем: пересказ и перевод не зовут LLM.
-      const offRow = vRow(
-        "Отключено",
-        modelDisabled === true,
-        () => {
-          modelDisabled = true;
-          offRow.setActive(true);
-          bridge("/model", { disabled: true }).catch(() => {});
-        },
-        "justify-content:center;margin-bottom:4px",
-      );
-      box.appendChild(offRow);
+      // Включение вспомогательной модели: при «Отключено» пересказ и перевод не
+      // зовут LLM, поэтому список моделей и поиск по нему не нужны.
+      const modelRow = document.createElement("div");
+      modelRow.style.cssText = "margin:2px 0 6px;font-size:11px";
+      const modelLabel = document.createElement("div");
+      modelLabel.textContent = t("Вспомогательная модель");
+      modelLabel.style.cssText = "margin-bottom:4px";
+      const modelSel = document.createElement("select");
+      modelSel.style.cssText =
+        "display:block;width:100%;font:inherit;font-size:11px;padding:3px 6px;border-radius:7px;cursor:pointer;color:inherit;" +
+        "border:1px solid rgba(255,255,255,.16);background:rgba(255,255,255,.05)";
+      for (const [val, label] of [
+        ["on", "Включено"],
+        ["off", "Отключено"],
+      ]) {
+        const opt = document.createElement("option");
+        opt.value = val;
+        opt.textContent = t(label);
+        modelSel.appendChild(opt);
+      }
+      modelRow.appendChild(modelLabel);
+      modelRow.appendChild(modelSel);
+
+      // Строка над поиском: полное имя модели. В покое — выбранная модель, а
+      // при наведении на строку списка — та модель целиком (в списке она режется
+      // по ширине панели).
+      const mInfo = document.createElement("div");
+      mInfo.style.cssText =
+        "font-family:ui-monospace,Menlo,monospace;font-size:9.5px;line-height:1.35;opacity:.55;" +
+        "margin:0 2px 8px;min-height:26px;overflow-wrap:anywhere";
+      const currentInfo = () => {
+        const cur = modelsData && modelsData.current;
+        return cur && cur.providerID && cur.id ? `${cur.providerID}/${cur.id}` : t("Модель не выбрана");
+      };
+      mInfo.textContent = currentInfo();
+      // Порядок: селект, строка модели, потом коллапс со списком (он сам
+      // дописывается в box при создании).
+      box.append(modelRow, mInfo);
+
+      // Список моделей убран в раскрывающийся блок: панель не разрастается,
+      // а строка с выбранной моделью остаётся на виду над ним.
+      const mBody = collapsible("Список моделей", "models", box);
+      const mBlock = mBody.parentElement;
+      // Поиск, кнопка «Показать ещё» и счётчик должны стоять по левому краю
+      // панели, без отступа, который коллапс даёт вложенным блокам.
+      mBody.style.paddingLeft = "0";
 
       const mList = keepScroll(document.createElement("div"), "model");
-      mList.style.cssText = "max-height:220px;overflow-y:auto;display:flex;flex-direction:column;gap:4px";
+      mList.style.cssText = "max-height:220px;overflow-y:auto;overflow-x:hidden;display:flex;flex-direction:column;gap:4px";
+      // Отступ для строк моделей даём контейнеру, а кнопку «Показать ещё» и
+      // счётчик тянем назад: margin-left у самих строк давал горизонтальный скролл.
+      mList.style.paddingLeft = "10px";
       const mSearch = document.createElement("input");
       mSearch.type = "text";
       mSearch.placeholder = t("Поиск модели");
       mSearch.value = modelQuery;
       mSearch.style.cssText =
-        "width:100%;box-sizing:border-box;font:inherit;font-size:11px;padding:4px 7px;margin-bottom:2px;" +
+        "width:100%;box-sizing:border-box;font:inherit;font-size:11px;padding:4px 7px;margin-bottom:10px;" +
         "border:1px solid rgba(255,255,255,.16);border-radius:7px;background:rgba(255,255,255,.04);color:inherit";
       mSearch.oninput = () => {
         modelQuery = mSearch.value;
@@ -1637,13 +1990,31 @@ function createView(ctx) {
         renderModels();
       };
       mSearch.onclick = (ev) => ev.stopPropagation();
-      box.append(mSearch, mList);
+      mBody.append(mSearch, mList);
+
+      const syncModelMode = () => {
+        const off = modelDisabled === true;
+        modelSel.value = off ? "off" : "on";
+        // Выключено — только сам селект, как раньше. Включено — строка модели
+        // и сворачиваемый список, чтобы панель не разрасталась.
+        mInfo.style.display = off ? "none" : "";
+        mBlock.style.display = off ? "none" : "";
+      };
+      modelSel.onchange = () => {
+        const off = modelSel.value === "off";
+        modelDisabled = off;
+        syncModelMode();
+        bridge("/model", { disabled: off }).catch(() => {});
+        if (!off && !modelsLoaded) loadModels();
+      };
+      syncModelMode();
 
       const modelRows = [];
 
       const renderModels = (data) => {
         if (data) modelsData = data;
-        offRow.setActive(modelDisabled === true);
+        syncModelMode();
+        mInfo.textContent = currentInfo();
         mList.textContent = "";
         modelRows.length = 0;
         const models = (modelsData && modelsData.models) || [];
@@ -1667,13 +2038,31 @@ function createView(ctx) {
         }
         for (const m of shown) {
           const active = m.providerID === current.providerID && m.id === current.id;
-          const row = vRow(m.local ? tf("{name} · локальная", { name: m.name }) : m.name, active, () => {
+          const label = m.local
+            ? tf("{name} ({provider}) · локальная", { name: m.name, provider: m.providerID })
+            : tf("{name} ({provider})", { name: m.name, provider: m.providerID });
+          const row = vRow(label, active, () => {
             modelDisabled = false;
-            offRow.setActive(false);
+            syncModelMode();
             for (const item of modelRows) item.row.setActive(item.model === m);
-            bridge("/model", { providerID: m.providerID, id: m.id }).catch(() => {});
+            const full = `${m.providerID}/${m.id}`;
+            bridge("/model", { providerID: m.providerID, id: m.id })
+              .then((res) => {
+                if (res && res.current) modelsData = { ...modelsData, current: res.current };
+                mInfo.textContent = full;
+              })
+              .catch(() => {});
           });
           row.title = `${m.providerID}/${m.id}`;
+          // Строка над поиском: наведение показывает модель целиком.
+          row.onmouseenter = () => {
+            mInfo.textContent = `${m.providerID}/${m.id}`;
+          };
+          row.onmouseleave = () => {
+            mInfo.textContent = currentInfo();
+          };
+          row.onfocus = row.onmouseenter;
+          row.onblur = row.onmouseleave;
           modelRows.push({ model: m, row });
           mList.appendChild(row);
         }
@@ -1682,7 +2071,7 @@ function createView(ctx) {
           more.type = "button";
           more.textContent = tf("Показать ещё {n}", { n: Math.min(40, free.length - shown.length) });
           more.style.cssText =
-            "margin-top:4px;padding:4px 8px;font:inherit;font-size:11px;cursor:pointer;border-radius:7px;" +
+            "margin-left:-10px;margin-top:4px;padding:4px 8px;font:inherit;font-size:11px;cursor:pointer;border-radius:7px;" +
             "border:1px solid rgba(255,255,255,.16);background:rgba(255,255,255,.05);color:inherit";
           more.onclick = (ev) => {
             ev.stopPropagation();
@@ -1692,7 +2081,7 @@ function createView(ctx) {
           mList.appendChild(more);
           const left = document.createElement("div");
           left.textContent = tf("всего подходит: {n}", { n: free.length });
-          left.style.cssText = "opacity:.4;font-size:10px;padding:2px 7px";
+          left.style.cssText = "margin-left:-10px;opacity:.4;font-size:10px;padding:2px 7px";
           mList.appendChild(left);
         }
       };
@@ -1725,33 +2114,9 @@ function createView(ctx) {
       };
       loadModels();
     } else if (view.name === "extra") {
-      head("Дополнительно");
+      head("Общие настройки");
       const box = boxEl();
       hint("Общие настройки движка: действуют на всех персонажей.", box);
-
-      // Скорость речи: применяется к следующей озвучке.
-      const spRow = document.createElement("div");
-      spRow.style.cssText = "display:flex;align-items:center;gap:8px;margin-top:4px";
-      const spInput = document.createElement("input");
-      spInput.type = "range";
-      spInput.min = "0.7";
-      spInput.max = "1.8";
-      spInput.step = "0.05";
-      spInput.value = String(speechSpeed || 1);
-      spInput.style.cssText = "flex:1;accent-color:#5b8dee;cursor:pointer";
-      const spVal = document.createElement("span");
-      spVal.style.cssText = "font-size:11px;opacity:.7;width:48px;text-align:right";
-      spVal.textContent = `${(speechSpeed || 1).toFixed(2)}×`;
-      spInput.oninput = () => {
-        speechSpeed = Number(spInput.value);
-        spVal.textContent = `${speechSpeed.toFixed(2)}×`;
-      };
-      // Пишем на отпускании ползунка, чтобы не долбить мост на каждый пиксель.
-      spInput.onchange = () => {
-        bridge("/speech", { speed: speechSpeed }).catch(() => {});
-      };
-      spRow.append(spInput, spVal);
-      box.appendChild(spRow);
 
       // Тихие часы: в этом окне персонаж молчит сам, режим озвучки не меняется.
       const qBox = document.createElement("div");
@@ -1834,51 +2199,126 @@ function createView(ctx) {
       refreshMem();
       box.append(memRow, memHint);
 
-      // Кнопки: проверить голосом текущего персонажа и управлять озвучкой.
-      const actRow = document.createElement("div");
-      actRow.style.cssText = "display:flex;gap:6px;margin-top:10px";
-      const actBtn = (text, title) => {
+      // Переключатели окна: у каждого свой цвет и подпись, чтобы не плодить разметку.
+      const flagRow = (label, hintText, checked, onChange) => {
+        const row = document.createElement("label");
+        row.style.cssText =
+          "display:flex;align-items:center;gap:8px;margin-top:8px;font-size:11px;cursor:pointer";
+        const cb = document.createElement("input");
+        cb.type = "checkbox";
+        cb.checked = Boolean(checked);
+        cb.style.cssText = "width:14px;height:14px;margin:0;accent-color:#5b8dee;cursor:pointer";
+        const text = document.createElement("span");
+        text.textContent = t(label);
+        cb.onchange = () => onChange(cb.checked);
+        row.append(cb, text);
+        box.appendChild(row);
+        if (hintText) {
+          const h = document.createElement("div");
+          h.style.cssText = "font-size:10px;line-height:1.4;opacity:.5;margin:3px 0 0 22px";
+          h.textContent = t(hintText);
+          box.appendChild(h);
+        }
+        return cb;
+      };
+
+      // Пузырь: три режима — галочкой их не различить, поэтому селект.
+      // Подпись отдельной строкой: в узкой колонке она переносилась на три
+      // строки и сжимала селект до нечитаемого.
+      const bubbleRow = document.createElement("div");
+      bubbleRow.style.cssText = "margin-top:10px;font-size:11px";
+      const bubbleLabel = document.createElement("div");
+      bubbleLabel.textContent = t("Пузырь с текстом");
+      bubbleLabel.style.cssText = "margin-bottom:4px";
+      const bubbleSel = document.createElement("select");
+      bubbleSel.style.cssText =
+        "display:block;width:100%;font:inherit;font-size:11px;padding:3px 6px;border-radius:7px;cursor:pointer;color:inherit;" +
+        "border:1px solid rgba(255,255,255,.16);background:rgba(255,255,255,.05)";
+      for (const [val, label] of [
+        ["off", "Не показывать"],
+        ["mute", "Только при отключённом звуке"],
+        ["always", "Показывать всегда"],
+      ]) {
+        const opt = document.createElement("option");
+        opt.value = val;
+        opt.textContent = t(label);
+        bubbleSel.appendChild(opt);
+      }
+      bubbleSel.value = BUBBLE_MODES.includes(uiPrefs.bubble) ? uiPrefs.bubble : "mute";
+      bubbleSel.onchange = () => {
+        saveUiPref({ bubble: bubbleSel.value });
+        paintBubble();
+      };
+      bubbleRow.append(bubbleLabel, bubbleSel);
+      const bubbleHint = document.createElement("div");
+      bubbleHint.style.cssText = "font-size:10px;line-height:1.4;opacity:.5;margin:4px 0 0 2px";
+      bubbleHint.textContent = t(
+        "Короткая фраза, которую персонаж говорит сейчас. Если озвучка ответа или рассуждений выключена, пузырь не появляется.",
+      );
+      box.append(bubbleRow, bubbleHint);
+      flagRow("Горячие клавиши", "⌘/Ctrl+Shift+M — звук, +S — стоп, +A — панель.", uiPrefs.keys, (on) =>
+        saveUiPref({ keys: on }),
+      );
+
+      // Настройки персонажей — в файл и обратно: перенос между окнами и машинами.
+      const ioRow = document.createElement("div");
+      ioRow.style.cssText = "display:flex;gap:6px;margin-top:10px";
+      const ioBtn = (label) => {
         const btn = document.createElement("button");
         btn.type = "button";
-        btn.textContent = t(text);
-        btn.title = t(title);
-        btn.style.cssText = [
-          "flex:1",
-          "padding:5px 8px",
-          "border-radius:7px",
-          "cursor:pointer",
-          "font:inherit",
-          "font-size:11px",
-          "color:inherit",
-          "text-align:center",
-          "border:1px solid rgba(255,255,255,.16)",
-          "background:rgba(255,255,255,.05)",
-        ].join(";");
-        btn.onclick = (ev) => {
-          ev.stopPropagation();
-          btn.onclickAction && btn.onclickAction();
-        };
+        btn.textContent = t(label);
+        btn.style.cssText =
+          // min-width:0 — иначе flex-элемент не даёт тексту переноситься и
+          // кнопки вылезают за панель.
+          "flex:1;min-width:0;padding:5px 6px;border-radius:7px;cursor:pointer;font:inherit;font-size:10px;" +
+          "line-height:1.25;white-space:normal;overflow-wrap:anywhere;color:inherit;" +
+          "border:1px solid rgba(255,255,255,.16);background:rgba(255,255,255,.05)";
         return btn;
       };
-      const testBtn = actBtn("▶ Проверить", "Озвучить пробную фразу голосом текущего персонажа");
-      testBtn.onclickAction = () => {
-        bridge("/test", { voice: charVoice(voice), sid: currentSid }).catch(() => {});
+      const ioHint = document.createElement("div");
+      ioHint.style.cssText = "font-size:10px;line-height:1.4;opacity:.5;margin:4px 0 0 2px";
+      const exportBtn = ioBtn("Экспортировать настройки");
+      exportBtn.onclick = (ev) => {
+        ev.stopPropagation();
+        bridge("/settings/export", {
+          chars: charSettings,
+          ui: uiPrefs,
+          pack: activePack,
+          lang: activeLang,
+        })
+          .then((data) => {
+            ioHint.textContent = data && data.path ? tf("Сохранено: {p}", { p: data.path }) : t("Не сохранилось");
+          })
+          .catch(() => {
+            ioHint.textContent = t("Не сохранилось");
+          });
       };
-      const stopBtn = actBtn("■ Стоп", "Заглушить текущую озвучку");
-      stopBtn.onclickAction = () => {
-        stopAll();
+      const importBtn = ioBtn("Импортировать настройки");
+      importBtn.onclick = (ev) => {
+        ev.stopPropagation();
+        bridge("/settings/import")
+          .then((data) => {
+            if (!data || !data.chars || typeof data.chars !== "object") {
+              ioHint.textContent = t("Файла нет");
+              return;
+            }
+            charSettings = { ...charSettings, ...data.chars };
+            try {
+              localStorage.setItem(CHAR_SETTINGS_KEY, JSON.stringify(charSettings));
+            } catch (e) {}
+            if (data.ui && typeof data.ui === "object") saveUiPref(data.ui);
+            ioHint.textContent = tf("Загружено персонажей: {n}", { n: Object.keys(data.chars).length });
+            renderPanel();
+          })
+          .catch(() => {
+            ioHint.textContent = t("Файла нет");
+          });
       };
-      const replayBtn = actBtn("↻ Повторить последний текст", "Озвучить последний текст ещё раз");
-      replayBtn.onclickAction = () => {
-        bridge("/replay", {}).catch(() => {});
-      };
-      const replayRow = document.createElement("div");
-      replayRow.style.cssText = "display:flex;margin-top:6px";
-      replayRow.appendChild(replayBtn);
-      actRow.append(testBtn, stopBtn);
-      box.append(actRow, replayRow);
+      ioRow.append(exportBtn, importBtn);
+      box.append(ioRow, ioHint);
+
     } else if (view.name === "stats") {
-      head("Статистика");
+      head("Дополнительно");
       const box = boxEl();
 
       const stText = document.createElement("div");
@@ -1902,20 +2342,75 @@ function createView(ctx) {
       };
       refreshStats();
       box.append(stText, stReset);
+
+      // Донат: список кошельков из DONATE. Пока он пуст — вежливая заглушка.
+      const donHead = document.createElement("div");
+      donHead.textContent = t("Поддержать автора");
+      donHead.style.cssText = "margin-top:14px;font-size:11px;font-weight:600";
+      const donHint = document.createElement("div");
+      donHint.style.cssText = "font-size:10px;line-height:1.4;opacity:.55;margin:4px 0 6px";
+      donHint.textContent = t("Плагин бесплатный и работает офлайн. Если он пригодился — вот кошельки.");
+      box.append(donHead, donHint);
+      if (!DONATE.length) {
+        const soon = document.createElement("div");
+        soon.textContent = t("Кошельки скоро появятся.");
+        soon.style.cssText = "font-size:10px;opacity:.45";
+        box.appendChild(soon);
+      }
+      for (const card of DONATE) {
+        const row = document.createElement("button");
+        row.type = "button";
+        row.title = t("Нажми, чтобы скопировать");
+        row.style.cssText =
+          "display:flex;flex-direction:column;gap:2px;width:100%;box-sizing:border-box;text-align:left;" +
+          "padding:5px 8px;margin-bottom:4px;border-radius:7px;cursor:pointer;font:inherit;font-size:10px;color:inherit;" +
+          "border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.04)";
+        const netEl = document.createElement("span");
+        netEl.textContent = card.net || "";
+        netEl.style.cssText = "font-weight:600;font-size:10px;opacity:.75";
+        const addrEl = document.createElement("span");
+        addrEl.textContent = card.addr || "";
+        addrEl.style.cssText = "font-family:ui-monospace,Menlo,monospace;overflow-wrap:anywhere;opacity:.9";
+        row.append(netEl, addrEl);
+        row.onclick = (ev) => {
+          ev.stopPropagation();
+          const back = () => {
+            addrEl.textContent = t("Скопировано");
+            setTimeout(() => {
+              addrEl.textContent = card.addr || "";
+            }, 1200);
+          };
+          try {
+            navigator.clipboard.writeText(card.addr || "").then(back, () => {});
+          } catch (e) {}
+        };
+        box.appendChild(row);
+      }
     }
 
     restoreScroll();
   };
 
   let panelOpen = false;
-  // Открытие панели всегда начинается с корневого меню.
+  // Открытие панели возвращает туда, где её закрыли: раздел помним 5 минут,
+  // позже шестерёнка снова открывает главную страницу.
+  const PANEL_MEMORY = 5 * 60 * 1000;
+  let panelClosedAt = 0;
   let panelView = { name: "root" };
   const togglePanel = (on) => {
-    panelOpen = on === undefined ? !panelOpen : on;
-    if (panelOpen) {
-      panelView = { name: "root" };
+    const next = on === undefined ? !panelOpen : on;
+    if (next && !panelOpen) {
+      if (!(panelClosedAt && Date.now() - panelClosedAt < PANEL_MEMORY)) {
+        panelView = { name: "root" };
+      }
+      panelOpen = true;
       renderPanel();
+    } else if (!next && panelOpen) {
+      panelClosedAt = Date.now();
+      panelOpen = false;
     }
+    // Настройки перекрывают пузырь — при открытой панели он скрыт.
+    paintBubble();
     panel.style.display = panelOpen ? "block" : "none";
     gear.style.display = panelOpen ? "none" : "";
     gear.style.opacity = panelOpen ? "1" : "";
@@ -1989,11 +2484,17 @@ function createView(ctx) {
   // side.opened() не всегда реактивен — подстраховываемся дешёвым опросом.
   const sidePoll = setInterval(refreshVisibility, 500);
 
-  // --- Настроение: сон при простое, грусть при ошибке, звук пробуждения ---
+  // --- Настроение: сон при простое, злость при ошибке, звук пробуждения ---
   try {
     const st = document.createElement("style");
     st.textContent = [
       "@keyframes x2ai-breathe{0%,100%{transform:translateY(0)}50%{transform:translateY(-2px)}}",
+      // Сон — с наклоном: без него «дремлющий» стоит ровно и не читается.
+      "@keyframes x2ai-sleep{0%,100%{transform:translateY(0) rotate(-4deg)}50%{transform:translateY(-2px) rotate(-4.6deg)}}",
+      // Злость — мелкая дрожь, чтобы красная подсветка читалась как эмоция.
+      "@keyframes x2ai-rage{0%,100%{transform:translate(0,0) rotate(-1deg)}",
+      "25%{transform:translate(-1px,0) rotate(-2deg)}50%{transform:translate(1px,0) rotate(0deg)}",
+      "75%{transform:translate(-1px,1px) rotate(-1.6deg)}}",
       "@keyframes x2ai-zzz{0%{opacity:0;transform:translate(0,0) scale(.7)}25%{opacity:.85}",
       "100%{opacity:0;transform:translate(9px,-24px) scale(1.15)}}",
       "@keyframes x2ai-dot{0%,100%{opacity:.25;transform:translateY(0)}50%{opacity:1;transform:translateY(-2px)}}",
@@ -2029,23 +2530,141 @@ function createView(ctx) {
 
   // Пузырь «думает»: показывается, когда озвучиваются рассуждения, а не ответ.
   const bubble = document.createElement("div");
-  bubble.textContent = "…";
   bubble.style.cssText = [
     "position:absolute",
-    "right:-10px",
-    "top:-4px",
+    "left:0",
+    "bottom:calc(100% + 8px)",
     "display:none",
-    "padding:1px 5px 3px",
+    "padding:3px 7px 4px",
     "border-radius:9px",
     "background:rgba(140,175,255,.22)",
     "border:1px solid rgba(150,185,255,.45)",
-    "font-size:10px",
-    "line-height:1",
-    "letter-spacing:1px",
+    "font-size:11px",
+    "line-height:1.35",
+    "letter-spacing:0",
     "color:rgba(235,242,255,.9)",
-    "pointer-events:none",
+    "pointer-events:auto",
+    "cursor:pointer",
+    "transition:opacity .3s ease, transform .3s ease",
   ].join(";");
   box.appendChild(bubble);
+
+  // Текст живёт отдельным узлом: его подменяем на каждой новой фразе, а
+  // кружочки-хвост (ниже) не затираются вместе с текстом.
+  const bubbleText = document.createElement("span");
+  bubbleText.textContent = "…";
+  bubble.appendChild(bubbleText);
+
+  // Хвост из кружочков, как в комиксах: звук выключен, а персонаж «говорит» —
+  // значит от головы к пузырю идут точки вместо звуковой волны.
+  // Висит под самим пузырём (не под авкой), поэтому кружочки всегда ниже
+  // облачка и не наезжают на текст: пузырь растёт вверх, а хвост остаётся снизу.
+  const bubbleTail = document.createElement("div");
+  bubbleTail.style.cssText = [
+    "position:absolute",
+    "left:12px",
+    "top:calc(100% + 2px)",
+    "display:none",
+    "flex-direction:column",
+    "align-items:flex-start",
+    "gap:2px",
+    "pointer-events:none",
+  ].join(";");
+  for (const [size, shift] of [[7, 0], [5, 3], [3, 7]]) {
+    const d = document.createElement("span");
+    d.style.cssText = [
+      `width:${size}px`,
+      `height:${size}px`,
+      "border-radius:50%",
+      `margin-left:${shift}px`,
+      "background:rgba(200,220,255,.75)",
+      "box-shadow:0 1px 2px rgba(0,0,0,.45)",
+    ].join(";");
+    bubbleTail.appendChild(d);
+  }
+  bubble.appendChild(bubbleTail);
+
+  // Пузырь рисуем одной функцией: при открытых настройках он всегда скрыт,
+  // иначе висел бы поверх панели.
+  let bubbleThinking = false;
+  let bubbleKind = "answer"; // что в пузыре: ответ или рассуждения
+  // Клик по пузырю = «убери», пока не придёт новая фраза: иначе следующий
+  // опрос /state вернул бы его на место.
+  let bubbleDismissed = false;
+  // Один и тот же эффект на клик и на автоскрытие: проваливается и гаснет.
+  const hideBubble = () => {
+    if (!bubble.style.display || bubble.style.display === "none") return;
+    bubbleDismissed = true;
+    stopBubbleRotate();
+    bubble.style.opacity = "0";
+    bubble.style.transform = "translateY(5px) scale(.94)";
+    setTimeout(() => {
+      paintBubble();
+      bubble.style.opacity = "1";
+      bubble.style.transform = "";
+    }, 320);
+  };
+  bubble.onclick = (event) => {
+    if (event) event.stopPropagation();
+    hideBubble();
+  };
+  // «Озвучка ответа» и «озвучка рассуждений» главнее пузыря: если канал
+  // выключен, текст не показываем вовсе.
+  const bubbleChannelOn = () => {
+    if (bubbleKind === "reason") return Boolean(reasonState && reasonState.mode !== "off");
+    const cs = charSettingsFor(packKey(voice));
+    return (cs.speech || speechMode || "summary") !== "silent";
+  };
+  const paintBubble = () => {
+    const hasLine = Boolean(bubbleText.textContent) && bubbleText.textContent !== "…";
+    const mode = BUBBLE_MODES.includes(uiPrefs.bubble) ? uiPrefs.bubble : "mute";
+    const want = mode === "always" ? true : mode === "mute" ? mutedState : false;
+    const show = !panelOpen && want && !bubbleDismissed && bubbleChannelOn() && (hasLine || bubbleThinking);
+    bubble.style.display = show ? "block" : "none";
+    // Кружочки вместо звука: только когда звук выключен.
+    bubbleTail.style.display = show && mutedState ? "flex" : "none";
+  };
+  repaintBubble = paintBubble;
+
+  // Мысли должны сменяться, а не висеть одной строкой: длинную фразу режем по
+  // предложениям и листаем, пока висит пузырь.
+  let bubbleThoughts = [];
+  let bubbleThoughtIdx = 0;
+  let bubbleRotate = null;
+  let bubbleHideTimer = null;
+  const stopBubbleRotate = () => {
+    if (bubbleRotate) clearInterval(bubbleRotate);
+    bubbleRotate = null;
+  };
+  const setBubbleText = (text) => {
+    const clean = String(text || "").trim();
+    // Новая фраза — пузырь снова имеет право появиться после клика-«убери».
+    bubbleDismissed = false;
+    bubble.style.opacity = "1";
+    bubble.style.transform = "";
+    // Через минуту фраза уходит сама, тем же эффектом, что и по клику.
+    if (bubbleHideTimer) clearTimeout(bubbleHideTimer);
+    bubbleHideTimer = setTimeout(hideBubble, 60000);
+    bubbleThoughts = (clean.match(/[^.!?…]+[.!?…]*/g) || [])
+      .map((s) => s.trim())
+      .filter(Boolean);
+    bubbleThoughtIdx = 0;
+    bubbleText.textContent = bubbleThoughts[0] || clean;
+    stopBubbleRotate();
+    if (bubbleThoughts.length > 1) {
+      bubbleRotate = setInterval(() => {
+        if (bubble.style.display === "none") return;
+        // Листаем по одному разу и останавливаемся на последней мысли:
+        // по кругу старый текст всплывать не должен.
+        if (bubbleThoughtIdx >= bubbleThoughts.length - 1) {
+          stopBubbleRotate();
+          return;
+        }
+        bubbleThoughtIdx += 1;
+        bubbleText.textContent = bubbleThoughts[bubbleThoughtIdx];
+      }, 4500);
+    }
+  };
 
   zzz.style.cssText = [
     "position:absolute",
@@ -2087,27 +2706,37 @@ function createView(ctx) {
     } catch (e) {}
   };
 
+  // Кадр под текущее настроение: злость — с открытым ртом, сон — с закрытыми глазами.
+  const moodFrame = () =>
+    moodState.value === "angry" ? "wide" : moodState.value === "sleeping" ? "blink" : "closed";
+
   const setMood = (next, quiet) => {
     const prev = moodState.value;
     moodState.value = next;
     if (next === "sleeping") {
       if (!quiet) img.src = frame(voice, "blink");
       img.style.filter = `${SHADOW} saturate(.7) brightness(.9)`;
-      box.style.animation = "x2ai-breathe 3.6s ease-in-out infinite";
+      // Наклон живёт внутри кейфреймов: animation перебивает inline-transform.
+      box.style.transform = "";
+      box.style.filter = "";
+      box.style.animation = "x2ai-sleep 3.6s ease-in-out infinite";
       zzz.style.animation = "x2ai-zzz 2.6s ease-out infinite";
       zzz.style.opacity = "0";
       root.title = `x2ai · ${charName(voice)} · ${t("спит")}`;
-    } else if (next === "sad") {
-      if (!quiet) img.src = frame(voice, "blink");
-      img.style.filter = `${SHADOW} grayscale(.55) brightness(.88)`;
-      box.style.animation = "";
-      box.style.transform = "translateY(2px) rotate(-2deg)";
+    } else if (next === "angry") {
+      if (!quiet) img.src = frame(voice, "wide");
+      img.style.filter = `${SHADOW} saturate(1.35) brightness(1.05)`;
+      box.style.transform = "";
+      // Красная подсветка + дрожь: злость видно боковым зрением.
+      box.style.filter = "drop-shadow(0 0 7px rgba(255,64,64,.6))";
+      box.style.animation = "x2ai-rage .18s linear infinite";
       zzz.style.animation = "";
       zzz.style.opacity = "0";
-      root.title = `x2ai · ${charName(voice)} · ${t("расстроен")}`;
+      root.title = `x2ai · ${charName(voice)} · ${t("злится")}`;
     } else {
       if (!quiet) img.src = frame(voice, "closed");
       img.style.filter = SHADOW;
+      box.style.filter = "";
       box.style.animation = "";
       box.style.transform = "";
       zzz.style.animation = "";
@@ -2119,8 +2748,13 @@ function createView(ctx) {
 
   const resetIdle = () => {
     if (idleTimer) clearTimeout(idleTimer);
+    // Живость выключена — персонаж не засыпает и не злится (см. sadFor).
+    if (!charReact(voice)) {
+      idleTimer = null;
+      return;
+    }
     idleTimer = setTimeout(() => {
-      if (speaking || panelOpen || moodState.value === "sad") {
+      if (speaking || panelOpen || moodState.value === "angry") {
         resetIdle();
         return;
       }
@@ -2128,25 +2762,45 @@ function createView(ctx) {
     }, IDLE_MS);
   };
 
-  // Любая активность будит персонажа; из сна — со звуком.
+  // Любая активность будит персонажа; из сна — со звуком. Грусть не трогаем:
+  // она доигрывает свою очередь и не может быть сбита ответом.
   const wake = () => {
     const wasAsleep = moodState.value === "sleeping";
-    if (moodState.value !== "awake") {
+    if (wasAsleep) {
       if (moodTimer) clearTimeout(moodTimer);
       setMood("awake");
+      wakeBlip();
     }
-    if (wasAsleep) wakeBlip();
     resetIdle();
   };
 
-  const sadFor = (ms) => {
-    wake();
-    setMood("sad");
+  // Ошибки встают в очередь: каждая отыгрывается целиком, следующая — после
+  // неё. Речь и другие действия злость не сбрасывают.
+  const rageQueue = [];
+  let ragePlaying = false;
+  const playRage = () => {
+    if (ragePlaying) return;
+    const ms = rageQueue.shift();
+    if (!ms) return;
+    ragePlaying = true;
+    setMood("angry");
     if (moodTimer) clearTimeout(moodTimer);
     moodTimer = setTimeout(() => {
-      if (moodState.value === "sad") setMood("awake");
+      ragePlaying = false;
+      if (rageQueue.length) {
+        playRage();
+        return;
+      }
+      if (moodState.value === "angry") setMood("awake");
       resetIdle();
-    }, ms || 4200);
+    }, ms);
+  };
+
+  const sadFor = (ms) => {
+    rageQueue.push(ms || 4200);
+    // Длинная серия ошибок не должна держать злость минутами.
+    if (rageQueue.length > 5) rageQueue.shift();
+    playRage();
   };
 
   // --- Индикатор синтеза: точки, пока движок готовит звук ---
@@ -2171,61 +2825,8 @@ function createView(ctx) {
   let blinkTimer = null;
   let speakTimer = null;
 
-  // Артикуляция по тексту: гласные дают свою форму рта, согласные — закрытый.
-  const VOWEL_FRAME = {
-    а: "wide",
-    о: "open",
-    у: "round",
-    ы: "half",
-    э: "half",
-    е: "half",
-    ё: "half",
-    и: "half",
-    ю: "round",
-    я: "wide",
-    // Латинские гласные: без них английская речь шла без движения рта.
-    a: "wide",
-    o: "open",
-    u: "round",
-    e: "half",
-    i: "half",
-    y: "half",
-  };
-  // Без сглаживания: согласные закрывают рот, гласные держат свою форму.
-  const frameFor = (ch) => VOWEL_FRAME[ch] || "closed";
-  const charWeight = (ch) => {
-    if (VOWEL_FRAME[ch]) return 1.7;
-    if (/[.!?…]/.test(ch)) return 3.5;
-    if (/[,;:]/.test(ch)) return 2.2;
-    if (/[—–-]/.test(ch)) return 2.5;
-    if (/\s/.test(ch)) return 1.2;
-    return 0.9;
-  };
-
-  const buildTalkPlan = (text, ms) => {
-    const chars = String(text || "")
-      .toLowerCase()
-      .replace(/<\/?[a-z]{2}>/gi, " ")
-      .replace(/[^a-zа-яё\s.,!?;:—–…-]/g, "")
-      .split("");
-    if (!chars.length) return null;
-    const total = chars.reduce((acc, ch) => acc + charWeight(ch), 0) || 1;
-    // Каждый звук разбиваем на «подход — держим — отпускаем»: кадры меняются
-    // чаще, и речь выглядит живее, а не как один застывший кадр на букву.
-    const plan = [];
-    for (const ch of chars) {
-      const dur = Math.max(45, Math.round((ms * charWeight(ch)) / total));
-      const target = frameFor(ch);
-      if (target === "closed") {
-        plan.push({ frame: "closed", delay: dur });
-        continue;
-      }
-      plan.push({ frame: "half", delay: Math.max(70, Math.round(dur * 0.22)) });
-      plan.push({ frame: target, delay: Math.max(80, Math.round(dur * 0.56)) });
-      plan.push({ frame: "half", delay: Math.max(70, Math.round(dur * 0.22)) });
-    }
-    return plan;
-  };
+  // Партитура рта: считается в talk-plan.js (там же тест), здесь только
+  // запуск кадров по таймеру.
 
   let talkTimeout = null;
   const runPlan = (plan, thinking) => {
@@ -2245,12 +2846,37 @@ function createView(ctx) {
     step();
   };
 
+  // Что реально звучит: теги языка и разметку в пузыре не показываем.
+  // Длинную фразу режем по последней точке, чтобы не обрывать на полуслове,
+  // и закрываем многоточием.
+  const BUBBLE_CHARS = 200;
+  const bubbleLine = (text) => {
+    const clean = String(text || "")
+      .replace(/<\/?[a-z]{2}>/gi, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (clean.length <= BUBBLE_CHARS) return clean;
+    const cut = clean.slice(0, BUBBLE_CHARS);
+    const sentence = cut.match(/[\s\S]*[.!?…]/);
+    const base = (sentence ? sentence[0] : cut.replace(/\s+\S*$/, "")).trim();
+    return `${base.replace(/[.!?…\s]+$/, "")}…`;
+  };
+
   const startSpeaking = (ms, kind, text, offset = 0) => {
     speaking = true;
     const thinking = kind === "reason";
-    bubble.style.display = thinking ? "block" : "none";
+    const line = bubbleLine(text);
+    if (line) setBubbleText(line);
+    // Рассуждения показываем всегда (видно, что персонаж думает), ответы —
+    // по настройке «пузырь с текстом». При открытых настройках пузырь не
+    // нужен: он висел бы поверх панели.
+    bubbleThinking = thinking;
+    bubbleKind = thinking ? "reason" : "answer";
+    paintBubble();
     box.style.filter = thinking ? "saturate(.85) brightness(1.02)" : "";
-    if (moodState.value !== "awake") {
+    // Грусть не сбрасываем: ответ накладывается поверх, рот анимируется
+    // кадрами партитуры, а настроение доигрывает свою очередь.
+    if (moodState.value === "sleeping") {
       if (moodTimer) clearTimeout(moodTimer);
       setMood("awake");
     }
@@ -2262,21 +2888,11 @@ function createView(ctx) {
     const skipMs = Math.max(0, Math.min(Number(offset) || 0, total));
     speakTimer = setTimeout(stopSpeaking, total - skipMs + 500);
 
-    const plan = buildTalkPlan(text, total);
+    const plan = TALKPLAN.buildTalkPlan(text, total);
     if (plan) {
-      // State приходит с задержкой до 0.8 с: пропускаем уже прошедшие кадры,
+      // State приходит с задержкой до 0.8 с: прошедшие кадры выкидываем,
       // иначе рот отстаёт от звука и замолкает раньше него.
-      let skip = skipMs;
-      while (plan.length && skip > 0) {
-        if (plan[0].delay <= skip) {
-          skip -= plan[0].delay;
-          plan.shift();
-        } else {
-          plan[0] = { frame: plan[0].frame, delay: plan[0].delay - skip };
-          skip = 0;
-        }
-      }
-      runPlan(plan, thinking);
+      runPlan(TALKPLAN.skipPassed(plan, skipMs), thinking);
     } else {
       // Текста нет — просто шевелим ртом, как раньше.
       talkTimer = setInterval(() => {
@@ -2290,7 +2906,9 @@ function createView(ctx) {
 
   const stopSpeaking = () => {
     speaking = false;
-    bubble.style.display = "none";
+    // Текст не стираем: при выключенном звуке пузырь должен оставаться
+    // на экране, а видимость решает paintBubble().
+    paintBubble();
     box.style.filter = "";
     if (talkTimer) clearInterval(talkTimer);
     if (talkTimeout) clearTimeout(talkTimeout);
@@ -2298,7 +2916,10 @@ function createView(ctx) {
     talkTimeout = null;
     talkStep = 0;
     box.style.transform = "";
-    img.src = frame(voice, "closed");
+    // Грусть и сон держат свои кадры (закрытые глаза) — не открываем их речью.
+    img.src = frame(voice, moodFrame());
+    // Речь сбрасывала transform/фильтры для артикуляции — вернуть позу настроения.
+    if (moodState.value !== "awake") setMood(moodState.value, true);
     resetIdle();
   };
 
@@ -2319,16 +2940,17 @@ function createView(ctx) {
   };
   // Голос персонажа: сначала индивидуальная настройка (localStorage), потом
   // общий файл моста, потом встроенное соответствие пиксельных id.
-  const charVoice = (id) => {
+  // Голос для конкретного языка: авто-режим на сервере берёт нужный сам.
+  const charVoiceFor = (id, lang) => {
     if (!id) return id;
     const key = packKey(id);
-    const lang = voiceLang();
     const cs = charSettingsFor(key);
     const byLang = cs.voiceByLang || {};
     if (byLang[lang]) return byLang[lang];
     if (lang === "en") return defaultVoiceFor(VOICE_ALIAS[key] || key, "en", key);
     return cs.voice || charVoices[key] || VOICE_ALIAS[id] || VOICE_ALIAS[key] || id;
   };
+  const charVoice = (id) => charVoiceFor(id, voiceLang());
   const voiceOf = (id) => (voiceMap && voiceMap[id]) || id;
 
   // Выбор персонажа храним ещё и в localStorage окна: он читается сразу,
@@ -2355,10 +2977,28 @@ function createView(ctx) {
 
   const resolveVoice = (sid) =>
     (sid && (localMap[sid] || voiceMap[sid])) || voiceFor(sid);
+  // Всё о персонаже чата одним пакетом: голос, имя, ключ пака и характер.
+  // Ключ нужен потому, что px_ru_f1 (Тянка) и ru_f1 (Аня) — разные персонажи.
+  const voicePayload = (sid, key) => {
+    const cs = charSettingsFor(packKey(key));
+    // «Настроить» — это только темп, без готовой окраски движка.
+    const custom = cs.emotion === "custom";
+    return {
+      sid,
+      voice: charVoice(key),
+      name: charName(key),
+      charKey: packKey(key),
+      temper: charTemper(key),
+      temperText: (cs.temperText || "").trim().slice(0, 400),
+      speed: custom ? Number(cs.speed) || 0 : emoSpeed(cs.emotion || ""),
+      emotion: custom ? speedEmotion(cs.speed) : cs.emotion || "",
+      // Оба голоса сразу: сервер подставит тот, что совпадёт с языком текста.
+    };
+  };
   // Голос чата на сервер: до готовности моста молчим, потом дошлём.
   function pushVoice(key) {
     if (!bridgeReady || !currentSid || !key) return;
-    bridge("/voice", { sid: currentSid, voice: charVoice(key), name: charName(key) }).catch(() => {});
+    bridge("/voice", voicePayload(currentSid, key)).catch(() => {});
   }
 
   const applyForSession = (sid) => {
@@ -2392,6 +3032,91 @@ function createView(ctx) {
   };
   bridgeReady = true;
   bridge("/speech", { lang: activeLang }).catch(() => {});
+  // Голоса и готовые характеры нужны раньше, чем откроют их блок: без них
+  // в поле характера не подставить описание персонажа плейсхолдером.
+  bridge("/voices")
+    .then((data) => {
+      voiceCatalog = (data && data.voices) || [];
+      installedVoices = Array.isArray(data && data.installed) ? data.installed : [];
+      temperPresets = (data && data.tempers) || {};
+      ttsEngine = data && data.engine !== false;
+      if (panelOpen) renderPanel();
+    })
+    .catch(() => {});
+
+  // Какие вкладки открыты: закрытый чат не должен звучать. Список открытых
+  // вкладок знает хост (ctx.sessions.list), шлём его при изменении и раз в
+  // 5 с как heartbeat — без свежего отчёта сервер озвучку не блокирует.
+  let openSig = "";
+  let openAt = 0;
+  const reportOpenTabs = () => {
+    if (!bridgeReady) return;
+    let ids = [];
+    try {
+      const list = ctx.sessions.list ? ctx.sessions.list() : null;
+      ids = (list || [])
+        .map((s) => String((s && (s.id || s.key)) || "").match(/ses_[A-Za-z0-9]+/))
+        .filter(Boolean)
+        .map((m) => m[0]);
+    } catch (e) {
+      return;
+    }
+    // Пустой список — окно ещё не знает своих вкладок: не шлём, иначе
+    // сервер на мгновение решит, что открытых чатов нет.
+    if (!ids.length) return;
+    const sig = ids.join(",");
+    if (sig === openSig && Date.now() - openAt < 5000) return;
+    openSig = sig;
+    openAt = Date.now();
+    bridge("/open", { ids }).catch(() => {});
+  };
+  reportOpenTabs();
+  const openTimer = setInterval(reportOpenTabs, 5000);
+
+  // Паки приходят с моста по требованию: в бандле только манифест, кадры
+  // лежат файлами plugins/x2ai-avatar/packs/<пак>.json. Так окно не держит
+  // в памяти второй, невыбранный пак (аниме — половина веса бандла).
+  const packLoading = new Map();
+  const ensurePack = (name) => {
+    if (!name || !PACK_INDEX[name]) return Promise.resolve(null);
+    if (PACKS[name]) return Promise.resolve(PACKS[name]);
+    if (packLoading.has(name)) return packLoading.get(name);
+    const job = bridge(`/pack?name=${encodeURIComponent(name)}`)
+      .then((data) => {
+        if (data && !data.error && typeof data === "object") PACKS[name] = data;
+        return PACKS[name] || null;
+      })
+      .catch(() => null)
+      .then((pack) => {
+        packLoading.delete(name);
+        return pack;
+      });
+    packLoading.set(name, job);
+    return job;
+  };
+  // Внешние паки: папка в ~/.config/opencode/x2ai-avatar-packs/<имя>/sprites.json.
+  // Манифест дополняется на месте — список паков сразу видит новые.
+  let packsAsked = false;
+  const loadExternalPacks = () => {
+    if (packsAsked) return;
+    packsAsked = true;
+    bridge("/packs")
+      .then((data) => {
+        const packs = (data && data.packs) || {};
+        let grew = false;
+        for (const [name, info] of Object.entries(packs)) {
+          if (PACK_INDEX[name]) continue;
+          PACK_INDEX[name] = (info && info.voices) || [];
+          grew = true;
+        }
+        if (grew && panelOpen) renderPanel();
+      })
+      .catch(() => {});
+  };
+  // До загрузки кадров картинка пустая: перерисовываем, когда пак пришёл.
+  Promise.all([ensurePack(activePack), ensurePack("anime")]).then(() => {
+    apply(voice, true);
+  });
 
   // Сервер по этому же списку выбирает голос нового чата, поэтому хеш
   // и в окне, и в озвучке даёт одного персонажа.
@@ -2416,6 +3141,8 @@ function createView(ctx) {
   let adoptedKey = "";
   let bridgeSpeaking = false;
   let lastSpeakAt = 0;
+  let lastNoteAt = 0;
+  let bubbleSid = "";
   // Имя персонажа синхронизируем с мостом, чтобы правила в промпте знали пак.
   let lastSyncedName = "";
   const syncName = () => {
@@ -2423,17 +3150,30 @@ function createView(ctx) {
     const nm = charName(voice);
     if (!nm || nm === lastSyncedName) return;
     lastSyncedName = nm;
-    bridge("/voice", { sid: currentSid, voice: charVoice(voice), name: nm }).catch(() => {});
+    bridge("/voice", { ...voicePayload(currentSid, voice), name: nm }).catch(() => {});
   };
 
+  const bootAt = Date.now();
   const pollBridge = () => {
     syncName();
-    bridge("/state")
+    // Мост мог подняться уже после первой попытки — добираем настройки здесь.
+    if (!speechLoaded) loadSpeechOnce();
+    bridge(`/state?sid=${encodeURIComponent(currentSid || "")}`)
       .then((state) => {
         if (!state) return;
+        // mute держим синхронным с сервером: после перезагрузки окна иконка
+        // должна показывать реальное состояние, а не «звук включён».
+        if (state.muted !== undefined && Boolean(state.muted) !== mutedState) {
+          mutedState = Boolean(state.muted);
+          paintMute();
+          repaintBubble();
+        }
         if (state.modelDisabled !== undefined) {
           const off = Boolean(state.modelDisabled);
-          if (off !== modelDisabled) {
+          const hasModel = Boolean(modelsData && modelsData.current && modelsData.current.providerID);
+          // Пока модель не выбрана, сервер отвечает «выключено»: не отбираем
+          // у пользователя только что включённый селект, иначе он отскакивал.
+          if (off !== modelDisabled && (off ? hasModel : true)) {
             modelDisabled = off;
             if (panelOpen) renderPanel();
           }
@@ -2443,6 +3183,28 @@ function createView(ctx) {
           adoptedKey = key;
           charVoices = state.charVoices || {};
           adopt(state.voices);
+        }
+        // Сменили чат — старую мысль не показываем: у каждого чата свой пузырь.
+        if (currentSid !== bubbleSid) {
+          bubbleSid = currentSid;
+          lastNoteAt = 0;
+          setBubbleText("");
+          paintBubble();
+        }
+        // Звук выключен (mute или тихие часы): сервер присылает текст заметкой,
+        // чтобы пузырь показал фразу без озвучки и без артикуляции.
+        // Заметка живёт в файле 10 минут — берём только ту, что появилась
+        // после загрузки окна, иначе после Cmd+R всплывёт вчерашняя фраза.
+        if (state.note && state.note.text && Number(state.note.at) >= bootAt) {
+          const nsid = state.note.sid || "";
+          if (nsid && currentSid && nsid === currentSid && state.note.at !== lastNoteAt) {
+            lastNoteAt = state.note.at;
+            const noteLine = bubbleLine(state.note.text);
+            if (noteLine) setBubbleText(noteLine);
+            bubbleThinking = state.note.kind === "reason";
+            bubbleKind = bubbleThinking ? "reason" : "answer";
+            paintBubble();
+          }
         }
         // Губами двигает только тот чат, чья это озвучка: сервер пишет sid
         // в state-файл, а окно сравнивает его с текущим чатом.
@@ -2599,14 +3361,23 @@ function createView(ctx) {
     bridge("/stop", { sid: currentSid }).catch(() => {});
   };
 
-  box.onclick = () => {
+  box.onclick = (event) => {
+    // Реплика — только по самому персонажу. Настройки и пузырь живут в этом
+    // же контейнере, и раньше отпускание ползунка звучало как клик по нему.
+    if (event && event.target !== img) return;
     // Пока персонаж говорит, клик его замолкает; в тишине — просто реплика.
     const wasSpeaking = speaking;
     stopAll();
     if (!wasSpeaking) {
       if (voiceLang() === "en") {
         const text = pickClip(EN_CLICKS);
-        if (text) bridge("/say", { text, sid: currentSid, voice: charVoice(voice) }).catch(() => {});
+        if (text) {
+          if (mutedState) {
+            showLineOnly(text);
+            return;
+          }
+          bridge("/say", { text, sid: currentSid, voice: charVoice(voice) }).catch(() => {});
+        }
         return;
       }
       const clip = pickClip(CLICKS[clipVoice(voice)] || CLICKS.ru_f1);
@@ -2623,7 +3394,9 @@ function createView(ctx) {
   // Моргание только в тишине, чтобы не спорить с артикуляцией.
   const scheduleBlink = () => {
     blinkTimer = setTimeout(() => {
-      if (!speaking) {
+      // Во сне глаза уже закрыты (кадр blink): моргание только наяву, иначе
+      // через 120 мс кадр возвращает открытые глаза.
+      if (!speaking && moodState.value === "awake") {
         img.src = frame(voice, "blink");
         setTimeout(() => {
           if (!speaking) img.src = frame(voice, "closed");
@@ -2640,7 +3413,8 @@ function createView(ctx) {
     const id = (event && event.data && event.data.sessionID) || "no-sid";
     evCount++;
     wake();
-    startSynth();
+    // При выключенном звуке нечего дожидаться: фразу покажет пузырь.
+    if (!mutedState) startSynth();
     // Событие может прийти из неактивного чата: спрайт активного не трогаем.
     if (String(id).startsWith("ses_") && id === currentSid) applyForSession(id);
     // Рот НЕ двигаем по событию ответа: между концом ответа и стартом звука
@@ -2731,7 +3505,7 @@ function createView(ctx) {
               data.on(name, (event) => {
                 const id = (event && event.data && event.data.sessionID) || "";
                 if (id && currentSid && id !== currentSid) return;
-                sadFor(2500);
+                if (charReact(voice)) sadFor(2500);
               }),
             );
           } catch (err) {
@@ -2762,7 +3536,7 @@ function createView(ctx) {
               data.on(name, (event) => {
                 const id = (event && event.data && event.data.sessionID) || "";
                 if (String(id).startsWith("ses_") && id !== currentSid) return;
-                sadFor(4200);
+                if (charReact(voice)) sadFor(4200);
               }),
             );
           } catch (err) {
@@ -2776,7 +3550,26 @@ function createView(ctx) {
   } catch (e) {
   }
 
-  // Единая уборка: таймеры, опросы, подписка и слушатель документа.
+  // Горячие клавиши окна: не надо лезть в панель, чтобы замолчать.
+  // В полях ввода не перехватываем — там Cmd/Ctrl+Shift могут значить другое.
+  const onHotkey = (ev) => {
+    if (!uiPrefs.keys) return;
+    if (!(ev.metaKey || ev.ctrlKey) || !ev.shiftKey) return;
+    const tag = String((ev.target && ev.target.tagName) || "").toLowerCase();
+    if (tag === "input" || tag === "textarea") return;
+    const key = String(ev.key || "").toLowerCase();
+    const actions = {
+      m: () => setMuted(!mutedState),
+      s: () => stopAll(),
+      a: () => togglePanel(),
+    };
+    if (!actions[key]) return;
+    ev.preventDefault();
+    actions[key]();
+  };
+  document.addEventListener("keydown", onHotkey, true);
+
+  // Единая уборка: таймеры, опросы, подписка и слушатели документа.
   const teardown = () => {
     pingReset();
     clearTimeout(blinkTimer);
@@ -2786,8 +3579,12 @@ function createView(ctx) {
     clearTimeout(talkTimeout);
     clearTimeout(bridgeTimer);
     clearInterval(sidePoll);
+    clearInterval(openTimer);
     if (talkTimer) clearInterval(talkTimer);
+    stopBubbleRotate();
+    if (bubbleHideTimer) clearTimeout(bubbleHideTimer);
     document.removeEventListener("mousedown", onDocDown, true);
+    document.removeEventListener("keydown", onHotkey, true);
     if (typeof unsub === "function") {
       try {
         unsub();

@@ -2,6 +2,8 @@ __pycache__/
 *.pyc
 # Сборный артефакт плагина (склеивается из паков)
 /plugins/x2ai-avatar/sprites.json
+# Кадры для окна: генерируются pack_sprites.py и едут в ~/.config
+/plugins/x2ai-avatar/packs/
 custom/
 # Служебное состояние плагинов OpenCode (цели, локи) — не в git.
 .opencode/

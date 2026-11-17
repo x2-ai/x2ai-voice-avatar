@@ -27,6 +27,7 @@ from PIL import Image
 ROOT = Path(__file__).resolve().parent.parent
 PACKS = ROOT / "packs"
 OUT = ROOT / "plugins" / "x2ai-avatar" / "sprites.json"
+PKG = ROOT / "plugins" / "x2ai-avatar" / "packs"
 STATES = ["closed", "half", "open", "round", "wide", "blink"]
 HEIGHT = 336
 
@@ -83,6 +84,14 @@ def main() -> int:
         packs[pack_dir.name] = voices
 
     OUT.write_text(json.dumps(packs, ensure_ascii=False), encoding="utf-8")
+    # По паку на файл: окно грузит только тот пак, который выбрано, а не все
+    # кадры сразу (аниме-пак — половина веса бандла).
+    PKG.mkdir(parents=True, exist_ok=True)
+    for name, voices in packs.items():
+        (PKG / f"{name}.json").write_text(json.dumps(voices, ensure_ascii=False), encoding="utf-8")
+    # Манифест: имена паков и персонажи в них. Маленький, едет в бандл.
+    index = {name: sorted(voices.keys()) for name, voices in packs.items()}
+    (PKG / "index.json").write_text(json.dumps(index, ensure_ascii=False, indent=1), encoding="utf-8")
     total = sum(len(v) for v in packs.values())
     names = ", ".join(f"{k} ({len(v)})" for k, v in packs.items())
     print(f"готово: паков {len(packs)}, персонажей {total} — {names}")

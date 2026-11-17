@@ -8,7 +8,7 @@
 
 ## Русский
 
-**Персонаж с голосом в окне OpenCode Desktop.** Версия 0.4.0.
+**Персонаж с голосом в окне OpenCode Desktop.** Версия 0.6.0.
 
 Локальная озвучка ответов агента и пиксельный персонаж в левом нижнем углу
 окна. Основной пак — `pixel`: пять наших персонажей, кадры лежат в репозитории.
@@ -34,18 +34,25 @@
 - Пять персонажей в пиксельном паке; галочкой отмечается, кто доступен для
   новых чатов и для кнопки смены.
 - Индивидуальные настройки каждого персонажа: размер, голос, режимы озвучки,
-  детализация пересказа. Хранятся в `localStorage` окна.
-- Кнопка **mute** (глушит ответы и рассуждения, не меняя настройки), **стоп**,
-  **повтор** последней фразы и **проверка** голоса.
+  детализация пересказа, **характер** (готовая манера или свой текст) и
+  **манера речи** — скорость и окраска голоса. Хранятся в `localStorage` окна.
+- **Характер** подмешивается в системные инструкции чата: персонаж держит манеру
+  речи, но не искажает факты и код.
+- **Пузырь с фразой**, **горячие клавиши** (⌘/Ctrl+Shift+M — mute, S — стоп,
+  A — панель) и реакция на ошибки — включаются в «Дополнительно».
+- **Экспорт и импорт** настроек персонажей в файл; паки грузятся лениво, поэтому
+  окно стартует быстрее, а чужие паки можно подключать из папки.
+- Кнопка **mute** (глушит ответы и рассуждения, не меняя настройки), **стоп**
+  и панель настроек с персонажами, голосами и режимами озвучки.
 - Пинги, пока агент работает: интервал растёт 60 с → ×1.6, максимум 10 минут,
   после ответа сбрасывается. Чужие чаты не перебиваются.
 - Правила рода и имени уходят в системные инструкции первого запроса чата и в
   переписке не видны.
-- Linux поддерживается, Windows — нет.
+- Linux поддерживается; Windows пока не протестирован — что поставить, ниже.
 
 ### Требования
 
-- macOS 13+ или Linux. Windows пока не поддерживается.
+- macOS 13+, Linux или Windows (Windows не протестирован, см. ниже).
 - Python 3.10+ и ~650 МБ на модель и окружение.
 - OpenCode Desktop с поддержкой GUI-плагинов.
 - Аудиоплеер: `afplay` (macOS, встроен) или `paplay` / `aplay` / `ffplay` /
@@ -137,12 +144,15 @@ cp -r plugins/x2ai-avatar ~/.config/opencode/plugins/
 | **Данные пользователя** | имя и род пользователя для пересказа и правил |
 | **Настройка персонажей** | пак, список персонажей с галочками и двумя кнопками: выбрать (✓) и настроить (⚙) |
 | **Вспомогательная модель** | модель для пересказа и перевода, поиск и постраничный список |
-| **Дополнительно** | скорость, тихие часы, «держать движок в памяти», проверка/стоп/повтор |
+| **Дополнительно** | скорость, тихие часы, «держать движок в памяти», пузырь, горячие клавиши, реакция на ошибки, экспорт/импорт настроек, проверка/стоп/повтор |
 | **Статистика** | сколько ответов озвучено и сколько всего речи |
 
 Справа вверху — переключатель **EN / RU**.
 
-В подменю персонажа: имя, размер, голос, озвучка ответа, озвучка рассуждений.
+В подменю персонажа: имя, блок «Характер» (галочка «Активировать», своё
+описание и манера речи — скорость и окраска голоса), размер, голос и режимы
+озвучки. Пузырь с произносимой фразой висит над персонажем и скрывается, пока
+открыты настройки.
 Настройки индивидуальны и хранятся в `localStorage` окна
 (`x2ai-avatar:char-settings`).
 
@@ -225,11 +235,21 @@ cp -r plugins/x2ai-avatar ~/.config/opencode/plugins/
 
   Остальное (unix-сокет, `flock`, `setproctitle`, ONNX CPU) работает так же,
   пути те же — `~/.config/opencode/...`.
-- **Windows** — не поддерживается и «как есть» не заработает. Нужен порт:
-  сервер запускается shell-скриптом, сокет блокируется через `fcntl.flock`,
-  сервер слушает unix-сокет, звук играет `afplay` / `paplay`. Всё это придётся
-  заменить (`.cmd`-лаунчер, блокировка через lock-файл, TCP вместо unix-сокета,
-  `ffplay` или `winsound`) и проверить пути.
+- **Windows** — не протестирован: под рукой не было машины, поэтому никто не
+  проверял. Порт небольшой, и нам нужны тестеры. Сервер запускается shell-
+  скриптом, слушает unix-сокет, блокируется через `fcntl.flock`, звук играет
+  `afplay` / `paplay` — на Windows это `.cmd`-запуск, TCP-порт вместо
+  unix-сокета и `ffplay`. Что поставить:
+  1. **Python 3.11+** — с python.org, галочка «Add python.exe to PATH».
+  2. **FFmpeg** — `winget install Gyan.FFmpeg` (из него берётся `ffplay`).
+  3. **OpenCode Desktop** и файлы плагина: `gui-experimental.cjs` в
+     `%USERPROFILE%\.config\opencode\plugins\x2ai-avatar\`,
+     `x2ai-tts-done.js` в `%USERPROFILE%\.config\opencode\plugins\`,
+     папку `x2ai-teratts\` — в `%USERPROFILE%\.config\opencode\`.
+  4. Модель TeraTTS — как в разделе «Голосовой движок» выше, пути те же.
+  Чего ждать: интерфейс, спрайты и настройки заработают сразу, а звук и
+  артикуляция — только после правки сокета и лаунчера. Если готов помочь —
+  запусти, пришли, что упало, и мы доведём Windows до рабочего состояния.
 
 ### Сборка
 
@@ -294,7 +314,6 @@ HTTP-мост на `127.0.0.1:47821` (порт переопределяется 
 | `POST /limits` | лимиты длины пересказа для персонажа |
 | `POST /say` | озвучить фразу голосом персонажа |
 | `POST /test` | пробная фраза |
-| `POST /replay` | повторить последнюю фразу |
 | `POST /stop` | заглушить текущую озвучку |
 
 Окно опрашивает `/state` раз в 250 мс и двигает губами только если `sid`
@@ -326,7 +345,7 @@ HTTP-мост на `127.0.0.1:47821` (порт переопределяется 
 
 ## English
 
-**A voiced character in the OpenCode Desktop window.** Version 0.4.0.
+**A voiced character in the OpenCode Desktop window.** Version 0.6.0.
 
 Local voice-over for agent replies plus a pixel character in the bottom-left
 corner of the window. The main pack is `pixel`: five characters drawn by us,
@@ -353,19 +372,27 @@ torch.
   `<ru>` and `<en>`, so there are no other languages.
 - Five characters in the pixel pack; a checkbox marks who is available for new
   chats and for the switch button.
-- Per-character settings: size, voice, speech modes, summary detail. Stored in
-  the window's `localStorage`.
-- **Mute** button (silences replies and reasoning without changing settings),
-  **stop**, **replay** the last phrase, and **test** the voice.
+- Per-character settings: size, voice, speech modes, summary detail, and a
+  **Character** block (an "Enable" checkbox, a preset temper or your own text,
+  and **speech style** — voice speed and tone). Stored in the window's
+  `localStorage`.
+- **Character** is added to the chat's system instructions: it keeps the manner
+  of speech but never distorts facts or code.
+- **Speech bubble**, **hotkeys** (⌘/Ctrl+Shift+M for mute, S for stop, A for the
+  panel) and error reactions are toggled in "Advanced".
+- **Export and import** of character settings to a file; packs load lazily, so
+  the window starts faster and third-party packs can be added from a folder.
+- **Mute** button (silences replies and reasoning without changing settings)
+  and **stop**, plus a settings panel with characters, voices and speech modes.
 - Pings while the agent is working: the interval grows from 60 s by ×1.6 up to
   10 minutes and resets after a reply. Other chats are never interrupted.
 - Gender and name rules are injected into the system instructions of the first
   request and are invisible in the conversation.
-- Linux is supported, Windows is not.
+- Linux is supported; Windows has not been tested yet — see below.
 
 ### Requirements
 
-- macOS 13+ or Linux. Windows is not supported yet.
+- macOS 13+, Linux or Windows (Windows untested, see below).
 - Python 3.10+ and ~650 MB for the model and environment.
 - OpenCode Desktop with GUI plugin support.
 - An audio player: `afplay` (macOS, built in) or `paplay` / `aplay` / `ffplay` /
@@ -457,13 +484,14 @@ The main menu has four buttons, each opening a submenu with a "Back" button:
 | **User data** | user name and gender for summaries and rules |
 | **Characters** | pack, character list with checkboxes and two buttons: select (✓) and settings (⚙) |
 | **Auxiliary model** | model for summaries and translation, search and paged list |
-| **Advanced** | speed, quiet hours, "keep engine in memory", test/stop/replay |
+| **Advanced** | quiet hours, "keep engine in memory", bubble, hotkeys, settings export/import |
 | **Statistics** | how many replies were voiced and total speech time |
 
 Top right — the **EN / RU** switch.
 
 The character submenu contains: name, size, voice, reply voice-over, reasoning
-voice-over. Settings are per character and stored in the window's `localStorage`
+voice-over, a "Character" checkbox with a field for your own text, and a "Speech
+style" block (voice speed and tone). Settings are per character and stored in the window's `localStorage`
 (`x2ai-avatar:char-settings`).
 
 ### Character packs
@@ -546,12 +574,21 @@ reasoning translation use the same language as the voice-over.
 
   Everything else (unix socket, `flock`, `setproctitle`, ONNX CPU) works the
   same, with the same paths — `~/.config/opencode/...`.
-- **Windows** — not supported, and it will not work as is. It needs a port: the
-  server is started by a shell script, the socket is locked with `fcntl.flock`,
-  the server listens on a unix socket, and audio is played by `afplay` /
-  `paplay`. All of that must be replaced (a `.cmd` launcher, a lock file, TCP
-  instead of a unix socket, `ffplay` or `winsound`), and the paths must be
-  checked.
+- **Windows** — untested: there was no Windows machine on hand, so nobody has
+  verified it. The port is small and testers are welcome. The server is started
+  by a shell script, listens on a unix socket, locks with `fcntl.flock`, and
+  plays audio with `afplay` / `paplay`; on Windows that becomes a `.cmd`
+  launcher, a TCP port instead of a unix socket, and `ffplay`. What to install:
+  1. **Python 3.11+** from python.org, tick "Add python.exe to PATH".
+  2. **FFmpeg** — `winget install Gyan.FFmpeg` (it provides `ffplay`).
+  3. **OpenCode Desktop** and the plugin files: `gui-experimental.cjs` into
+     `%USERPROFILE%\.config\opencode\plugins\x2ai-avatar\`,
+     `x2ai-tts-done.js` into `%USERPROFILE%\.config\opencode\plugins\`,
+     the `x2ai-teratts\` folder into `%USERPROFILE%\.config\opencode\`.
+  4. The TeraTTS model as in "Voice engine" above, same paths.
+  What to expect: the UI, sprites and settings work right away; sound and lip
+  sync need the socket and launcher ported first. If you want to help, run it,
+  send us what breaks, and we will finish Windows support together.
 
 ### Build
 
@@ -619,7 +656,6 @@ tiny HTTP bridge on `127.0.0.1:47821` (the port can be overridden with
 | `POST /limits` | summary length limits for a character |
 | `POST /say` | speak a phrase in the character's voice |
 | `POST /test` | test phrase |
-| `POST /replay` | replay the last phrase |
 | `POST /stop` | stop the current voice-over |
 
 The window polls `/state` every 250 ms and moves the lips only when `sid`

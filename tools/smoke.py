@@ -63,7 +63,6 @@ def check_bundle_markers() -> None:
         "x2ai-avatar:enabled",
         "bridge(\"/chars\"",
         "Тихие часы",
-        "Повторить",
         "x2ai-avatar:stats",
         "pingReset",
         "voiceGender",
@@ -82,12 +81,36 @@ def check_bundle_markers() -> None:
         "Выключить озвучку",
         "detailChars",
         "detailSlider",
+        # Характер, манера речи, ленивые паки, пузырь, хоткеи
+        "temperText",
+        "previewManner",
+        "temperPresets",
+        "Активировать",
+        "Манера речи",
+        "TALKPLAN",
+        "PACK_INDEX",
+        "ensurePack",
+        "loadExternalPacks",
+        "bubbleLine",
+        "setBubbleText",
+        "BUBBLE_MODES",
+        "onHotkey",
+        "reportOpenTabs",
+        "x2ai-avatar:ui",
+        "Экспортировать настройки",
+        "Импортировать настройки",
     ]
     for marker in markers:
         if marker in text:
             ok(f"маркер «{marker}»")
         else:
             bad(f"в бандле нет «{marker}»")
+    # Кадры паков больше не зашиваются в бандл — окно берёт их с моста.
+    for gone in ("__SPRITES__", "__TALK_PLAN__", "Object.keys(PACKS)"):
+        if gone in text:
+            bad(f"в бандле остался «{gone}»")
+        else:
+            ok(f"бандл без «{gone}»")
 
 
 def check_sprites() -> None:
@@ -153,6 +176,20 @@ def check_tts_markers() -> None:
         "x2ai-name-state.json",
         "function installedVoices",
         "function speakSay",
+        "TEMPER_TEXT",
+        "function readTemper",
+        "x2ai-char-temper.json",
+        "function readStyle",
+        "x2ai-char-style.json",
+        'route === "/pack"',
+        'route === "/packs"',
+        'route === "/settings/export"',
+        'route === "/settings/import"',
+        'route === "/open"',
+        "function tabOpen",
+        "x2ai-open-sessions.json",
+        "styleOverride",
+        "tempers: TEMPER_TEXT",
     ]
     for marker in markers:
         if marker in text:
@@ -162,7 +199,7 @@ def check_tts_markers() -> None:
     # Удалённое не должно возвращаться: piper и say-движок остались в прошлом
     # (say — только аварийный фоллбек внутри speak), дедуп рассуждений живёт
     # только в claimReason.
-    for gone in ("speakPiper(", "TTS_ENGINE", "pickVoice(", "reasonSeen"):
+    for gone in ("speakPiper(", "TTS_ENGINE", "pickVoice(", "reasonSeen", "autoLang", "textLang"):
         if gone in text:
             bad(f"tts: вернулся удалённый код «{gone}»")
         else:
@@ -265,6 +302,28 @@ def check_deploy() -> None:
             bad(f"устарело: {dst.name} — скопируй {src.relative_to(ROOT)}")
         else:
             ok(f"задеплоено: {dst.name}")
+    # Кадры паков окно грузит с моста из живой копии — сверяем и её.
+    packs = ROOT / "plugins" / "x2ai-avatar" / "packs"
+    live = home / ".config/opencode/plugins/x2ai-avatar/packs"
+    for src in sorted(packs.glob("*.json")):
+        dst = live / src.name
+        if not dst.exists() or dst.read_bytes() != src.read_bytes():
+            bad(f"устарело: packs/{src.name} — скопируй plugins/x2ai-avatar/packs")
+    if not problems:
+        ok(f"паки задеплоены ({len(list(packs.glob('*.json')))} файлов)")
+
+
+def check_talk_plan() -> None:
+    """Партитура рта — чистая логика, у неё есть свой тест."""
+    test = ROOT / "tools" / "test_talk_plan.js"
+    if not test.exists():
+        bad("нет tools/test_talk_plan.js")
+        return
+    res = subprocess.run(["node", str(test)], capture_output=True, text=True)
+    if res.returncode != 0:
+        bad("test_talk_plan.js", (res.stdout + res.stderr).strip()[-200:])
+    else:
+        ok("артикуляция: тест talk-plan")
 
 
 def main() -> int:
@@ -275,6 +334,7 @@ def main() -> int:
     check_tts_markers()
     check_server()
     check_deploy()
+    check_talk_plan()
     check_bridge()
 
     print(f"Пройдено: {len(passed)}")
