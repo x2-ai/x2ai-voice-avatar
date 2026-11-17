@@ -43,6 +43,12 @@ function nameFor(voice) {
   const key = packKey(voice);
   return pack[key] || CHAR_NAMES.anime[key] || CHAR_NAMES.anime[voice] || voice;
 }
+// Детализация пересказа: 0 — совсем коротко, 1 — подробно, 0.5 = 400 символов.
+const detailChars = (v) => {
+  const k = Math.min(1, Math.max(0, Number(v)));
+  return Math.round((120 + k * 560) / 10) * 10;
+};
+
 const HEIGHT = 224; // px на экране (спрайты 336 px)
 
 // Размер персонажа настраивается в панели и живёт в localStorage окна.
@@ -192,7 +198,7 @@ const I18N = {
     "← Назад": "← Back",
     "Имя (необязательно)": "Name (optional)",
     "Как обращаться к тебе в пересказе": "How to address you in the summary",
-    "Не указывать": "Not specified",
+    "Не указан": "Not specified",
     "Мужской": "Male",
     "Женский": "Female",
     "Пак персонажей": "Character pack",
@@ -250,6 +256,9 @@ const I18N = {
     "Заглушить текущую озвучку": "Silence the current speech",
     "↻ Повторить": "↻ Replay",
     "↻ Повторить последний текст": "↻ Replay the last text",
+    "Короче": "Shorter",
+    "Подробнее": "More detail",
+    "≈ {n} символов": "≈ {n} characters",
     "Озвучить последний текст ещё раз": "Speak the last text again",
     "Озвучено ответов: {n} · всего речи: {m} мин {s} с": "Answers spoken: {n} · total speech: {m} min {s} s",
     "Сбросить": "Reset",
@@ -567,6 +576,19 @@ function createView(ctx) {
     return applyHeight(charSettingsFor(key).height || DEFAULT_HEIGHT);
   }
   // Озвучка и рассуждения тоже свои у каждого персонажа: применяем при смене.
+  // Предел символов для этого персонажа: мост хранит его по базовому голосу,
+  // поэтому новые чаты с тем же персонажем получают ту же длину.
+  const sendLimits = (key) => {
+    if (!bridgeReady || !key) return;
+    const cs = charSettingsFor(key);
+    const base = VOICE_ALIAS[key] || key;
+    bridge("/limits", {
+      voice: base,
+      sid: currentSid || "",
+      speech: detailChars(cs.detailSpeech === undefined ? 0.5 : cs.detailSpeech),
+      reason: detailChars(cs.detailReason === undefined ? 0.5 : cs.detailReason),
+    }).catch(() => {});
+  };
   function applyPrefsFor(key) {
     if (!bridgeReady) return;
     const cs = charSettingsFor(key);
@@ -574,6 +596,7 @@ function createView(ctx) {
       speechMode = cs.speech;
       bridge("/speech", { mode: speechMode }).catch(() => {});
     }
+    sendLimits(key);
     if (cs.reason) {
       const cur = reasonState || { mode: "off", translate: true };
       if (cs.reason.mode !== cur.mode || Boolean(cs.reason.translate) !== Boolean(cur.translate)) {
@@ -915,6 +938,37 @@ function createView(ctx) {
       return row;
     };
 
+    // Ползунок «короче — подробнее»: показывается только при «кратко».
+    const detailSlider = (value, onChange) => {
+      const wrap = document.createElement("div");
+      wrap.style.cssText = "margin:2px 0 4px;padding:2px 2px 0";
+      const top = document.createElement("div");
+      top.style.cssText =
+        "display:flex;justify-content:space-between;font-size:10px;opacity:.55;margin-bottom:2px";
+      const left = document.createElement("span");
+      left.textContent = t("Короче");
+      const right = document.createElement("span");
+      right.textContent = t("Подробнее");
+      top.append(left, right);
+      const input = document.createElement("input");
+      input.type = "range";
+      input.min = "0";
+      input.max = "1";
+      input.step = "0.05";
+      input.value = String(value);
+      input.style.cssText = "width:100%;accent-color:#5b8dee;cursor:pointer";
+      const note = document.createElement("div");
+      note.style.cssText = "font-size:10px;opacity:.4;text-align:right;margin-top:1px";
+      const paint = () => {
+        note.textContent = tf("≈ {n} символов", { n: detailChars(Number(input.value)) });
+      };
+      input.oninput = paint;
+      input.onchange = () => onChange(Number(input.value));
+      paint();
+      wrap.append(top, input, note);
+      return { wrap, input };
+    };
+
     // Общая рамка для настроек: видно, что блоки относятся к одному разделу.
     const boxEl = () => {
       const el = document.createElement("div");
@@ -1131,7 +1185,7 @@ function createView(ctx) {
       box.appendChild(gRow);
 
       const GENDERS = [
-        ["", "Не указывать"],
+        ["", "Не указан"],
         ["m", "Мужской"],
         ["f", "Женский"],
       ];
@@ -1423,6 +1477,7 @@ function createView(ctx) {
         for (const item of speechRows) item.row.setActive(item.mode === cur);
         speechNote.style.display = cur === "silent" ? "block" : "none";
         speechWarn.style.display = cur !== "silent" && modelDisabled === true ? "block" : "none";
+        speechDetail.wrap.style.display = cur === "summary" ? "block" : "none";
       };
 
       const setSpeech = (mode) => {
@@ -1439,6 +1494,14 @@ function createView(ctx) {
         speechRows.push({ mode: value, row });
         sList.appendChild(row);
       }
+      const speechDetail = detailSlider(
+        charSettingsFor(key).detailSpeech === undefined ? 0.5 : charSettingsFor(key).detailSpeech,
+        (v) => {
+          saveCharSetting(key, { detailSpeech: v });
+          sendLimits(key);
+        },
+      );
+      sList.appendChild(speechDetail.wrap);
       sBody.appendChild(sList);
       sBody.appendChild(speechNote);
       sBody.appendChild(speechWarn);
@@ -1470,6 +1533,7 @@ function createView(ctx) {
         for (const item of reasonRows) item.row.setActive(item.mode === st.mode);
         rTransCb.checked = Boolean(st.translate);
         rList.style.opacity = st.mode === "off" ? ".5" : "1";
+        reasonDetail.wrap.style.display = st.mode === "brief" ? "block" : "none";
         reasonWarn.style.display = st.mode !== "off" && modelDisabled === true ? "block" : "none";
       };
 
@@ -1488,6 +1552,14 @@ function createView(ctx) {
         reasonRows.push({ mode: value, row });
         rList.appendChild(row);
       }
+      const reasonDetail = detailSlider(
+        charSettingsFor(key).detailReason === undefined ? 0.5 : charSettingsFor(key).detailReason,
+        (v) => {
+          saveCharSetting(key, { detailReason: v });
+          sendLimits(key);
+        },
+      );
+      rList.appendChild(reasonDetail.wrap);
       refreshReason();
       rBody.append(rList, rTrans, reasonWarn);
 

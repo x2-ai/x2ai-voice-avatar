@@ -307,6 +307,28 @@ function voiceLang() {
 
 // Глобальное выключение озвучки кнопкой у персонажа: ответы и рассуждения
 // молчат, ручные реплики по клику и проверка звука остаются.
+// Пределы символов пересказа по персонажу: { "ru_f1": {speech, reason} }.
+const LIMITS_FILE = `${process.env.HOME}/.config/opencode/x2ai-limits.json`;
+function readLimits() {
+  try {
+    const raw = JSON.parse(fs.readFileSync(LIMITS_FILE, "utf8"));
+    return raw && typeof raw === "object" ? raw : {};
+  } catch (e) {
+    return {};
+  }
+}
+
+function limitFor(sid, voice, kind) {
+  try {
+    const map = readLimits();
+    const base = teraVoice(sid) || String(voice || "").replace(/^px_/, "");
+    const rec = map[String(sid || "")] || map[base] || map[String(voice || "")];
+    const v = rec && Number(rec[kind]);
+    if (Number.isFinite(v) && v >= 80) return Math.min(1200, Math.round(v));
+  } catch (e) {}
+  return MAX_CHARS;
+}
+
 function readMuted() {
   try {
     const raw = JSON.parse(fs.readFileSync(SPEECH_FILE, "utf8"));
@@ -1100,7 +1122,14 @@ async function speakReason(rsid, rtext) {
   markReasonSpoken(rkey);
   if (reasonSeen.size > 500) reasonSeen.clear();
   log("REASON:", rsid, reason.mode, reason.translate ? "tr" : "-", out.length);
-  speak(out, rsid, rvoice, reason.mode === "brief" ? MAX_CHARS : FULL_MAX_CHARS, "think", "reason");
+  speak(
+    out,
+    rsid,
+    rvoice,
+    reason.mode === "brief" ? limitFor(rsid, rvoice, "reason") : FULL_MAX_CHARS,
+    "think",
+    "reason",
+  );
 }
 
 function speakTera(text, sid, forced, emotion, kind) {
@@ -1150,7 +1179,7 @@ function speakTera(text, sid, forced, emotion, kind) {
 let lastSpeak = null;
 
 function speak(text, sid, voice, maxChars = MAX_CHARS, emotion = null, kind = null) {
-  const limit = Math.max(maxChars || MAX_CHARS, MAX_CHARS);
+  const limit = Math.max(60, Number(maxChars) || MAX_CHARS);
   let toSay = decorate(text);
   if (toSay.length > limit) {
     const cut = toSay.slice(0, limit);
@@ -1539,6 +1568,24 @@ function startBridge(ctx) {
         send(res, 200, { ok: true, chars: lastSpeak.text.length });
         return;
       }
+      if (req.method === "POST" && route === "/limits") {
+        const voice = String(payload.voice || "").replace(/^px_/, "");
+        if (voice) {
+          const map = readLimits();
+          const rec = map[voice] && typeof map[voice] === "object" ? map[voice] : {};
+          const clamp = (v) => Math.max(80, Math.min(1200, Math.round(Number(v) || 0)));
+          if (payload.speech !== undefined) rec.speech = clamp(payload.speech);
+          if (payload.reason !== undefined) rec.reason = clamp(payload.reason);
+          map[voice] = rec;
+          const sid = String(payload.sid || "");
+          if (sid) map[sid] = { ...rec };
+          try {
+            fs.writeFileSync(LIMITS_FILE, JSON.stringify(map, null, 2));
+          } catch (e) {}
+        }
+        send(res, 200, { ok: true });
+        return;
+      }
       if (req.method === "POST" && route === "/test") {
         // Пробная фраза текущим голосом и с текущей скоростью. Через speak(),
         // чтобы сервер записал state с текстом — тогда двигаются губы.
@@ -1701,7 +1748,7 @@ module.exports = {
             log("SKIP: not " + voiceLang(), summary.slice(0, 60));
             continue;
           }
-          speak(summary, sid, voice, mode === "full" ? FULL_MAX_CHARS : MAX_CHARS, "up");
+          speak(summary, sid, voice, mode === "full" ? FULL_MAX_CHARS : limitFor(sid, voice, "speech"), "up");
         }
       } catch (e) {
         log("SUBSCRIBE_END", e?.message);

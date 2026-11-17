@@ -81,6 +81,8 @@ def check_bundle_markers() -> None:
         "CHAR_NAMES_EN",
         "muteBtn",
         "Выключить озвучку",
+        "detailChars",
+        "detailSlider",
     ]
     for marker in markers:
         if marker in text:
@@ -146,6 +148,8 @@ def check_tts_markers() -> None:
         "eng_f3",
         "p.stdin.write(payload)",
         "function readMuted",
+        "function limitFor",
+        "x2ai-limits.json",
     ]
     for marker in markers:
         if marker in text:
