@@ -249,6 +249,7 @@ const I18N = {
     "■ Стоп": "■ Stop",
     "Заглушить текущую озвучку": "Silence the current speech",
     "↻ Повторить": "↻ Replay",
+    "↻ Повторить последний текст": "↻ Replay the last text",
     "Озвучить последний текст ещё раз": "Speak the last text again",
     "Озвучено ответов: {n} · всего речи: {m} мин {s} с": "Answers spoken: {n} · total speech: {m} min {s} s",
     "Сбросить": "Reset",
@@ -1148,7 +1149,14 @@ function createView(ctx) {
       for (const [value, text] of GENDERS) {
         const row = vRow(text, userGender === value, () => saveUser({ gender: value }));
         row.style.flex = "1";
+        row.style.minWidth = "0";
         row.style.justifyContent = "center";
+        row.style.textAlign = "center";
+        row.style.whiteSpace = "normal";
+        row.style.overflow = "visible";
+        row.style.textOverflow = "clip";
+        row.style.lineHeight = "1.25";
+        row.style.padding = "4px 4px";
         gRow.appendChild(row);
         genderRows.push({ value, row });
       }
@@ -1753,12 +1761,15 @@ function createView(ctx) {
       stopBtn.onclickAction = () => {
         stopAll();
       };
-      const replayBtn = actBtn("↻ Повторить", "Озвучить последний текст ещё раз");
+      const replayBtn = actBtn("↻ Повторить последний текст", "Озвучить последний текст ещё раз");
       replayBtn.onclickAction = () => {
         bridge("/replay", {}).catch(() => {});
       };
-      actRow.append(testBtn, replayBtn, stopBtn);
-      box.appendChild(actRow);
+      const replayRow = document.createElement("div");
+      replayRow.style.cssText = "display:flex;margin-top:6px";
+      replayRow.appendChild(replayBtn);
+      actRow.append(testBtn, stopBtn);
+      box.append(actRow, replayRow);
     } else if (view.name === "stats") {
       head("Статистика");
       const box = boxEl();
