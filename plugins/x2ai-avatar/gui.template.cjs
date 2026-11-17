@@ -742,7 +742,13 @@ function createView(ctx) {
   const selectCharacter = (key) => {
     if (!isCharEnabled(key) || key === packKey(voice)) return;
     switchToCharacter(key);
-    if (panelOpen) renderPanel();
+    // apply() меняет voice после анимации (175 мс), поэтому подсветку
+    // перерисовываем не сразу, иначе она остаётся на прежнем персонаже.
+    if (panelOpen) {
+      setTimeout(() => {
+        if (panelOpen) renderPanel();
+      }, 430);
+    }
   };
 
   // Раскрывающиеся блоки настроек: по умолчанию свёрнуты.
