@@ -327,6 +327,16 @@ HTTP-мост на `127.0.0.1:47821` (порт переопределяется 
 `~/.config/opencode/x2ai-rules-seen.json`, поэтому перезагрузка плагина не
 заставляет повторять их на каждом шаге.
 
+### Поддержать автора
+
+Плагин бесплатный и работает офлайн. Если он пригодился — вот кошельки:
+
+- **BTC** — `bc1p67wgr4qpp84v8zjnufhrhn62sspke4m4np5cc0slmqnsvgt7vlgqxldjux`
+- **ETH / BNB и другие EVM-сети** — `0xC74bF5C4Fc00656F713DA4FBC210C750434C662C`
+- **SOL** — `DkKAewrMxWk8qHgk5jPorFaZeQzQXFc7p7Kygv5VYuYL`
+- **TON** — `UQC2EciOqkEqAqWMN8wyj06Y4crwabnaJg7NGffuC1Byz4U3`
+- **TRX** — `THEdtg5faibdsgNjxurRu6MRNwS9Vkt4aW`
+
 ### Лицензии
 
 - Код — MIT.
@@ -669,6 +679,16 @@ character name, its gender (from the voice), and the user's name and gender
 already received the rules is kept in
 `~/.config/opencode/x2ai-rules-seen.json`, so a plugin reload does not repeat
 them on every step.
+
+### Support the author
+
+The plugin is free and works offline. If it helped, here are the wallets:
+
+- **BTC** — `bc1p67wgr4qpp84v8zjnufhrhn62sspke4m4np5cc0slmqnsvgt7vlgqxldjux`
+- **ETH / BNB and other EVM chains** — `0xC74bF5C4Fc00656F713DA4FBC210C750434C662C`
+- **SOL** — `DkKAewrMxWk8qHgk5jPorFaZeQzQXFc7p7Kygv5VYuYL`
+- **TON** — `UQC2EciOqkEqAqWMN8wyj06Y4crwabnaJg7NGffuC1Byz4U3`
+- **TRX** — `THEdtg5faibdsgNjxurRu6MRNwS9Vkt4aW`
 
 ### Licenses
 

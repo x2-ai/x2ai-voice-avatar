@@ -94,7 +94,11 @@ const saveCharSetting = (key, patch) => {
 // Кошельки для доната: список пуст — в панели вежливая заглушка.
 // Формат записи: { net: "TON", addr: "UQ…" }.
 const DONATE = [
-  // Адреса добавим, когда кошельки будут готовы.
+  { net: "BTC", addr: "bc1p67wgr4qpp84v8zjnufhrhn62sspke4m4np5cc0slmqnsvgt7vlgqxldjux" },
+  { net: "EVM", addr: "0xC74bF5C4Fc00656F713DA4FBC210C750434C662C", note: "ETH, BNB и другие сети" },
+  { net: "SOL", addr: "DkKAewrMxWk8qHgk5jPorFaZeQzQXFc7p7Kygv5VYuYL" },
+  { net: "TON", addr: "UQC2EciOqkEqAqWMN8wyj06Y4crwabnaJg7NGffuC1Byz4U3" },
+  { net: "TRX", addr: "THEdtg5faibdsgNjxurRu6MRNwS9Vkt4aW" },
 ];
 
 // Окно: мелочи интерфейса, которые не касаются движка и живут в localStorage.
@@ -259,6 +263,7 @@ const I18N = {
     "Кошельки скоро появятся.": "Wallets will appear here soon.",
     "Нажми, чтобы скопировать": "Click to copy",
     "Скопировано": "Copied",
+    "ETH, BNB и другие сети": "ETH, BNB and other EVM chains",
     "Модель не выбрана": "No model selected",
     "← Назад": "← Back",
     "Свой характер (пусто — готовый)": "Custom character (empty — preset)",
@@ -520,6 +525,7 @@ function createView(ctx) {
     if (!next || (next === voice && !force)) return;
     voice = next;
     img.src = frame(voice, moodFrame());
+    moodFrameShown = moodFrame();
     if (moodState.value !== "awake") setMood(moodState.value, true);
     root.title = `x2ai · ${charName(voice)} · ${voice}`;
     applyHeightFor(packKey(next));
@@ -2372,6 +2378,12 @@ function createView(ctx) {
         addrEl.textContent = card.addr || "";
         addrEl.style.cssText = "font-family:ui-monospace,Menlo,monospace;overflow-wrap:anywhere;opacity:.9";
         row.append(netEl, addrEl);
+        if (card.note) {
+          const noteEl = document.createElement("span");
+          noteEl.textContent = t(card.note);
+          noteEl.style.cssText = "font-size:9px;opacity:.5";
+          row.appendChild(noteEl);
+        }
         row.onclick = (ev) => {
           ev.stopPropagation();
           const back = () => {
@@ -2682,6 +2694,9 @@ function createView(ctx) {
   const IDLE_MS = 3 * 60 * 1000;
   const SHADOW = "drop-shadow(0 2px 6px rgba(0,0,0,.28))";
   let moodTimer = null;
+  // Какой кадр настроения сейчас стоит в img: речь и перерисовки могли
+  // вернуть «closed», хотя персонаж спит или злится.
+  let moodFrameShown = "closed";
   let idleTimer = null;
 
   // Короткий мягкий сигнал пробуждения: два синуса, без внешних файлов.
@@ -2714,7 +2729,8 @@ function createView(ctx) {
     const prev = moodState.value;
     moodState.value = next;
     if (next === "sleeping") {
-      if (!quiet) img.src = frame(voice, "blink");
+      img.src = frame(voice, "blink");
+      moodFrameShown = "blink";
       img.style.filter = `${SHADOW} saturate(.7) brightness(.9)`;
       // Наклон живёт внутри кейфреймов: animation перебивает inline-transform.
       box.style.transform = "";
@@ -2724,7 +2740,8 @@ function createView(ctx) {
       zzz.style.opacity = "0";
       root.title = `x2ai · ${charName(voice)} · ${t("спит")}`;
     } else if (next === "angry") {
-      if (!quiet) img.src = frame(voice, "wide");
+      img.src = frame(voice, "wide");
+      moodFrameShown = "wide";
       img.style.filter = `${SHADOW} saturate(1.35) brightness(1.05)`;
       box.style.transform = "";
       // Красная подсветка + дрожь: злость видно боковым зрением.
@@ -2734,7 +2751,8 @@ function createView(ctx) {
       zzz.style.opacity = "0";
       root.title = `x2ai · ${charName(voice)} · ${t("злится")}`;
     } else {
-      if (!quiet) img.src = frame(voice, "closed");
+      img.src = frame(voice, "closed");
+      moodFrameShown = "closed";
       img.style.filter = SHADOW;
       box.style.filter = "";
       box.style.animation = "";
@@ -2836,6 +2854,7 @@ function createView(ctx) {
       if (i >= plan.length) {
         // План доиграл раньше звука — держим закрытый рот, не открываем заново.
         img.src = frame(voice, "closed");
+        moodFrameShown = "closed";
         return;
       }
       const item = plan[i++];
@@ -3156,6 +3175,12 @@ function createView(ctx) {
   const bootAt = Date.now();
   const pollBridge = () => {
     syncName();
+    // Кадр настроения сторожит себя сам: если спящему вернули «closed»
+    // (моргание, конец фразы, перерисовка), глаза снова закрываем.
+    if (!speaking && moodState.value !== "awake" && moodFrameShown !== moodFrame()) {
+      moodFrameShown = moodFrame();
+      img.src = frame(voice, moodFrame());
+    }
     // Мост мог подняться уже после первой попытки — добираем настройки здесь.
     if (!speechLoaded) loadSpeechOnce();
     bridge(`/state?sid=${encodeURIComponent(currentSid || "")}`)
@@ -3399,7 +3424,11 @@ function createView(ctx) {
       if (!speaking && moodState.value === "awake") {
         img.src = frame(voice, "blink");
         setTimeout(() => {
-          if (!speaking) img.src = frame(voice, "closed");
+          // За 120 мс можно успеть заснуть — тогда глаза не открываем.
+          if (!speaking && moodState.value === "awake") {
+            img.src = frame(voice, "closed");
+            moodFrameShown = "closed";
+          }
         }, 120);
       }
       scheduleBlink();
