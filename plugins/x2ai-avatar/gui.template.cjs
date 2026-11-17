@@ -211,7 +211,8 @@ const I18N = {
     "По умолчанию": "Default",
     "сейчас: {v}": "now: {v}",
     "Имя персонажа": "Character name",
-    "Пусто — имя по умолчанию.": "Empty — the default name is used.",
+    "Пусто — имя по умолчанию. Своё имя не переводится.":
+      "Empty — the default name is used. A custom name is never translated.",
     "Озвучка ответа": "Answer speech",
     "Выключено": "Off",
     "Кратко": "Brief",
@@ -1203,16 +1204,33 @@ function createView(ctx) {
       hint("Галочка — персонаж доступен в новых чатах и при смене. Снятая — уже выбранного не убирает.", box);
     } else if (view.name === "char") {
       const key = view.key;
-      head(charName(key), { name: "chars" }, (value) => {
-        const clean = value.replace(/\s+/g, " ").trim().slice(0, 40);
+      head(charName(key), { name: "chars" });
+      const box = boxEl();
+
+      // Имя персонажа: поле ввода, как имя пользователя. Пусто — дефолтное имя.
+      const nameInput = document.createElement("input");
+      nameInput.type = "text";
+      nameInput.maxLength = 40;
+      nameInput.placeholder = charName(key);
+      nameInput.value = (charSettingsFor(key).name || "").trim();
+      nameInput.style.cssText =
+        "width:100%;box-sizing:border-box;font:inherit;font-size:12px;padding:5px 7px;" +
+        "border:1px solid rgba(255,255,255,.16);border-radius:7px;" +
+        "background:rgba(255,255,255,.05);color:inherit;outline:none";
+      nameInput.onclick = (ev) => ev.stopPropagation();
+      nameInput.addEventListener("change", () => {
+        const clean = nameInput.value.replace(/\s+/g, " ").trim().slice(0, 40);
         saveCharSetting(key, { name: clean });
         if (key === packKey(voice) && currentSid) {
           bridge("/voice", { sid: currentSid, voice: charVoice(voice), name: charName(key) }).catch(() => {});
         }
         renderPanel();
       });
-      const box = boxEl();
-      if (!(charSettingsFor(key).name || "").trim()) hint("Пусто — имя по умолчанию.", box);
+      nameInput.addEventListener("keydown", (ev) => {
+        if (ev.key === "Enter") nameInput.blur();
+      });
+      box.appendChild(nameInput);
+      hint("Пусто — имя по умолчанию. Своё имя не переводится.", box);
 
       if (!isCharEnabled(key)) {
         hint("Персонаж выключен: в новых чатах не появится, включить в текущем чате нельзя.", box);

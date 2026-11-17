@@ -703,6 +703,7 @@ function langRatio(text, lang) {
 const LANG_TARGET = { ru: "русский", en: "английский" };
 async function translateText(text, lang = "ru") {
   if (!genText || !sumModel()) return "";
+  if (langRatio(text, lang) >= 0.9) return String(text || "").trim();
   const target = LANG_TARGET[lang] || LANG_TARGET.ru;
   try {
     const out = await Promise.race([
@@ -1059,7 +1060,7 @@ async function speakReason(rsid, rtext) {
   let out = "";
   if (reason.mode === "brief") {
     const short = await llmReason(rtext, rgender, reason.translate, rsid);
-    out = short || (lang === "ru" ? summarize(rtext) : "") || "";
+    out = short || summarize(rtext) || "";
   } else if (reason.translate) {
     out = (await translateText(rtext.slice(0, 3000), lang)) || "";
   }
