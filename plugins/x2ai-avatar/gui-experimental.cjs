@@ -57,6 +57,67 @@ try {
   }
 } catch (e) {}
 
+// Размер по умолчанию: у персонажа может быть свой, он лежит в localStorage.
+const DEFAULT_HEIGHT = charHeight;
+
+// Индивидуальные настройки персонажа: размер, голос, озвучка ответа и рассуждений.
+// Ключ — id персонажа внутри пака (px_ru_f1, fx_cat), поэтому паки не пересекаются.
+const CHAR_SETTINGS_KEY = "x2ai-avatar:char-settings";
+let charSettings = {};
+try {
+  const raw = JSON.parse(localStorage.getItem(CHAR_SETTINGS_KEY) || "{}");
+  if (raw && typeof raw === "object") charSettings = raw;
+} catch (e) {}
+const charSettingsFor = (key) => (key && charSettings[key]) || {};
+const saveCharSetting = (key, patch) => {
+  if (!key) return;
+  charSettings[key] = { ...charSettingsFor(key), ...patch };
+  try {
+    localStorage.setItem(CHAR_SETTINGS_KEY, JSON.stringify(charSettings));
+  } catch (e) {}
+};
+
+// Какие персонажи пака доступны: для новых чатов и для кнопки смены.
+const ENABLED_KEY = "x2ai-avatar:enabled";
+let enabledMap = {};
+try {
+  const raw = JSON.parse(localStorage.getItem(ENABLED_KEY) || "{}");
+  if (raw && typeof raw === "object") enabledMap = raw;
+} catch (e) {}
+const enabledChars = (pack) => {
+  const name = pack || activePack;
+  const all = packVoices(name);
+  const saved = enabledMap[name];
+  if (!Array.isArray(saved)) return all;
+  const list = all.filter((key) => saved.includes(key));
+  // Пустой список оставил бы новые чаты без персонажа — тогда доступны все.
+  return list.length ? list : all;
+};
+const isCharEnabled = (key) => enabledChars().includes(packKey(key));
+const setCharEnabled = (key, on) => {
+  const all = packVoices();
+  const cur = enabledChars();
+  const next = all.filter((k) => (on ? cur.includes(k) || k === key : cur.includes(k) && k !== key));
+  if (!next.length) return false;
+  enabledMap[activePack] = next;
+  try {
+    localStorage.setItem(ENABLED_KEY, JSON.stringify(enabledMap));
+  } catch (e) {}
+  return true;
+};
+
+// Порядок голосов TeraTTS: он же в серверном плагине, поэтому хеш чата
+// превращается в одного и того же персонажа и в окне, и в озвучке.
+const TERA_ORDER = [
+  "ru_f1", "ru_f2", "ru_m1", "ru_m5",
+  "fx_robot", "fx_demon", "fx_demoness", "fx_alien", "fx_cat", "fx_penguin", "fx_ghost",
+];
+const baseVoice = (key) => String(key || "").replace(/^px_/, "");
+const enabledBases = () => {
+  const keys = enabledChars();
+  return TERA_ORDER.filter((base) => keys.some((key) => baseVoice(key) === base));
+};
+
 // Артикуляция: набор кадров рта в порядке «полуоткрыт → открыт → округлён → широко».
 const TALK = ["half", "open", "round", "wide", "open", "half"];
 
@@ -67,8 +128,14 @@ function hash(str) {
 }
 
 function voiceFor(sid) {
-  if (!sid) return "ru_f1";
-  return VOICES[Math.abs(Number(hash(sid)) | 0) % VOICES.length];
+  const bases = enabledBases();
+  const pool = bases.length ? bases : TERA_ORDER;
+  if (!pool.length) return "ru_f1";
+  const base = pool[Math.abs(Number(hash(sid)) | 0) % pool.length];
+  const pack = PACKS[activePack] || {};
+  if (pack[`px_${base}`]) return `px_${base}`;
+  if (pack[base]) return base;
+  return base;
 }
 
 // Паки: наши кадры и скачанные по лицензии. Пак может быть неполным —
@@ -198,6 +265,8 @@ function createView(ctx) {
     img.src = frame(voice, moodState.value === "awake" ? "closed" : "blink");
     if (moodState.value !== "awake") setMood(moodState.value, true);
     root.title = `x2ai · ${nameFor(voice)} · ${voice}`;
+    applyHeightFor(packKey(next));
+    applyPrefsFor(packKey(next));
   };
 
   // Шестерёнка появляется при наведении: выбор пака персонажей.
@@ -276,6 +345,15 @@ function createView(ctx) {
   let speechSpeed = null; // 0.7–1.8; null = ещё не загружена
   let reasonState = null; // { mode: off|brief|full, translate: bool }
   let keepAlive = true; // держать движок в памяти
+  let quietState = { on: false, from: "23:00", to: "09:00" };
+  let bridgeReady = false; // мост объявлен ниже: до этого настройки персонажа не шлём
+  // Список моделей переживает перерисовку панели и переходы по подменю.
+  let modelQuery = "";
+  let modelLimit = 40;
+  let modelsData = null;
+  let modelsLoaded = false;
+  let modelsLoading = false;
+  let speechLoaded = false;
   const REASON_LABELS = [
     ["off", "Выключено"],
     ["brief", "Кратко"],
@@ -287,14 +365,46 @@ function createView(ctx) {
   let userLoaded = false;
 
   // Размер персонажа: высота картинки и отступ панели над ним.
-  const setHeight = (value) => {
-    const h = Math.round(Math.min(HEIGHT_MAX, Math.max(HEIGHT_MIN, Number(value) || HEIGHT)));
+  function applyHeight(value) {
+    const h = Math.round(Math.min(HEIGHT_MAX, Math.max(HEIGHT_MIN, Number(value) || DEFAULT_HEIGHT)));
     charHeight = h;
     img.style.height = `${h}px`;
     panel.style.bottom = `${h + 30}px`;
-    try {
-      window.localStorage.setItem(HEIGHT_KEY, String(h));
-    } catch (e) {}
+    return h;
+  }
+  function applyHeightFor(key) {
+    return applyHeight(charSettingsFor(key).height || DEFAULT_HEIGHT);
+  }
+  // Озвучка и рассуждения тоже свои у каждого персонажа: применяем при смене.
+  function applyPrefsFor(key) {
+    if (!bridgeReady) return;
+    const cs = charSettingsFor(key);
+    if (cs.speech && cs.speech !== speechMode) {
+      speechMode = cs.speech;
+      bridge("/speech", { mode: speechMode }).catch(() => {});
+    }
+    if (cs.reason) {
+      const cur = reasonState || { mode: "off", translate: true };
+      if (cs.reason.mode !== cur.mode || Boolean(cs.reason.translate) !== Boolean(cur.translate)) {
+        reasonState = { mode: cs.reason.mode || "off", translate: cs.reason.translate !== false };
+        bridge("/speech", { reason: reasonState }).catch(() => {});
+      }
+    }
+  }
+  // У персонажей пака ещё нет своих настроек — запоминаем текущие общие,
+  // дальше каждый живёт отдельно.
+  function seedPackSettings() {
+    for (const k of packVoices()) {
+      const cs = charSettingsFor(k);
+      if (!cs.speech) saveCharSetting(k, { speech: speechMode || "summary" });
+      if (!cs.reason) saveCharSetting(k, { reason: reasonState || { mode: "off", translate: true } });
+    }
+  }
+  const setHeight = (value, key) => {
+    const target = key || packKey(voice);
+    const h = Math.round(Math.min(HEIGHT_MAX, Math.max(HEIGHT_MIN, Number(value) || DEFAULT_HEIGHT)));
+    saveCharSetting(target, { height: h });
+    if (target === packKey(voice)) applyHeight(h);
     return h;
   };
 
@@ -345,11 +455,9 @@ function createView(ctx) {
     }, 175);
   };
 
-  const nextCharacter = () => {
+  const switchToCharacter = (next) => {
+    if (!next) return next;
     stopAll();
-    const list = packVoices();
-    const index = list.indexOf(voice);
-    const next = list[(index + 1) % list.length] || voice;
     animateSwap(next);
     saveLocal(currentSid, next);
     if (currentSid) bridge("/voice", { sid: currentSid, voice: charVoice(next), name: nameFor(next) }).catch(() => {});
@@ -358,6 +466,21 @@ function createView(ctx) {
     playClip(line);
     if (line && line.text) startSpeaking(line.ms || 1200, "", line.text);
     return next;
+  };
+
+  const nextCharacter = () => {
+    const pool = enabledChars();
+    const list = pool.length ? pool : packVoices();
+    const index = list.indexOf(packKey(voice));
+    const next = list[(index + 1) % list.length] || voice;
+    return switchToCharacter(next);
+  };
+
+  // Явный выбор персонажа из панели: выключенного включить в чат нельзя.
+  const selectCharacter = (key) => {
+    if (!isCharEnabled(key) || key === packKey(voice)) return;
+    switchToCharacter(key);
+    if (panelOpen) renderPanel();
   };
 
   // Раскрывающиеся блоки настроек: по умолчанию свёрнуты.
@@ -467,10 +590,18 @@ function createView(ctx) {
 
   const renderPanel = () => {
     panel.textContent = "";
+    const view = panelView || { name: "root" };
+    const go = (next) => {
+      panelView = next;
+      renderPanel();
+    };
+
     const switchPack = (name) => {
       setPack(name);
-      const list = packVoices();
-      const pick = list.includes(voice) ? voice : list[0];
+      seedPackSettings();
+      syncEnabled();
+      const list = enabledChars();
+      const pick = list.includes(voice) ? voice : list[0] || packVoices()[0];
       if (pick) {
         apply(pick, true);
         saveLocal(currentSid, pick);
@@ -526,581 +657,777 @@ function createView(ctx) {
     };
 
     // Общая рамка для настроек: видно, что блоки относятся к одному разделу.
-    const settings = document.createElement("div");
-    settings.style.cssText = [
-      "display:flex",
-      "flex-direction:column",
-      "gap:6px",
-      "box-sizing:border-box",
-      "margin-top:0",
-      "padding:6px",
-      "border:1px solid rgba(255,255,255,.12)",
-      "border-radius:9px",
-      "background:rgba(255,255,255,.02)",
-    ].join(";");
-    panel.appendChild(settings);
-
-    const pBody = collapsible("Пак персонажей", "pack", settings);
-
-    // Список паков — кнопки, как в остальных блоках (со скроллом на будущее).
-    const pList = keepScroll(document.createElement("div"), "pack");
-    pList.style.cssText = "max-height:132px;overflow-y:auto;display:flex;flex-direction:column;gap:4px";
-    for (const name of Object.keys(PACKS)) {
-      const count = Object.keys(PACKS[name] || {}).length;
-      pList.appendChild(
-        vRow(`${PACK_NAMES[name] || name} · ${count}`, name === activePack, () => {
-          switchPack(name);
-          renderPanel();
-        }),
-      );
-    }
-    pBody.appendChild(pList);
-
-
-    const rule = document.createElement("hr");
-    rule.style.cssText = "border:none;border-top:1px solid rgba(255,255,255,.12);margin:0 0 2px";
-    settings.appendChild(rule);
-
-    const vBody = collapsible("Голос персонажа", "voice", settings);
-
-    const curVoice = charVoices[voice] || voice;
-
-    const vCur = document.createElement("div");
-    vCur.textContent = `сейчас: ${labelOf(curVoice)}`;
-    vCur.style.cssText = "font-size:11px;opacity:.7;margin-bottom:6px";
-    vBody.appendChild(vCur);
-
-    const vList = keepScroll(document.createElement("div"), "voice");
-    vList.style.cssText = "max-height:132px;overflow-y:auto;display:flex;flex-direction:column;gap:4px";
-    vBody.appendChild(vList);
-
-    // Строки списка голосов: подсветку обновляем на месте, панель не перерисовываем.
-    const voiceRows = [];
-    const refreshVoiceSelection = () => {
-      const cur = charVoices[voice] || voice;
-      vCur.textContent = `сейчас: ${labelOf(cur)}`;
-      for (const item of voiceRows) item.row.setActive(item.id ? item.id === cur : !charVoices[voice]);
+    const boxEl = () => {
+      const el = document.createElement("div");
+      el.style.cssText = [
+        "display:flex",
+        "flex-direction:column",
+        "gap:6px",
+        "box-sizing:border-box",
+        "margin-top:0",
+        "padding:6px",
+        "border:1px solid rgba(255,255,255,.12)",
+        "border-radius:9px",
+        "background:rgba(255,255,255,.02)",
+      ].join(";");
+      panel.appendChild(el);
+      return el;
     };
 
-    const bindVoice = (id) => {
-      // Пример голоса звучит сразу, не дожидаясь ответа моста.
-      playClip((LINES.samples && (LINES.samples[id] || LINES.samples[voice])) || null);
-      bridge("/charvoice", { charId: voice, voice: id })
-        .then((out) => {
-          charVoices = (out && out.charVoices) || {};
-          if (currentSid) bridge("/voice", { sid: currentSid, voice: charVoice(voice), name: nameFor(voice) }).catch(() => {});
-          refreshVoiceSelection();
-        })
-        .catch(() => {});
+    // Шапка подменю: «Назад» выглядит ссылкой, а не пунктом меню.
+    const head = (title, back) => {
+      const row = document.createElement("div");
+      row.style.cssText = "display:flex;flex-direction:column;gap:2px;margin:0 0 8px";
+      const backBtn = document.createElement("button");
+      backBtn.type = "button";
+      backBtn.textContent = "← Назад";
+      backBtn.style.cssText = [
+        "align-self:flex-start",
+        "padding:1px 2px",
+        "border:none",
+        "background:none",
+        "color:inherit",
+        "font:inherit",
+        "font-size:11px",
+        "opacity:.5",
+        "cursor:pointer",
+      ].join(";");
+      backBtn.onmouseenter = () => (backBtn.style.opacity = ".95");
+      backBtn.onmouseleave = () => (backBtn.style.opacity = ".5");
+      backBtn.onclick = (ev) => {
+        ev.stopPropagation();
+        go(back || { name: "root" });
+      };
+      const titleEl = document.createElement("div");
+      titleEl.textContent = title;
+      titleEl.style.cssText = "font-size:12px;font-weight:600;opacity:.95;padding-left:2px";
+      row.append(backBtn, titleEl);
+      panel.appendChild(row);
     };
 
-    if (!voiceCatalog) {
-      const loading = document.createElement("div");
-      loading.textContent = "загружаю голоса…";
-      loading.style.cssText = "opacity:.5;font-size:11px";
-      vList.appendChild(loading);
-      bridge("/voices")
-        .then((data) => {
-          voiceCatalog = (data && data.voices) || [];
-          renderPanel();
-        })
-        .catch(() => {});
-    } else {
-      for (const v of voiceCatalog) {
-        const row = vRow(v.label, v.id === curVoice, () => bindVoice(v.id));
-        voiceRows.push({ id: v.id, row });
-        vList.appendChild(row);
-      }
-      const defRow = vRow(
-        "По умолчанию",
-        !charVoices[voice],
-        () => bindVoice(null),
-        "margin-top:2px;opacity:.85;justify-content:center",
-      );
-      voiceRows.push({ id: null, row: defRow });
-      vList.appendChild(defRow);
-    }
-
-    // Размер персонажа: ползунок меняет картинку сразу, без перерисовки панели.
-    const hBody = collapsible("Размер персонажа", "char", settings);
-    const hRow = document.createElement("div");
-    hRow.style.cssText = "display:flex;align-items:center;gap:8px";
-    const hInput = document.createElement("input");
-    hInput.type = "range";
-    hInput.min = String(HEIGHT_MIN);
-    hInput.max = String(HEIGHT_MAX);
-    hInput.step = "4";
-    hInput.value = String(charHeight);
-    hInput.style.cssText = "flex:1;accent-color:#5b8dee;cursor:pointer";
-    const hVal = document.createElement("span");
-    hVal.textContent = `${charHeight} px`;
-    hVal.style.cssText = "font-size:11px;opacity:.7;width:48px;text-align:right";
-    hInput.oninput = () => {
-      hVal.textContent = `${setHeight(hInput.value)} px`;
-    };
-    hRow.append(hInput, hVal);
-    hBody.appendChild(hRow);
-
-    // Режим озвучки: полное чтение ответа, пересказ или тишина.
-    const sBody = collapsible("Озвучка ответа", "speech", settings);
-    const SPEECH_LABELS = [
-      ["full", "Полное прочтение ответа"],
-      ["summary", "Пересказ"],
-      ["silent", "Молчание"],
-    ];
-    // Вспомогательная модель: одна на пересказ, перевод и рассуждения.
-    const mBody = collapsible("Вспомогательная модель", "model", settings);
-    const mWrap = mBody.parentNode;
-    const mList = keepScroll(document.createElement("div"), "model");
-    mList.style.cssText = "max-height:150px;overflow-y:auto;display:flex;flex-direction:column;gap:4px";
-    const mSearch = document.createElement("input");
-    mSearch.type = "text";
-    mSearch.placeholder = "Поиск модели";
-    mSearch.style.cssText =
-      "width:100%;box-sizing:border-box;font:inherit;font-size:11px;padding:4px 7px;margin-bottom:6px;" +
-      "border:1px solid rgba(255,255,255,.16);border-radius:7px;background:rgba(255,255,255,.04);color:inherit";
-    mSearch.oninput = () => {
-      modelQuery = mSearch.value;
-      modelLimit = 40;
-      renderModels();
-    };
-    mSearch.onclick = (ev) => ev.stopPropagation();
-    mBody.appendChild(mSearch);
-    mBody.appendChild(mList);
-
-    // Обращение к пользователю: имя и род. Влияет на пересказ («Аня, ты просила…»).
-    const uBody = collapsible("Обращение к пользователю", "user", settings);
-
-    const uInput = document.createElement("input");
-    uInput.type = "text";
-    uInput.maxLength = 40;
-    uInput.placeholder = "Имя (необязательно)";
-    uInput.value = userName;
-    uInput.style.cssText =
-      "width:100%;box-sizing:border-box;font:inherit;font-size:12px;padding:5px 7px;" +
-      "border:1px solid rgba(255,255,255,.16);border-radius:7px;" +
-      "background:rgba(255,255,255,.05);color:inherit;outline:none";
-    uBody.appendChild(uInput);
-
-    const uHint = document.createElement("div");
-    uHint.textContent = "Как обращаться к тебе в пересказе";
-    uHint.style.cssText = "opacity:.5;font-size:10px;line-height:1.4;margin:3px 0 0 2px";
-    uBody.appendChild(uHint);
-
-    const gRow = document.createElement("div");
-    gRow.style.cssText = "display:flex;gap:4px;margin-top:5px";
-    uBody.appendChild(gRow);
-
-    const GENDERS = [
-      ["", "Не указывать"],
-      ["m", "Мужской"],
-      ["f", "Женский"],
-    ];
-    const genderRows = [];
-    const refreshUser = () => {
-      uInput.value = userName;
-      for (const item of genderRows) item.row.setActive(item.value === userGender);
-    };
-    const saveUser = (patch) => {
-      if (patch.name !== undefined) userName = String(patch.name).replace(/\s+/g, " ").trim().slice(0, 40);
-      if (patch.gender !== undefined) userGender = patch.gender;
-      refreshUser();
-      bridge("/user", { name: userName, gender: userGender }).catch(() => {});
-    };
-    for (const [value, text] of GENDERS) {
-      const row = vRow(text, userGender === value, () => saveUser({ gender: value }));
-      row.style.flex = "1";
-      row.style.justifyContent = "center";
-      gRow.appendChild(row);
-      genderRows.push({ value, row });
-    }
-    uInput.addEventListener("change", () => saveUser({ name: uInput.value }));
-    uInput.addEventListener("keydown", (event) => {
-      if (event.key === "Enter") uInput.blur();
-    });
-    if (!userLoaded) {
-      userLoaded = true;
-      bridge("/user")
-        .then((data) => {
-          userName = (data && data.user && data.user.name) || "";
-          userGender = (data && data.user && data.user.gender) || "";
-          refreshUser();
-        })
-        .catch(() => {});
-    }
-
-    const modelRows = [];
-    let modelsLoaded = false;
-    let modelsLoading = false;
-
-    let modelQuery = "";
-    let modelLimit = 40;
-    let modelsData = null;
-
-    const renderModels = (data) => {
-      if (data) modelsData = data;
-      mList.textContent = "";
-      modelRows.length = 0;
-      const models = (modelsData && modelsData.models) || [];
-      const current = (modelsData && modelsData.current) || {};
-      // Порядок приходит с моста: локальные, затем бесплатные.
-      const q = modelQuery.trim().toLowerCase();
-      const free = models.filter((m) => {
-        if (!(m.local || m.free)) return false;
-        if (!q) return true;
-        return `${m.name} ${m.providerID}/${m.id}`.toLowerCase().includes(q);
-      });
-      const shown = free.slice(0, modelLimit);
-      if (!shown.length) {
-        const empty = document.createElement("div");
-        empty.textContent =
-          data && data.error ? "не удалось получить список" : "локальных и бесплатных моделей нет";
-        empty.style.cssText = "opacity:.5;font-size:11px";
-        mList.appendChild(empty);
-        return;
-      }
-      for (const m of shown) {
-        const active = m.providerID === current.providerID && m.id === current.id;
-        const row = vRow(m.local ? `${m.name} · локальная` : m.name, active, () => {
-          for (const item of modelRows) item.row.setActive(item.model === m);
-          bridge("/model", { providerID: m.providerID, id: m.id }).catch(() => {});
-        });
-        row.title = `${m.providerID}/${m.id}`;
-        modelRows.push({ model: m, row });
-        mList.appendChild(row);
-      }
-      if (free.length > shown.length) {
-        const more = document.createElement("button");
-        more.type = "button";
-        more.textContent = `Показать ещё ${Math.min(40, free.length - shown.length)}`;
-        more.style.cssText =
-          "margin-top:4px;padding:4px 8px;font:inherit;font-size:11px;cursor:pointer;border-radius:7px;" +
-          "border:1px solid rgba(255,255,255,.16);background:rgba(255,255,255,.05);color:inherit";
-        more.onclick = (ev) => {
-          ev.stopPropagation();
-          modelLimit += 40;
-          renderModels();
-        };
-        mList.appendChild(more);
-        const left = document.createElement("div");
-        left.textContent = `всего подходит: ${free.length}`;
-        left.style.cssText = "opacity:.4;font-size:10px;padding:2px 7px";
-        mList.appendChild(left);
-      }
+    const menuRow = (text, onClick) => {
+      const row = document.createElement("button");
+      row.type = "button";
+      row.style.cssText = [
+        "display:flex",
+        "align-items:center",
+        "justify-content:space-between",
+        "gap:8px",
+        "width:100%",
+        "box-sizing:border-box",
+        "padding:8px 10px",
+        "border-radius:8px",
+        "border:1px solid rgba(255,255,255,.12)",
+        "background:rgba(255,255,255,.04)",
+        "color:inherit",
+        "font:inherit",
+        "font-size:12px",
+        "text-align:left",
+        "cursor:pointer",
+      ].join(";");
+      const label = document.createElement("span");
+      label.textContent = text;
+      const arrow = document.createElement("span");
+      arrow.textContent = "›";
+      arrow.style.cssText = "opacity:.45;font-size:14px;line-height:1";
+      row.append(label, arrow);
+      row.onmouseenter = () => (row.style.background = "rgba(255,255,255,.08)");
+      row.onmouseleave = () => (row.style.background = "rgba(255,255,255,.04)");
+      row.onclick = (ev) => {
+        ev.stopPropagation();
+        onClick();
+      };
+      return row;
     };
 
-    const loadModels = () => {
-      if (modelsLoaded || modelsLoading) return;
-      modelsLoading = true;
-      mList.textContent = "";
-      const note = document.createElement("div");
-      note.textContent = "загружаю…";
-      note.style.cssText = "opacity:.5;font-size:11px";
-      mList.appendChild(note);
-      bridge("/models")
-        .then((data) => {
-          modelsLoaded = true;
-          modelsLoading = false;
-          renderModels(data);
-        })
-        .catch(() => {
-          modelsLoading = false;
-          note.textContent = "мост недоступен";
-        });
-    };
-
-    const sList = keepScroll(document.createElement("div"), "speech");
-    sList.style.cssText = "max-height:132px;overflow-y:auto;display:flex;flex-direction:column;gap:4px";
-    const speechRows = [];
-    const speechNote = document.createElement("div");
-    speechNote.textContent = "озвучки не будет";
-    speechNote.style.cssText = "font-size:11px;opacity:.55;margin-top:6px";
-
-    const refreshSpeech = () => {
-      const cur = speechMode || "summary";
-      for (const item of speechRows) item.row.setActive(item.mode === cur);
-      speechNote.style.display = cur === "silent" ? "block" : "none";
-      loadModels();
-    };
-
-    const setSpeech = (mode) => {
-      speechMode = mode;
-      refreshSpeech();
-      bridge("/speech", { mode })
-        .then((out) => {
-          if (out && out.mode) {
-            speechMode = out.mode;
-            refreshSpeech();
-          }
-        })
-        .catch(() => {});
-    };
-
-    for (const [value, text] of SPEECH_LABELS) {
-      const row = vRow(text, value === (speechMode || "summary"), () => setSpeech(value));
-      speechRows.push({ mode: value, row });
-      sList.appendChild(row);
-    }
-    sBody.appendChild(sList);
-    sBody.appendChild(speechNote);
-
-    // Скорость речи: 0.7 — медленно, 1.8 — быстро. Применяется к следующей озвучке.
-    const spRow = document.createElement("div");
-    spRow.style.cssText = "display:flex;align-items:center;gap:8px;margin-top:8px";
-    const spInput = document.createElement("input");
-    spInput.type = "range";
-    spInput.min = "0.7";
-    spInput.max = "1.8";
-    spInput.step = "0.05";
-    spInput.value = String(speechSpeed || 1);
-    spInput.style.cssText = "flex:1;accent-color:#5b8dee;cursor:pointer";
-    const spVal = document.createElement("span");
-    spVal.style.cssText = "font-size:11px;opacity:.7;width:48px;text-align:right";
-    spVal.textContent = `${(speechSpeed || 1).toFixed(2)}×`;
-    spInput.oninput = () => {
-      speechSpeed = Number(spInput.value);
-      spVal.textContent = `${speechSpeed.toFixed(2)}×`;
-    };
-    // Пишем на отпускании ползунка, чтобы не долбить мост на каждый пиксель.
-    spInput.onchange = () => {
-      bridge("/speech", { speed: speechSpeed }).catch(() => {});
-    };
-    spRow.append(spInput, spVal);
-    sBody.appendChild(spRow);
-
-    // Кнопки: проверить скорость своим голосом и заглушить текущую озвучку.
-    const actRow = document.createElement("div");
-    actRow.style.cssText = "display:flex;gap:6px;margin-top:8px";
-    const actBtn = (text, title) => {
+    const iconBtn = (text, title) => {
       const btn = document.createElement("button");
       btn.type = "button";
       btn.textContent = text;
       btn.title = title;
       btn.style.cssText = [
-        "flex:1",
-        "padding:5px 8px",
-        "border-radius:7px",
-        "cursor:pointer",
-        "font:inherit",
-        "font-size:11px",
-        "color:inherit",
-        "text-align:center",
+        "width:24px",
+        "height:24px",
+        "flex:0 0 24px",
+        "padding:0",
+        "display:inline-flex",
+        "align-items:center",
+        "justify-content:center",
+        "border-radius:6px",
         "border:1px solid rgba(255,255,255,.16)",
         "background:rgba(255,255,255,.05)",
+        "color:inherit",
+        "font-size:12px",
+        "line-height:1",
+        "cursor:pointer",
       ].join(";");
       btn.onclick = (ev) => {
         ev.stopPropagation();
-        btn.onclickAction && btn.onclickAction();
+        if (!btn.disabled && btn.onclickAction) btn.onclickAction();
       };
       return btn;
     };
-    const testBtn = actBtn("▶ Проверить", "Озвучить пробную фразу текущим голосом и скоростью");
-    testBtn.onclickAction = () => {
-      bridge("/test", { voice: charVoice(voice), sid: currentSid }).catch(() => {});
-    };
-    const stopBtn = actBtn("■ Стоп", "Заглушить текущую озвучку");
-    stopBtn.onclickAction = () => {
-      stopAll();
-    };
-    const replayBtn = actBtn("↻ Повторить", "Озвучить последний текст ещё раз");
-    replayBtn.onclickAction = () => {
-      bridge("/replay", {}).catch(() => {});
-    };
-    // Тихие часы: в этом окне персонаж молчит сам, режим озвучки не меняется.
-    let quiet = { on: false, from: "23:00", to: "09:00" };
-    const qBox = document.createElement("div");
-    qBox.style.cssText = "margin-top:10px;display:flex;flex-direction:column;gap:6px";
-    const qTop = document.createElement("div");
-    qTop.style.cssText = "display:flex;align-items:center;justify-content:space-between;gap:8px";
-    const qLabel = document.createElement("span");
-    qLabel.textContent = "Тихие часы";
-    qLabel.style.cssText = "font-size:11px;opacity:.75";
-    const qToggle = document.createElement("button");
-    qToggle.type = "button";
-    qToggle.style.cssText =
-      "border:1px solid rgba(255,255,255,.16);background:rgba(255,255,255,.04);color:inherit;border-radius:7px;padding:3px 9px;font-size:11px;cursor:pointer";
-    qToggle.textContent = "выкл";
-    const qTimes = document.createElement("div");
-    qTimes.style.cssText = "display:flex;align-items:center;gap:6px;font-size:11px;opacity:.8";
-    const timeInput = (value) => {
-      const el = document.createElement("input");
-      el.type = "time";
-      el.value = value;
-      el.style.cssText =
-        "border:1px solid rgba(255,255,255,.16);background:rgba(255,255,255,.04);color:inherit;border-radius:6px;padding:2px 4px;font-size:11px";
-      el.style.colorScheme = "dark";
+
+    const hint = (text, parent) => {
+      const el = document.createElement("div");
+      el.textContent = text;
+      el.style.cssText = "font-size:10px;line-height:1.45;opacity:.5;margin:2px 0 0 2px";
+      (parent || panel).appendChild(el);
       return el;
     };
-    const qFrom = timeInput(quiet.from);
-    const qTo = timeInput(quiet.to);
-    const qDash = document.createElement("span");
-    qDash.textContent = "—";
-    qDash.style.opacity = ".6";
-    qTimes.append(qFrom, qDash, qTo);
 
-    const refreshQuiet = () => {
-      qToggle.textContent = quiet.on ? "вкл" : "выкл";
-      qToggle.style.borderColor = quiet.on ? "rgba(120,180,255,.6)" : "rgba(255,255,255,.16)";
-      qToggle.style.background = quiet.on ? "rgba(80,130,220,.18)" : "rgba(255,255,255,.04)";
-      qFrom.value = quiet.from;
-      qTo.value = quiet.to;
-      qTimes.style.opacity = quiet.on ? ".85" : ".45";
-    };
-    const saveQuiet = (patch) => {
-      quiet = { ...quiet, ...patch };
-      refreshQuiet();
-      bridge("/speech", { quiet }).catch(() => {});
-    };
-    qToggle.onclick = () => saveQuiet({ on: !quiet.on });
-    qFrom.onchange = () => saveQuiet({ from: qFrom.value || quiet.from });
-    qTo.onchange = () => saveQuiet({ to: qTo.value || quiet.to });
-    qTop.append(qLabel, qToggle);
-    qBox.append(qTop, qTimes);
-    refreshQuiet();
-    sBody.appendChild(qBox);
+    if (view.name === "root") {
+      const menu = document.createElement("div");
+      menu.style.cssText = "display:flex;flex-direction:column;gap:6px";
+      const items = [
+        ["Данные пользователя", "user"],
+        ["Настройка персонажей", "chars"],
+        ["Вспомогательная модель", "model"],
+        ["Статистика", "stats"],
+      ];
+      for (const [text, name] of items) menu.appendChild(menuRow(text, () => go({ name })));
+      panel.appendChild(menu);
+    } else if (view.name === "user") {
+      head("Данные пользователя");
+      const box = boxEl();
 
-    // Рассуждения модели: озвучиваем «мысли» отдельно от ответа.
-    const rBody = collapsible("Рассуждения", "reason", settings);
-    const rList = keepScroll(document.createElement("div"), "reason");
-    rList.style.cssText = "max-height:132px;overflow-y:auto;display:flex;flex-direction:column;gap:4px";
-    const reasonRows = [];
-    const rTrans = document.createElement("div");
-    rTrans.style.cssText = "display:flex;margin-top:6px";
-    const rTransRow = vRow("Переводить на русский", false, () => {
-      const next = !(reasonState && reasonState.translate);
-      setReason({ translate: next });
-    });
-    rTransRow.style.flex = "1";
-    rTrans.appendChild(rTransRow);
+      // Обращение к пользователю: имя и род. Влияет на пересказ («Аня, ты просила…»).
+      const uInput = document.createElement("input");
+      uInput.type = "text";
+      uInput.maxLength = 40;
+      uInput.placeholder = "Имя (необязательно)";
+      uInput.value = userName;
+      uInput.style.cssText =
+        "width:100%;box-sizing:border-box;font:inherit;font-size:12px;padding:5px 7px;" +
+        "border:1px solid rgba(255,255,255,.16);border-radius:7px;" +
+        "background:rgba(255,255,255,.05);color:inherit;outline:none";
+      box.appendChild(uInput);
 
-    const refreshReason = () => {
-      const st = reasonState || { mode: "off", translate: true };
-      for (const item of reasonRows) item.row.setActive(item.mode === st.mode);
-      rTransRow.setActive(Boolean(st.translate));
-      rList.style.opacity = st.mode === "off" ? ".5" : "1";
-    };
+      const uHint = document.createElement("div");
+      uHint.textContent = "Как обращаться к тебе в пересказе";
+      uHint.style.cssText = "opacity:.5;font-size:10px;line-height:1.4;margin:3px 0 0 2px";
+      box.appendChild(uHint);
 
-    const setReason = (patch) => {
-      const cur = reasonState || { mode: "off", translate: true };
-      reasonState = { ...cur, ...patch };
-      refreshReason();
-      bridge("/speech", { reason: reasonState })
-        .then((out) => {
-          if (out && out.reason) {
-            reasonState = out.reason;
-            refreshReason();
+      const gRow = document.createElement("div");
+      gRow.style.cssText = "display:flex;gap:4px;margin-top:5px";
+      box.appendChild(gRow);
+
+      const GENDERS = [
+        ["", "Не указывать"],
+        ["m", "Мужской"],
+        ["f", "Женский"],
+      ];
+      const genderRows = [];
+      const refreshUser = () => {
+        uInput.value = userName;
+        for (const item of genderRows) item.row.setActive(item.value === userGender);
+      };
+      const saveUser = (patch) => {
+        if (patch.name !== undefined) userName = String(patch.name).replace(/\s+/g, " ").trim().slice(0, 40);
+        if (patch.gender !== undefined) userGender = patch.gender;
+        refreshUser();
+        bridge("/user", { name: userName, gender: userGender }).catch(() => {});
+      };
+      for (const [value, text] of GENDERS) {
+        const row = vRow(text, userGender === value, () => saveUser({ gender: value }));
+        row.style.flex = "1";
+        row.style.justifyContent = "center";
+        gRow.appendChild(row);
+        genderRows.push({ value, row });
+      }
+      uInput.addEventListener("change", () => saveUser({ name: uInput.value }));
+      uInput.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") uInput.blur();
+      });
+      if (!userLoaded) {
+        userLoaded = true;
+        bridge("/user")
+          .then((data) => {
+            userName = (data && data.user && data.user.name) || "";
+            userGender = (data && data.user && data.user.gender) || "";
+            refreshUser();
+          })
+          .catch(() => {});
+      }
+    } else if (view.name === "chars") {
+      head("Настройка персонажей");
+      const box = boxEl();
+
+      const pBody = collapsible("Пак персонажей", "pack", box);
+
+      // Список паков — кнопки, как в остальных блоках (со скроллом на будущее).
+      const pList = keepScroll(document.createElement("div"), "pack");
+      pList.style.cssText = "max-height:132px;overflow-y:auto;display:flex;flex-direction:column;gap:4px";
+      for (const name of Object.keys(PACKS)) {
+        const count = Object.keys(PACKS[name] || {}).length;
+        pList.appendChild(
+          vRow(`${PACK_NAMES[name] || name} · ${count}`, name === activePack, () => {
+            switchPack(name);
+            renderPanel();
+          }),
+        );
+      }
+      pBody.appendChild(pList);
+
+      const rule = document.createElement("hr");
+      rule.style.cssText = "border:none;border-top:1px solid rgba(255,255,255,.12);margin:2px 0";
+      box.appendChild(rule);
+
+      // Персонажи пака: чекбокс доступности и две квадратные кнопки справа.
+      const list = keepScroll(document.createElement("div"), "chars");
+      list.style.cssText = "max-height:230px;overflow-y:auto;display:flex;flex-direction:column;gap:4px";
+      const currentKey = packKey(voice);
+      for (const key of packVoices()) {
+        const on = isCharEnabled(key);
+        const row = document.createElement("div");
+        row.style.cssText = [
+          "display:flex",
+          "align-items:center",
+          "gap:6px",
+          "padding:3px 5px",
+          "border-radius:7px",
+          "border:1px solid rgba(255,255,255,.08)",
+          "background:rgba(255,255,255,.03)",
+        ].join(";");
+
+        const cb = document.createElement("input");
+        cb.type = "checkbox";
+        cb.checked = on;
+        cb.title = on ? "Доступен для новых чатов" : "Выключен";
+        cb.style.cssText = "width:13px;height:13px;flex:0 0 13px;margin:0;accent-color:#5b8dee;cursor:pointer";
+        cb.onchange = () => {
+          if (!setCharEnabled(key, cb.checked)) {
+            cb.checked = true;
+            return;
           }
-        })
-        .catch(() => {});
-    };
-
-    for (const [value, text] of REASON_LABELS) {
-      const row = vRow(text, false, () => setReason({ mode: value }));
-      reasonRows.push({ mode: value, row });
-      rList.appendChild(row);
-    }
-    refreshReason();
-    rBody.append(rList, rTrans);
-
-    actRow.append(testBtn, replayBtn, stopBtn);
-    sBody.appendChild(actRow);
-
-    // Память против скорости: держать движок загруженным или поднимать на фразу.
-    const memRow = document.createElement("div");
-    memRow.style.cssText = "display:flex;flex-direction:column;gap:4px;margin-top:10px";
-    const memBtn = vRow("Держать движок в памяти", true, () => {
-      keepAlive = !keepAlive;
-      refreshMem();
-      bridge("/speech", { keepAlive }).catch(() => {});
-    });
-    const memHint = document.createElement("div");
-    memHint.style.cssText = "font-size:10px;line-height:1.4;opacity:.5";
-    const refreshMem = () => {
-      memBtn.setActive(keepAlive);
-      memHint.textContent = keepAlive
-        ? "движок занимает ~1.7 ГБ и отвечает за полсекунды"
-        : "по требованию: каждая фраза ~9 с на загрузку, память свободна";
-    };
-    memRow.append(memBtn, memHint);
-    refreshMem();
-    sBody.appendChild(memRow);
-
-    const applySpeechState = (data) => {
-      speechMode = (data && data.mode) || "summary";
-      const sp = Number(data && data.speed);
-      if (Number.isFinite(sp) && sp >= 0.7 && sp <= 1.8) {
-        speechSpeed = sp;
-        spInput.value = String(sp);
-        spVal.textContent = `${sp.toFixed(2)}×`;
-      }
-      if (data && data.keepAlive !== undefined) {
-        keepAlive = Boolean(data.keepAlive);
-        refreshMem();
-      }
-      const rs = data && data.reason;
-      if (rs && typeof rs === "object") {
-        reasonState = {
-          mode: REASON_LABELS.some(([m]) => m === rs.mode) ? rs.mode : "off",
-          translate: rs.translate === undefined ? true : Boolean(rs.translate),
+          syncEnabled();
+          renderPanel();
         };
-        refreshReason();
+
+        const name = document.createElement("span");
+        name.textContent = nameFor(key);
+        name.style.cssText =
+          "flex:1;min-width:0;font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" +
+          (on ? "" : "opacity:.45");
+
+        const pickBtn = iconBtn("✓", on ? "Выбрать персонажа" : "Персонаж выключен");
+        if (key === currentKey) {
+          pickBtn.style.borderColor = "rgba(120,180,255,.75)";
+          pickBtn.style.background = "rgba(80,130,220,.22)";
+          pickBtn.style.color = "#bcd6ff";
+        }
+        if (!on) {
+          pickBtn.disabled = true;
+          pickBtn.style.opacity = ".3";
+          pickBtn.style.cursor = "not-allowed";
+        }
+        pickBtn.onclickAction = () => selectCharacter(key);
+
+        const cfgBtn = iconBtn("⚙", "Настройки персонажа");
+        cfgBtn.onclickAction = () => go({ name: "char", key });
+
+        row.append(cb, name, pickBtn, cfgBtn);
+        list.appendChild(row);
       }
-      const q = data && data.quiet;
-      if (q && typeof q === "object") {
-        quiet = {
-          on: Boolean(q.on),
-          from: typeof q.from === "string" ? q.from : quiet.from,
-          to: typeof q.to === "string" ? q.to : quiet.to,
+      box.appendChild(list);
+      hint("Галочка — персонаж доступен в новых чатах и при смене. Снятая — уже выбранного не убирает.", box);
+    } else if (view.name === "char") {
+      const key = view.key;
+      head(nameFor(key), { name: "chars" });
+      const box = boxEl();
+
+      if (!isCharEnabled(key)) {
+        hint("Персонаж выключен: в новых чатах не появится, включить в текущем чате нельзя.", box);
+      }
+
+      // Размер персонажа: свой у каждого.
+      const hBody = collapsible("Размер персонажа", "char", box);
+      const hRow = document.createElement("div");
+      hRow.style.cssText = "display:flex;align-items:center;gap:8px";
+      const hInput = document.createElement("input");
+      hInput.type = "range";
+      hInput.min = String(HEIGHT_MIN);
+      hInput.max = String(HEIGHT_MAX);
+      hInput.step = "4";
+      const curHeight = charSettingsFor(key).height || DEFAULT_HEIGHT;
+      hInput.value = String(curHeight);
+      hInput.style.cssText = "flex:1;accent-color:#5b8dee;cursor:pointer";
+      const hVal = document.createElement("span");
+      hVal.textContent = `${curHeight} px`;
+      hVal.style.cssText = "font-size:11px;opacity:.7;width:48px;text-align:right";
+      hInput.oninput = () => {
+        hVal.textContent = `${setHeight(hInput.value, key)} px`;
+      };
+      hRow.append(hInput, hVal);
+      hBody.appendChild(hRow);
+
+      // Голос персонажа: свой у каждого, живёт в localStorage.
+      const vBody = collapsible("Голос персонажа", "voice", box);
+      const defaultVoiceOf = () => VOICE_ALIAS[key] || key;
+      const pickedVoice = () => charSettingsFor(key).voice || charVoices[key] || "";
+      const isDefaultVoice = () => {
+        const picked = pickedVoice();
+        return !picked || picked === defaultVoiceOf();
+      };
+
+      const vCur = document.createElement("div");
+      vCur.style.cssText = "font-size:11px;opacity:.7;margin-bottom:6px";
+      vBody.appendChild(vCur);
+
+      const vList = keepScroll(document.createElement("div"), "voice");
+      vList.style.cssText = "max-height:132px;overflow-y:auto;display:flex;flex-direction:column;gap:4px";
+      vBody.appendChild(vList);
+
+      // Строки списка голосов: подсветку обновляем на месте, панель не перерисовываем.
+      const voiceRows = [];
+      const refreshVoiceSelection = () => {
+        vCur.textContent = `сейчас: ${labelOf(pickedVoice() || defaultVoiceOf())}`;
+        for (const item of voiceRows) {
+          item.row.setActive(item.id ? !isDefaultVoice() && item.id === pickedVoice() : isDefaultVoice());
+        }
+      };
+
+      const bindVoice = (id) => {
+        // Пример голоса звучит сразу, не дожидаясь ответа моста.
+        playClip((LINES.samples && (LINES.samples[id] || LINES.samples[key])) || null);
+        const value = id || defaultVoiceOf();
+        saveCharSetting(key, { voice: value });
+        charVoices[key] = value;
+        bridge("/charvoice", { charId: key, voice: value }).catch(() => {});
+        if (key === packKey(voice) && currentSid) {
+          bridge("/voice", { sid: currentSid, voice: value, name: nameFor(key) }).catch(() => {});
+        }
+        refreshVoiceSelection();
+      };
+
+      if (!voiceCatalog) {
+        const loading = document.createElement("div");
+        loading.textContent = "загружаю голоса…";
+        loading.style.cssText = "opacity:.5;font-size:11px";
+        vList.appendChild(loading);
+        bridge("/voices")
+          .then((data) => {
+            voiceCatalog = (data && data.voices) || [];
+            renderPanel();
+          })
+          .catch(() => {});
+      } else {
+        for (const v of voiceCatalog) {
+          const row = vRow(v.label, v.id === pickedVoice() && !isDefaultVoice(), () => bindVoice(v.id));
+          voiceRows.push({ id: v.id, row });
+          vList.appendChild(row);
+        }
+        const defRow = vRow(
+          "По умолчанию",
+          isDefaultVoice(),
+          () => bindVoice(null),
+          "margin-top:2px;opacity:.85;justify-content:center",
+        );
+        voiceRows.push({ id: null, row: defRow });
+        vList.appendChild(defRow);
+        refreshVoiceSelection();
+      }
+
+      // Озвучка ответа: полное чтение, пересказ или тишина — своё у каждого персонажа.
+      const sBody = collapsible("Озвучка ответа", "speech", box);
+      const SPEECH_LABELS = [
+        ["full", "Полное прочтение ответа"],
+        ["summary", "Пересказ"],
+        ["silent", "Молчание"],
+      ];
+      const sList = keepScroll(document.createElement("div"), "speech");
+      sList.style.cssText = "max-height:132px;overflow-y:auto;display:flex;flex-direction:column;gap:4px";
+      const speechRows = [];
+      const speechNote = document.createElement("div");
+      speechNote.textContent = "озвучки не будет";
+      speechNote.style.cssText = "font-size:11px;opacity:.55;margin-top:6px";
+
+      const speechFor = () => charSettingsFor(key).speech || speechMode || "summary";
+      const refreshSpeech = () => {
+        const cur = speechFor();
+        for (const item of speechRows) item.row.setActive(item.mode === cur);
+        speechNote.style.display = cur === "silent" ? "block" : "none";
+      };
+
+      const setSpeech = (mode) => {
+        saveCharSetting(key, { speech: mode });
+        if (key === packKey(voice)) {
+          speechMode = mode;
+          bridge("/speech", { mode }).catch(() => {});
+        }
+        refreshSpeech();
+      };
+
+      for (const [value, text] of SPEECH_LABELS) {
+        const row = vRow(text, value === speechFor(), () => setSpeech(value));
+        speechRows.push({ mode: value, row });
+        sList.appendChild(row);
+      }
+      sBody.appendChild(sList);
+      sBody.appendChild(speechNote);
+
+      // Скорость речи: общая для движка, применяется к следующей озвучке.
+      const spRow = document.createElement("div");
+      spRow.style.cssText = "display:flex;align-items:center;gap:8px;margin-top:8px";
+      const spInput = document.createElement("input");
+      spInput.type = "range";
+      spInput.min = "0.7";
+      spInput.max = "1.8";
+      spInput.step = "0.05";
+      spInput.value = String(speechSpeed || 1);
+      spInput.style.cssText = "flex:1;accent-color:#5b8dee;cursor:pointer";
+      const spVal = document.createElement("span");
+      spVal.style.cssText = "font-size:11px;opacity:.7;width:48px;text-align:right";
+      spVal.textContent = `${(speechSpeed || 1).toFixed(2)}×`;
+      spInput.oninput = () => {
+        speechSpeed = Number(spInput.value);
+        spVal.textContent = `${speechSpeed.toFixed(2)}×`;
+      };
+      // Пишем на отпускании ползунка, чтобы не долбить мост на каждый пиксель.
+      spInput.onchange = () => {
+        bridge("/speech", { speed: speechSpeed }).catch(() => {});
+      };
+      spRow.append(spInput, spVal);
+      sBody.appendChild(spRow);
+
+      // Кнопки: проверить скорость своим голосом и заглушить текущую озвучку.
+      const actRow = document.createElement("div");
+      actRow.style.cssText = "display:flex;gap:6px;margin-top:8px";
+      const actBtn = (text, title) => {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.textContent = text;
+        btn.title = title;
+        btn.style.cssText = [
+          "flex:1",
+          "padding:5px 8px",
+          "border-radius:7px",
+          "cursor:pointer",
+          "font:inherit",
+          "font-size:11px",
+          "color:inherit",
+          "text-align:center",
+          "border:1px solid rgba(255,255,255,.16)",
+          "background:rgba(255,255,255,.05)",
+        ].join(";");
+        btn.onclick = (ev) => {
+          ev.stopPropagation();
+          btn.onclickAction && btn.onclickAction();
         };
+        return btn;
+      };
+      const testBtn = actBtn("▶ Проверить", "Озвучить пробную фразу голосом этого персонажа");
+      testBtn.onclickAction = () => {
+        bridge("/test", { voice: charVoice(key), sid: currentSid }).catch(() => {});
+      };
+      const stopBtn = actBtn("■ Стоп", "Заглушить текущую озвучку");
+      stopBtn.onclickAction = () => {
+        stopAll();
+      };
+      const replayBtn = actBtn("↻ Повторить", "Озвучить последний текст ещё раз");
+      replayBtn.onclickAction = () => {
+        bridge("/replay", {}).catch(() => {});
+      };
+
+      // Тихие часы: в этом окне персонаж молчит сам, режим озвучки не меняется.
+      const qBox = document.createElement("div");
+      qBox.style.cssText = "margin-top:10px;display:flex;flex-direction:column;gap:6px";
+      const qTop = document.createElement("div");
+      qTop.style.cssText = "display:flex;align-items:center;justify-content:space-between;gap:8px";
+      const qLabel = document.createElement("span");
+      qLabel.textContent = "Тихие часы";
+      qLabel.style.cssText = "font-size:11px;opacity:.75";
+      const qToggle = document.createElement("button");
+      qToggle.type = "button";
+      qToggle.style.cssText =
+        "border:1px solid rgba(255,255,255,.16);background:rgba(255,255,255,.04);color:inherit;border-radius:7px;padding:3px 9px;font-size:11px;cursor:pointer";
+      qToggle.textContent = "выкл";
+      const qTimes = document.createElement("div");
+      qTimes.style.cssText = "display:flex;align-items:center;gap:6px;font-size:11px;opacity:.8";
+      const timeInput = (value) => {
+        const el = document.createElement("input");
+        el.type = "time";
+        el.value = value;
+        el.style.cssText =
+          "border:1px solid rgba(255,255,255,.16);background:rgba(255,255,255,.04);color:inherit;border-radius:6px;padding:2px 4px;font-size:11px";
+        el.style.colorScheme = "dark";
+        return el;
+      };
+      const qFrom = timeInput(quietState.from);
+      const qTo = timeInput(quietState.to);
+      const qDash = document.createElement("span");
+      qDash.textContent = "—";
+      qDash.style.opacity = ".6";
+      qTimes.append(qFrom, qDash, qTo);
+
+      const refreshQuiet = () => {
+        qToggle.textContent = quietState.on ? "вкл" : "выкл";
+        qToggle.style.borderColor = quietState.on ? "rgba(120,180,255,.6)" : "rgba(255,255,255,.16)";
+        qToggle.style.background = quietState.on ? "rgba(80,130,220,.18)" : "rgba(255,255,255,.04)";
+        qFrom.value = quietState.from;
+        qTo.value = quietState.to;
+        qTimes.style.opacity = quietState.on ? ".85" : ".45";
+      };
+      const saveQuiet = (patch) => {
+        quietState = { ...quietState, ...patch };
         refreshQuiet();
-      }
-      refreshSpeech();
-    };
+        bridge("/speech", { quiet: quietState }).catch(() => {});
+      };
+      qToggle.onclick = () => saveQuiet({ on: !quietState.on });
+      qFrom.onchange = () => saveQuiet({ from: qFrom.value || quietState.from });
+      qTo.onchange = () => saveQuiet({ to: qTo.value || quietState.to });
+      qTop.append(qLabel, qToggle);
+      qBox.append(qTop, qTimes);
+      refreshQuiet();
+      sBody.appendChild(qBox);
 
-    if (!speechMode) {
-      bridge("/speech")
-        .then(applySpeechState)
-        .catch(() => applySpeechState({ mode: "summary" }));
-    } else {
-      refreshSpeech();
-      if (!speechSpeed) {
+      // Память против скорости: держать движок загруженным или поднимать на фразу.
+      const memRow = document.createElement("div");
+      memRow.style.cssText = "display:flex;flex-direction:column;gap:4px;margin-top:10px";
+      const memBtn = vRow("Держать движок в памяти", keepAlive, () => {
+        keepAlive = !keepAlive;
+        refreshMem();
+        bridge("/speech", { keepAlive }).catch(() => {});
+      });
+      const memHint = document.createElement("div");
+      memHint.style.cssText = "font-size:10px;line-height:1.4;opacity:.5";
+      const refreshMem = () => {
+        memBtn.setActive(keepAlive);
+        memHint.textContent = keepAlive
+          ? "движок занимает ~1.7 ГБ и отвечает за полсекунды"
+          : "по требованию: каждая фраза ~9 с на загрузку, память свободна";
+      };
+      memRow.append(memBtn, memHint);
+      refreshMem();
+      sBody.appendChild(memRow);
+
+      actRow.append(testBtn, replayBtn, stopBtn);
+      sBody.appendChild(actRow);
+
+      // Озвучка рассуждений: своя у каждого персонажа.
+      const rBody = collapsible("Озвучка рассуждений", "reason", box);
+      const rList = keepScroll(document.createElement("div"), "reason");
+      rList.style.cssText = "max-height:132px;overflow-y:auto;display:flex;flex-direction:column;gap:4px";
+      const reasonRows = [];
+      const rTrans = document.createElement("div");
+      rTrans.style.cssText = "display:flex;margin-top:6px";
+      const rTransRow = vRow("Переводить на русский", false, () => {
+        const next = !reasonFor().translate;
+        setReason({ translate: next });
+      });
+      rTransRow.style.flex = "1";
+      rTrans.appendChild(rTransRow);
+
+      const reasonFor = () => charSettingsFor(key).reason || reasonState || { mode: "off", translate: true };
+      const refreshReason = () => {
+        const st = reasonFor();
+        for (const item of reasonRows) item.row.setActive(item.mode === st.mode);
+        rTransRow.setActive(Boolean(st.translate));
+        rList.style.opacity = st.mode === "off" ? ".5" : "1";
+      };
+
+      const setReason = (patch) => {
+        const next = { ...reasonFor(), ...patch };
+        saveCharSetting(key, { reason: next });
+        if (key === packKey(voice)) {
+          reasonState = next;
+          bridge("/speech", { reason: next }).catch(() => {});
+        }
+        refreshReason();
+      };
+
+      for (const [value, text] of REASON_LABELS) {
+        const row = vRow(text, false, () => setReason({ mode: value }));
+        reasonRows.push({ mode: value, row });
+        rList.appendChild(row);
+      }
+      refreshReason();
+      rBody.append(rList, rTrans);
+
+      const applySpeechState = (data) => {
+        if (!data) return;
+        if (data.mode) speechMode = data.mode;
+        const sp = Number(data.speed);
+        if (Number.isFinite(sp) && sp >= 0.7 && sp <= 1.8) {
+          speechSpeed = sp;
+          spInput.value = String(sp);
+          spVal.textContent = `${sp.toFixed(2)}×`;
+        }
+        if (data.keepAlive !== undefined) {
+          keepAlive = Boolean(data.keepAlive);
+          refreshMem();
+        }
+        const rs = data.reason;
+        if (rs && typeof rs === "object") {
+          reasonState = {
+            mode: REASON_LABELS.some(([m]) => m === rs.mode) ? rs.mode : "off",
+            translate: rs.translate === undefined ? true : Boolean(rs.translate),
+          };
+        }
+        const q = data.quiet;
+        if (q && typeof q === "object") {
+          quietState = {
+            on: Boolean(q.on),
+            from: typeof q.from === "string" ? q.from : quietState.from,
+            to: typeof q.to === "string" ? q.to : quietState.to,
+          };
+          refreshQuiet();
+        }
+        seedPackSettings();
+        refreshSpeech();
+        refreshReason();
+      };
+
+      if (!speechLoaded) {
+        speechLoaded = true;
         bridge("/speech")
           .then(applySpeechState)
           .catch(() => {});
       }
-    }
+    } else if (view.name === "model") {
+      head("Вспомогательная модель");
+      const box = boxEl();
 
-    // Статистика: счётчик ответов и минут речи, сброс.
-    const stBody = collapsible("Статистика", "stats", settings);
-    const stText = document.createElement("div");
-    stText.style.cssText = "font-size:11px;line-height:1.5;opacity:.8";
-    const stReset = document.createElement("button");
-    stReset.type = "button";
-    stReset.textContent = "Сбросить";
-    stReset.style.cssText =
-      "margin-top:6px;border:1px solid rgba(255,255,255,.16);background:rgba(255,255,255,.04);color:inherit;border-radius:7px;padding:3px 9px;font-size:11px;cursor:pointer;align-self:flex-start";
-    const refreshStats = () => {
-      const mins = Math.floor(stats.ms / 60000);
-      const secs = Math.round((stats.ms % 60000) / 1000);
-      stText.textContent = `Озвучено ответов: ${stats.count} · всего речи: ${mins} мин ${secs} с`;
-    };
-    stReset.onclick = () => {
-      stats.count = 0;
-      stats.ms = 0;
-      saveStats();
+      const desc = document.createElement("div");
+      desc.textContent =
+        "Читает ответы вслух, когда выбран пересказ: сокращает текст, переводит рассуждения на русский и озвучивает мысли. Локальные и бесплатные модели — в начале списка.";
+      desc.style.cssText = "font-size:10px;line-height:1.45;opacity:.55;margin:0 0 2px 2px";
+      box.appendChild(desc);
+
+      const mList = keepScroll(document.createElement("div"), "model");
+      mList.style.cssText = "max-height:220px;overflow-y:auto;display:flex;flex-direction:column;gap:4px";
+      const mSearch = document.createElement("input");
+      mSearch.type = "text";
+      mSearch.placeholder = "Поиск модели";
+      mSearch.value = modelQuery;
+      mSearch.style.cssText =
+        "width:100%;box-sizing:border-box;font:inherit;font-size:11px;padding:4px 7px;margin-bottom:2px;" +
+        "border:1px solid rgba(255,255,255,.16);border-radius:7px;background:rgba(255,255,255,.04);color:inherit";
+      mSearch.oninput = () => {
+        modelQuery = mSearch.value;
+        modelLimit = 40;
+        renderModels();
+      };
+      mSearch.onclick = (ev) => ev.stopPropagation();
+      box.append(mSearch, mList);
+
+      const modelRows = [];
+
+      const renderModels = (data) => {
+        if (data) modelsData = data;
+        mList.textContent = "";
+        modelRows.length = 0;
+        const models = (modelsData && modelsData.models) || [];
+        const current = (modelsData && modelsData.current) || {};
+        // Порядок приходит с моста: локальные, затем бесплатные.
+        const q = modelQuery.trim().toLowerCase();
+        const free = models.filter((m) => {
+          if (!(m.local || m.free)) return false;
+          if (!q) return true;
+          return `${m.name} ${m.providerID}/${m.id}`.toLowerCase().includes(q);
+        });
+        const shown = free.slice(0, modelLimit);
+        if (!shown.length) {
+          const empty = document.createElement("div");
+          empty.textContent =
+            data && data.error ? "не удалось получить список" : "локальных и бесплатных моделей нет";
+          empty.style.cssText = "opacity:.5;font-size:11px";
+          mList.appendChild(empty);
+          return;
+        }
+        for (const m of shown) {
+          const active = m.providerID === current.providerID && m.id === current.id;
+          const row = vRow(m.local ? `${m.name} · локальная` : m.name, active, () => {
+            for (const item of modelRows) item.row.setActive(item.model === m);
+            bridge("/model", { providerID: m.providerID, id: m.id }).catch(() => {});
+          });
+          row.title = `${m.providerID}/${m.id}`;
+          modelRows.push({ model: m, row });
+          mList.appendChild(row);
+        }
+        if (free.length > shown.length) {
+          const more = document.createElement("button");
+          more.type = "button";
+          more.textContent = `Показать ещё ${Math.min(40, free.length - shown.length)}`;
+          more.style.cssText =
+            "margin-top:4px;padding:4px 8px;font:inherit;font-size:11px;cursor:pointer;border-radius:7px;" +
+            "border:1px solid rgba(255,255,255,.16);background:rgba(255,255,255,.05);color:inherit";
+          more.onclick = (ev) => {
+            ev.stopPropagation();
+            modelLimit += 40;
+            renderModels();
+          };
+          mList.appendChild(more);
+          const left = document.createElement("div");
+          left.textContent = `всего подходит: ${free.length}`;
+          left.style.cssText = "opacity:.4;font-size:10px;padding:2px 7px";
+          mList.appendChild(left);
+        }
+      };
+
+      const loadModels = () => {
+        if (modelsLoaded) {
+          renderModels();
+          return;
+        }
+        if (modelsLoading) return;
+        modelsLoading = true;
+        mList.textContent = "";
+        const noteEl = document.createElement("div");
+        noteEl.textContent = "загружаю…";
+        noteEl.style.cssText = "opacity:.5;font-size:11px";
+        mList.appendChild(noteEl);
+        bridge("/models")
+          .then((data) => {
+            modelsLoaded = true;
+            modelsLoading = false;
+            renderModels(data);
+          })
+          .catch(() => {
+            modelsLoading = false;
+            noteEl.textContent = "мост недоступен";
+          });
+      };
+      loadModels();
+    } else if (view.name === "stats") {
+      head("Статистика");
+      const box = boxEl();
+
+      const stText = document.createElement("div");
+      stText.style.cssText = "font-size:11px;line-height:1.5;opacity:.8";
+      const stReset = document.createElement("button");
+      stReset.type = "button";
+      stReset.textContent = "Сбросить";
+      stReset.style.cssText =
+        "margin-top:6px;border:1px solid rgba(255,255,255,.16);background:rgba(255,255,255,.04);color:inherit;border-radius:7px;padding:3px 9px;font-size:11px;cursor:pointer;align-self:flex-start";
+      const refreshStats = () => {
+        const mins = Math.floor(stats.ms / 60000);
+        const secs = Math.round((stats.ms % 60000) / 1000);
+        stText.textContent = `Озвучено ответов: ${stats.count} · всего речи: ${mins} мин ${secs} с`;
+      };
+      stReset.onclick = () => {
+        stats.count = 0;
+        stats.ms = 0;
+        saveStats();
+        refreshStats();
+        refreshBadge();
+      };
       refreshStats();
-      refreshBadge();
-    };
-    refreshStats();
-    stBody.append(stText, stReset);
+      box.append(stText, stReset);
+    }
 
     restoreScroll();
   };
 
   let panelOpen = false;
+  // Открытие панели всегда начинается с корневого меню.
+  let panelView = { name: "root" };
   const togglePanel = (on) => {
     panelOpen = on === undefined ? !panelOpen : on;
-    if (panelOpen) renderPanel();
+    if (panelOpen) {
+      panelView = { name: "root" };
+      renderPanel();
+    }
     panel.style.display = panelOpen ? "block" : "none";
     gear.style.display = panelOpen ? "none" : "";
     gear.style.opacity = panelOpen ? "1" : "";
@@ -1477,7 +1804,13 @@ function createView(ctx) {
     px_fx_penguin: "fx_penguin",
     px_fx_demoness: "fx_demoness",
   };
-  const charVoice = (id) => (id && (charVoices[id] || VOICE_ALIAS[id])) || id;
+  // Голос персонажа: сначала индивидуальная настройка (localStorage), потом
+  // общий файл моста, потом встроенное соответствие пиксельных id.
+  const charVoice = (id) => {
+    if (!id) return id;
+    const key = packKey(id);
+    return charSettingsFor(key).voice || charVoices[key] || VOICE_ALIAS[id] || VOICE_ALIAS[key] || id;
+  };
   const voiceOf = (id) => (voiceMap && voiceMap[id]) || id;
 
   // Выбор персонажа храним ещё и в localStorage окна: он читается сразу,
@@ -1506,14 +1839,27 @@ function createView(ctx) {
     (sid && (localMap[sid] || voiceMap[sid])) || voiceFor(sid);
   const applyForSession = (sid) => {
     if (sid) currentSid = sid;
-    apply(resolveVoice(currentSid));
-    // Локальный выбор мог появиться раньше, чем мост: досылаем его на сервер,
-    // иначе TTS озвучит этот чат голосом по хешу.
-    if (currentSid && localMap[currentSid] && voiceMap[currentSid] !== localMap[currentSid]) {
-      const picked = localMap[currentSid];
-      voiceMap[currentSid] = picked;
+    const resolved = resolveVoice(currentSid);
+    apply(resolved);
+    if (!currentSid) return;
+    const picked = localMap[currentSid];
+    if (!picked) {
+      // Новый чат: закрепляем за ним случайного персонажа из включённых,
+      // иначе сервер озвучил бы его голосом по своему хешу.
+      saveLocal(currentSid, resolved);
+      localMap = loadLocal();
       try {
-        bridge("/voice", { sid: currentSid, voice: charVoice(picked), name: nameFor(picked) }).catch(() => {});
+        bridge("/voice", { sid: currentSid, voice: charVoice(resolved), name: nameFor(resolved) }).catch(() => {});
+      } catch (e) {}
+      return;
+    }
+    // Локальный выбор мог появиться раньше, чем мост: досылаем его на сервер.
+    // Сравниваем с голосом, который реально звучит: в мосте он без префикса пака.
+    const spoken = charVoice(picked);
+    if (voiceMap[currentSid] !== spoken) {
+      voiceMap[currentSid] = spoken;
+      try {
+        bridge("/voice", { sid: currentSid, voice: spoken, name: nameFor(picked) }).catch(() => {});
       } catch (e) {}
     }
   };
@@ -1524,6 +1870,17 @@ function createView(ctx) {
       : undefined;
     return fetch(BRIDGE_URL + route, init).then((r) => r.json());
   };
+  bridgeReady = true;
+
+  // Сервер по этому же списку выбирает голос нового чата, поэтому хеш
+  // и в окне, и в озвучке даёт одного персонажа.
+  const syncEnabled = () => {
+    bridge("/chars", { voices: enabledBases() }).catch(() => {});
+  };
+  setTimeout(() => {
+    syncEnabled();
+    applyPrefsFor(packKey(voice));
+  }, 0);
 
   const adopt = (map) => {
     voiceMap = map || {};

@@ -52,10 +52,14 @@ def check_bundle_markers() -> None:
         return
     text = PLUGIN.read_text(encoding="utf-8", errors="replace")
     markers = [
-        "Рассуждения",
+        "Озвучка рассуждений",
         "Вспомогательная модель",
-        "Обращение к пользователю",
+        "Данные пользователя",
+        "Настройка персонажей",
         "Статистика",
+        "x2ai-avatar:char-settings",
+        "x2ai-avatar:enabled",
+        "bridge(\"/chars\"",
         "Тихие часы",
         "Повторить",
         "x2ai-avatar:stats",

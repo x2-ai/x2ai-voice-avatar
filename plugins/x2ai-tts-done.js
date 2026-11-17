@@ -162,14 +162,29 @@ function agreeGender(text, g) {
   return out;
 }
 
+// Включённые персонажи пишет окно аватара: по этому списку сервер выбирает
+// голос нового чата, чтобы спрайт и озвучка совпадали.
+const ENABLED_FILE = `${process.env.HOME}/.config/opencode/x2ai-char-enabled.json`;
+function enabledVoices() {
+  try {
+    const list = JSON.parse(fs.readFileSync(ENABLED_FILE, "utf8"));
+    if (Array.isArray(list) && list.length) {
+      const pool = TERA_VOICES.filter((voice) => list.includes(voice));
+      if (pool.length) return pool;
+    }
+  } catch (e) {}
+  return TERA_VOICES;
+}
+
 function teraVoice(sid) {
   if (VOICE_MODE === "fixed") return null;
+  const pool = enabledVoices();
   if (VOICE_MODE === "random") {
-    return TERA_VOICES[Math.floor(Math.random() * TERA_VOICES.length)];
+    return pool[Math.floor(Math.random() * pool.length)];
   }
   const key = String(sid || "");
   if (!key) return null;
-  return TERA_VOICES[Math.abs(Number(hash(key)) | 0) % TERA_VOICES.length];
+  return pool[Math.abs(Number(hash(key)) | 0) % pool.length];
 }
 
 // Пересказ через бесплатную модель OpenCode: без сессии, истории и инструментов.
@@ -1211,6 +1226,16 @@ function startBridge(ctx) {
           } catch (e) {}
         }
         send(res, 200, { ok: true, charVoices: readCharVoices() });
+        return;
+      }
+      if (req.method === "POST" && route === "/chars") {
+        if (Array.isArray(payload.voices)) {
+          try {
+            const list = payload.voices.filter((v) => typeof v === "string").slice(0, 30);
+            fs.writeFileSync(ENABLED_FILE, JSON.stringify(list));
+          } catch (e) {}
+        }
+        send(res, 200, { ok: true });
         return;
       }
       if (req.method === "POST" && route === "/model") {
