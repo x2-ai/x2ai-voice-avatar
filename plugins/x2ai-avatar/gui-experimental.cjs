@@ -2217,7 +2217,7 @@ function createView(ctx) {
     step();
   };
 
-  const startSpeaking = (ms, kind, text) => {
+  const startSpeaking = (ms, kind, text, offset = 0) => {
     speaking = true;
     const thinking = kind === "reason";
     bubble.style.display = thinking ? "block" : "none";
@@ -2231,10 +2231,23 @@ function createView(ctx) {
     if (talkTimeout) clearTimeout(talkTimeout);
     if (speakTimer) clearTimeout(speakTimer);
     const total = ms > 0 ? ms : 9000;
-    speakTimer = setTimeout(stopSpeaking, total + 500);
+    const skipMs = Math.max(0, Math.min(Number(offset) || 0, total));
+    speakTimer = setTimeout(stopSpeaking, total - skipMs + 500);
 
     const plan = buildTalkPlan(text, total);
     if (plan) {
+      // State приходит с задержкой до 0.8 с: пропускаем уже прошедшие кадры,
+      // иначе рот отстаёт от звука и замолкает раньше него.
+      let skip = skipMs;
+      while (plan.length && skip > 0) {
+        if (plan[0].delay <= skip) {
+          skip -= plan[0].delay;
+          plan.shift();
+        } else {
+          plan[0] = { frame: plan[0].frame, delay: plan[0].delay - skip };
+          skip = 0;
+        }
+      }
       runPlan(plan, thinking);
     } else {
       // Текста нет — просто шевелим ртом, как раньше.
@@ -2409,6 +2422,7 @@ function createView(ctx) {
         if (state.speaking && mine) {
           if (moodState.value === "sleeping") wake();
           const at = Number(state.at) || 0;
+          const elapsed = at ? Math.max(0, Date.now() - at * 1000) : 0;
           if (!bridgeSpeaking || (at && at !== lastSpeakAt)) {
             bridgeSpeaking = true;
             lastSpeakAt = at;
@@ -2418,7 +2432,8 @@ function createView(ctx) {
             if (state.ms > 0) stats.ms += state.ms;
             saveStats();
             refreshBadge();
-            startSpeaking(state.ms > 0 ? state.ms : 9000, state.kind || "", state.text || "");
+            const total = state.ms > 0 ? state.ms + elapsed : 9000;
+            startSpeaking(total, state.kind || "", state.text || "", elapsed);
           }
         } else {
           bridgeSpeaking = false;
