@@ -1429,6 +1429,37 @@ module.exports = {
       }
     })();
 
+    // Правила общения в первый промпт чата: род персонажа и род/имя пользователя.
+    try {
+      const greeted = new Set();
+      await ctx.session.hook("prompt", async (event) => {
+        const sid =
+          event.sessionID || (event.session && event.session.id) || (event.metadata && event.metadata.sessionID) || "";
+        if (sid && greeted.has(sid)) return;
+        const user = readUser();
+        const voice = sid ? effectiveVoice(sid) : "";
+        const agentGender = genderOf(voice);
+        const rules = [];
+        if (agentGender === "f") {
+          rules.push("Ты — женский персонаж. О себе говори в женском роде: «я проверила», «я сделала», «я нашла».");
+        } else if (agentGender === "m") {
+          rules.push("Ты — мужской персонаж. О себе говори в мужском роде: «я проверил», «я сделал», «я нашёл».");
+        }
+        if (user.name) rules.push(`Пользователя зовут ${user.name}.`);
+        if (user.gender === "f") {
+          rules.push("Пользователь — женщина. Обращаясь к ней, используй женский род: «ты проверила», «ты права».");
+        } else if (user.gender === "m") {
+          rules.push("Пользователь — мужчина. Обращаясь к нему, используй мужской род: «ты проверил», «ты прав».");
+        }
+        if (!rules.length) return;
+        if (sid) greeted.add(sid);
+        event.prompt.text = `${event.prompt.text}\n\n[Правила общения]\n${rules.join("\n")}`;
+        log("PROMPT_RULES:", sid || "-", rules.length);
+      });
+    } catch (e) {
+      log("PROMPT_HOOK_ERR", e?.message);
+    }
+
     return () => ac.abort();
   },
 };
