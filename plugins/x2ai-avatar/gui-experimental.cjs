@@ -1190,8 +1190,9 @@ function createView(ctx) {
       gRow.style.cssText = "display:flex;gap:4px;margin-top:5px";
       box.appendChild(gRow);
 
+      // «Не указан» скрыт: он остаётся значением по умолчанию (userGender = ""),
+      // но вернуться к нему после выбора пола нельзя — кнопки просто нет.
       const GENDERS = [
-        ["", "Не указан"],
         ["m", "Мужской"],
         ["f", "Женский"],
       ];
