@@ -1837,6 +1837,12 @@ function createView(ctx) {
 
   const resolveVoice = (sid) =>
     (sid && (localMap[sid] || voiceMap[sid])) || voiceFor(sid);
+  // Голос чата на сервер: до готовности моста молчим, потом дошлём.
+  function pushVoice(key) {
+    if (!bridgeReady || !currentSid || !key) return;
+    bridge("/voice", { sid: currentSid, voice: charVoice(key), name: nameFor(key) }).catch(() => {});
+  }
+
   const applyForSession = (sid) => {
     if (sid) currentSid = sid;
     const resolved = resolveVoice(currentSid);
@@ -1848,9 +1854,7 @@ function createView(ctx) {
       // иначе сервер озвучил бы его голосом по своему хешу.
       saveLocal(currentSid, resolved);
       localMap = loadLocal();
-      try {
-        bridge("/voice", { sid: currentSid, voice: charVoice(resolved), name: nameFor(resolved) }).catch(() => {});
-      } catch (e) {}
+      pushVoice(resolved);
       return;
     }
     // Локальный выбор мог появиться раньше, чем мост: досылаем его на сервер.
@@ -1858,9 +1862,7 @@ function createView(ctx) {
     const spoken = charVoice(picked);
     if (voiceMap[currentSid] !== spoken) {
       voiceMap[currentSid] = spoken;
-      try {
-        bridge("/voice", { sid: currentSid, voice: spoken, name: nameFor(picked) }).catch(() => {});
-      } catch (e) {}
+      pushVoice(picked);
     }
   };
 
@@ -1879,6 +1881,7 @@ function createView(ctx) {
   };
   setTimeout(() => {
     syncEnabled();
+    pushVoice(resolveVoice(currentSid));
     applyPrefsFor(packKey(voice));
   }, 0);
 
