@@ -34,6 +34,19 @@ const FX_GENDER = {
   fx_ghost: "f",
 };
 
+const CHAR_NAMES = {
+  ru_f1: "Аня", ru_f2: "Мила", ru_m1: "Гриша", ru_m5: "Тимур",
+  fx_robot: "Робик", fx_demoness: "Азазель", fx_alien: "Зета",
+  fx_cat: "Мурзик", fx_penguin: "Пико", fx_ghost: "Юки",
+  px_ru_f1: "Тянка", px_fx_robot: "Робот", px_fx_demoness: "Демонесса",
+  px_fx_penguin: "Инопланетянин", px_ru_m1: "Программист",
+};
+
+function nameOf(voice) {
+  const id = String(voice || "");
+  return CHAR_NAMES[id] || CHAR_NAMES[id.replace(/^px_/, "")] || "";
+}
+
 function genderOf(voice) {
   if (!voice) return "";
   if (FX_GENDER[voice]) return FX_GENDER[voice];
@@ -1440,6 +1453,10 @@ module.exports = {
         const voice = sid ? effectiveVoice(sid) : "";
         const agentGender = genderOf(voice);
         const rules = [];
+        const charName = nameOf(voice);
+        if (charName) {
+          rules.push(`Тебя зовут ${charName}. Пользователь может обращаться к тебе по имени.`);
+        }
         if (agentGender === "f") {
           rules.push("Ты — женский персонаж. О себе говори в женском роде: «я проверила», «я сделала», «я нашла».");
         } else if (agentGender === "m") {
