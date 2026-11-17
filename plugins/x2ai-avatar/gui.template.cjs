@@ -287,8 +287,11 @@ const EN_VOICE_BY_BASE = {
   fx_penguin: "eng_m2_whisper",
   fx_ghost: "eng_f4_whisper",
 };
-const defaultVoiceFor = (base, lang) => {
+// Точечные исключения по id персонажа: важнее общей привязки по голосу.
+const EN_VOICE_BY_KEY = { px_ru_f1: "eng_f5" };
+const defaultVoiceFor = (base, lang, key) => {
   if (lang === "ru") return base;
+  if (key && EN_VOICE_BY_KEY[key]) return EN_VOICE_BY_KEY[key];
   if (EN_VOICE_BY_BASE[base]) return EN_VOICE_BY_BASE[base];
   return /_m$|^fx_(robot|demon|penguin)$/.test(base) ? "eng_m3" : "eng_f3";
 };
@@ -1238,7 +1241,7 @@ function createView(ctx) {
 
       // Голос персонажа: свой у каждого, живёт в localStorage.
       const vBody = collapsible("Голос персонажа", "voice", box);
-      const defaultVoiceOf = () => defaultVoiceFor(VOICE_ALIAS[key] || key, voiceLang());
+      const defaultVoiceOf = () => defaultVoiceFor(VOICE_ALIAS[key] || key, voiceLang(), key);
       // Голос хранится отдельно для каждого языка: русский выбор не должен
       // подставляться, когда включён английский.
       const pickedVoice = () => {
@@ -2124,7 +2127,7 @@ function createView(ctx) {
     const cs = charSettingsFor(key);
     const byLang = cs.voiceByLang || {};
     if (byLang[lang]) return byLang[lang];
-    if (lang === "en") return defaultVoiceFor(VOICE_ALIAS[key] || key, "en");
+    if (lang === "en") return defaultVoiceFor(VOICE_ALIAS[key] || key, "en", key);
     return cs.voice || charVoices[key] || VOICE_ALIAS[id] || VOICE_ALIAS[key] || id;
   };
   const voiceOf = (id) => (voiceMap && voiceMap[id]) || id;
