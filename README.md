@@ -225,8 +225,11 @@ cp -r plugins/x2ai-avatar ~/.config/opencode/plugins/
 
   Остальное (unix-сокет, `flock`, `setproctitle`, ONNX CPU) работает так же,
   пути те же — `~/.config/opencode/...`.
-- **Windows** — не поддерживается: нужен другой способ воспроизведения,
-  блокировок и путей.
+- **Windows** — не поддерживается и «как есть» не заработает. Нужен порт:
+  сервер запускается shell-скриптом, сокет блокируется через `fcntl.flock`,
+  сервер слушает unix-сокет, звук играет `afplay` / `paplay`. Всё это придётся
+  заменить (`.cmd`-лаунчер, блокировка через lock-файл, TCP вместо unix-сокета,
+  `ffplay` или `winsound`) и проверить пути.
 
 ### Сборка
 
@@ -543,8 +546,12 @@ reasoning translation use the same language as the voice-over.
 
   Everything else (unix socket, `flock`, `setproctitle`, ONNX CPU) works the
   same, with the same paths — `~/.config/opencode/...`.
-- **Windows** — not supported: playback, locking, and paths need a different
-  implementation.
+- **Windows** — not supported, and it will not work as is. It needs a port: the
+  server is started by a shell script, the socket is locked with `fcntl.flock`,
+  the server listens on a unix socket, and audio is played by `afplay` /
+  `paplay`. All of that must be replaced (a `.cmd` launcher, a lock file, TCP
+  instead of a unix socket, `ffplay` or `winsound`), and the paths must be
+  checked.
 
 ### Build
 
