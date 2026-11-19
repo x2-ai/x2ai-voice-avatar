@@ -22,6 +22,9 @@ const BRIDGE_URL = "http://127.0.0.1:47821";
 // манифест: какие паки есть и какие персонажи в них.
 const PACKS = {};
 const PACK_INDEX = __PACK_INDEX__;
+// Виртуальный пак: все персонажи всех паков сразу. Включения и настройки
+// у него свои (ключи с префиксом "@all::"), с отдельными паками не связаны.
+const ALL_PACK = "@all";
 const packList = () => Object.keys(PACK_INDEX);
 const CLICKS = __CLICKS__;
 // Партитура рта: чистые функции из plugins/x2ai-avatar/talk-plan.js — та же
@@ -41,14 +44,35 @@ const CHAR_NAMES = {
   },
   pixel: {
     px_ru_f1: "Тянка", px_fx_robot: "Робот", px_fx_demoness: "Демонесса",
-    px_fx_penguin: "Инопланетянин", px_ru_m1: "Программист",
+    px_fx_penguin: "Инопланетянин", px_ru_m1: "Программист", px_ru_m5: "Гопник",
+    px_fx_ghost: "Призрак",
+    px_x2ai_ment: "Мент",
+    px_x2ai_alkash: "Алкаш",
+    px_x2ai_bratok: "Браток",
+    px_x2ai_babka: "Бабка",
+    px_x2ai_sosochka: "Сосочка",
+    px_x2ai_telochka: "Телочка",
+    px_x2ai_narik: "Нарик",
+    px_x2ai_novyi_russkiy: "Новый русский",
+    px_x2ai_kotohaker: "Котохакер",
+    px_x2ai_coder: "Кодер",
+    px_x2ai_programmer: "Программистка",
+    px_x2ai_codergirl: "Кодерша",
   },
 };
 
 // Имя зависит от пака: в пиксельном свои названия, в аниме — прежние.
+// В «все доступные» ищем пак, которому принадлежит персонаж, иначе пиксельные
+// id остались бы без имени.
 function nameFor(voice) {
-  const pack = CHAR_NAMES[activePack] || {};
   const key = packKey(voice);
+  if (activePack === ALL_PACK) {
+    for (const name of packList()) {
+      const pack = CHAR_NAMES[name] || {};
+      if (pack[key]) return pack[key];
+    }
+  }
+  const pack = CHAR_NAMES[activePack] || {};
   return pack[key] || CHAR_NAMES.anime[key] || CHAR_NAMES.anime[voice] || voice;
 }
 // Детализация пересказа: 0 — совсем коротко, 1 — подробно, 0.5 = 400 символов.
@@ -58,6 +82,12 @@ const detailChars = (v) => {
 };
 
 const HEIGHT = 224; // px на экране (спрайты 336 px)
+
+// Персонажи с обрезанным левым краем кадра (широкие плечи уходят за экран):
+// справа их отражаем по горизонтали, чтобы обрез ушёл за правый край окна.
+const MIRROR_CHARS = new Set(["x2ai_novyi_russkiy", "x2ai_bratok"]);
+// Призрак нарисован смотрящей вправо: слева его отражаем, справа — как есть.
+const MIRROR_LEFT_CHARS = new Set(["fx_ghost"]);
 
 // Размер персонажа настраивается в панели и живёт в localStorage окна.
 const HEIGHT_KEY = "x2ai-avatar:height";
@@ -75,20 +105,30 @@ try {
 const DEFAULT_HEIGHT = charHeight;
 
 // Индивидуальные настройки персонажа: размер, голос, озвучка ответа и рассуждений.
-// Ключ — id персонажа внутри пака (px_ru_f1, fx_cat), поэтому паки не пересекаются.
+// Ключ — id персонажа внутри пака (px_ru_f1, fx_cat). В виртуальном паке
+// «все доступные» те же персонажи получают свой набор: ключ получает префикс
+// "@all::", поэтому настройки паков и общего режима не пересекаются.
 const CHAR_SETTINGS_KEY = "x2ai-avatar:char-settings";
 let charSettings = {};
 try {
   const raw = JSON.parse(localStorage.getItem(CHAR_SETTINGS_KEY) || "{}");
   if (raw && typeof raw === "object") charSettings = raw;
 } catch (e) {}
-const charSettingsFor = (key) => (key && charSettings[key]) || {};
+const settingsKey = (key) => {
+  const base = packKey(key);
+  if (!base) return "";
+  return activePack === ALL_PACK ? `${ALL_PACK}::${base}` : base;
+};
+const charSettingsFor = (key) => (key && charSettings[settingsKey(key)]) || {};
 const saveCharSetting = (key, patch) => {
   if (!key) return;
-  charSettings[key] = { ...charSettingsFor(key), ...patch };
+  const sk = settingsKey(key);
+  charSettings[sk] = { ...(charSettings[sk] || {}), ...patch };
   try {
     localStorage.setItem(CHAR_SETTINGS_KEY, JSON.stringify(charSettings));
-  } catch (e) {}
+  } catch (e) {
+    console.warn("x2ai: настройки персонажа не сохранились", e);
+  }
 };
 
 // Кошельки для доната: список пуст — в панели вежливая заглушка.
@@ -106,7 +146,10 @@ const UI_KEY = "x2ai-avatar:ui";
 // Пузырь с текстом: "off" — не показывать, "mute" — только при выключенном
 // звуке (по умолчанию), "always" — показывать всегда.
 const BUBBLE_MODES = ["off", "mute", "always"];
-const UI_DEFAULT = { bubble: "mute", keys: true, react: true };
+// Сторона окна, с которой висит персонаж. На панели это «Слева/Справа»,
+// у каждого персонажа может быть своё значение (иначе — общее).
+const SIDES = ["left", "right"];
+const UI_DEFAULT = { bubble: "mute", keys: true, react: true, logs: false, side: "left", enabled: true };
 let uiPrefs = { ...UI_DEFAULT };
 try {
   const raw = JSON.parse(localStorage.getItem(UI_KEY) || "{}");
@@ -116,6 +159,8 @@ try {
     // иначе после обновления пузырь у тех, кто его включил, молча исчезает.
     if (typeof raw.bubble === "boolean") raw.bubble = raw.bubble ? "always" : "off";
     if (!BUBBLE_MODES.includes(raw.bubble)) delete raw.bubble;
+    if (!SIDES.includes(raw.side)) delete raw.side;
+    if (typeof raw.enabled !== "boolean") delete raw.enabled;
     uiPrefs = { ...UI_DEFAULT, ...raw };
   }
 } catch (e) {}
@@ -123,8 +168,13 @@ const saveUiPref = (patch) => {
   uiPrefs = { ...uiPrefs, ...patch };
   try {
     localStorage.setItem(UI_KEY, JSON.stringify(uiPrefs));
-  } catch (e) {}
+  } catch (e) {
+    console.warn("x2ai: настройки окна не сохранились", e);
+  }
 };
+// Общий выключатель плагина: персонаж, реакции, клики, звук. Когда выключен,
+// на экране остаётся только кнопка питания.
+const pluginOn = () => uiPrefs.enabled !== false;
 
 // Дефолтные имена по-английски. Своё имя, введённое пользователем, важнее
 // и никогда не переводится.
@@ -133,7 +183,20 @@ const CHAR_NAMES_EN = {
   fx_robot: "Robik", fx_demoness: "Azazel", fx_alien: "Zeta",
   fx_cat: "Murzik", fx_penguin: "Piko", fx_ghost: "Yuki",
   px_ru_f1: "Tyanka", px_fx_robot: "Robot", px_fx_demoness: "Demoness",
-  px_fx_penguin: "Alien", px_ru_m1: "Programmer",
+  px_fx_penguin: "Alien", px_ru_m1: "Programmer", px_ru_m5: "Gopnik",
+  px_fx_ghost: "Ghost",
+  px_x2ai_ment: "Cop",
+  px_x2ai_alkash: "Drunkard",
+  px_x2ai_bratok: "Bratok",
+  px_x2ai_babka: "Granny",
+  px_x2ai_sosochka: "Cutie",
+  px_x2ai_telochka: "Babe",
+  px_x2ai_narik: "Junkie",
+  px_x2ai_novyi_russkiy: "New Russian",
+  px_x2ai_kotohaker: "Cat Hacker",
+  px_x2ai_coder: "Coder",
+  px_x2ai_programmer: "Programmer",
+  px_x2ai_codergirl: "Code Girl",
 };
 const charName = (key) => {
   const k = packKey(key);
@@ -143,8 +206,9 @@ const charName = (key) => {
   return activeLang === "ru" ? base : CHAR_NAMES_EN[k] || base;
 };
 // Характер — галочка в настройках персонажа: сервер добавляет в правила чата
-// не только имя и род, но и манеру речи. По умолчанию выключен.
-const charTemper = (key) => Boolean(charSettingsFor(packKey(key)).temper);
+// не только имя и род, но и манеру речи. По умолчанию включён у всех;
+// выключается только явно (false в настройках персонажа).
+const charTemper = (key) => charSettingsFor(packKey(key)).temper !== false;
 // По умолчанию персонаж реагирует на ошибки: выключено только явно.
 const charReact = (key) => charSettingsFor(packKey(key)).react !== false;
 
@@ -195,6 +259,9 @@ const setCharEnabled = (key, on) => {
 const TERA_ORDER = [
   "ru_f1", "ru_f2", "ru_m1", "ru_m5",
   "fx_robot", "fx_demon", "fx_demoness", "fx_alien", "fx_cat", "fx_penguin", "fx_ghost",
+  "x2ai_ment", "x2ai_alkash", "x2ai_bratok", "x2ai_babka", "x2ai_sosochka", "x2ai_telochka",
+  "x2ai_narik", "x2ai_novyi_russkiy", "x2ai_kotohaker",
+  "x2ai_coder", "x2ai_programmer", "x2ai_codergirl",
 ];
 const baseVoice = (key) => String(key || "").replace(/^px_/, "");
 const enabledBases = () => {
@@ -216,6 +283,13 @@ function voiceFor(sid) {
   const pool = bases.length ? bases : TERA_ORDER;
   if (!pool.length) return "ru_f1";
   const base = pool[Math.abs(Number(hash(sid)) | 0) % pool.length];
+  // «Все доступные»: в объединении id бывают и с префиксом пака, и без.
+  if (activePack === ALL_PACK) {
+    const available = packVoices();
+    if (available.includes(`px_${base}`)) return `px_${base}`;
+    if (available.includes(base)) return base;
+    return base;
+  }
   const pack = PACKS[activePack] || {};
   if (pack[`px_${base}`]) return `px_${base}`;
   if (pack[base]) return base;
@@ -224,16 +298,16 @@ function voiceFor(sid) {
 
 // Паки: наши кадры и скачанные по лицензии. Пак может быть неполным —
 // отсутствующий персонаж берётся из базового пака "anime".
-const PACK_NAMES = { anime: "Аниме", pixel: "Пиксельарт" };
+const PACK_NAMES = { anime: "Аниме", pixel: "Пиксельарт", [ALL_PACK]: "Все доступные" };
 const PACK_KEY = "x2ai-avatar:pack";
 
 let activePack = "pixel";
 try {
   const saved = localStorage.getItem(PACK_KEY);
-  if (saved && PACK_INDEX[saved]) activePack = saved;
+  if (saved === ALL_PACK || (saved && PACK_INDEX[saved])) activePack = saved;
   else if (!PACK_INDEX.pixel || !PACK_INDEX.pixel.length) activePack = "anime";
 } catch (e) {}
-if (!PACK_INDEX[activePack]) activePack = packList()[0] || "pixel";
+if (activePack !== ALL_PACK && !PACK_INDEX[activePack]) activePack = packList()[0] || "pixel";
 
 // Язык интерфейса: кнопки EN/RU справа вверху главного меню.
 // Ключ словаря — русская строка, поэтому t() можно звать где угодно и она
@@ -268,6 +342,7 @@ const I18N = {
     "← Назад": "← Back",
     "Свой характер (пусто — готовый)": "Custom character (empty — preset)",
     "Например: «говори дерзко, подкалывай, но по делу». Пусто — готовый характер.":
+
       "For example: “speak boldly, tease, but stay on point”. Empty — the preset.",
     "Манера речи": "Speech style",
     "Окраска": "Tone",
@@ -278,7 +353,7 @@ const I18N = {
     "Устало": "Tired",
     "Окраска задаёт и интонацию, и темп: бодро — быстрее, устало — медленнее. «Настроить» — свой темп, окраска подберётся по нему. Реплика прозвучит сразу после изменения.":
       "Tone sets both intonation and tempo: cheerful is faster, tired is slower. Custom sets your own tempo and picks the tone for it. A sample plays right after you change them.",
-    "Активировать": "Enable",
+    "Поведение": "Behaviour",
     "Пузырь с текстом": "Text bubble",
     "Не показывать": "Don't show",
     "Только при отключённом звуке": "Only when muted",
@@ -288,7 +363,7 @@ const I18N = {
     "Короткая фраза, которую персонаж говорит сейчас.": "The short phrase being spoken now.",
     "Горячие клавиши": "Hotkeys",
     "⌘/Ctrl+Shift+M — звук, +S — стоп, +A — панель.": "⌘/Ctrl+Shift+M — mute, +S — stop, +A — panel.",
-    "Живой персонаж": "Living character",
+    "Реакции": "Reactions",
     "Хмурится, когда инструмент или ответ упал.": "Frowns when a tool or an answer fails.",
     "Экспортировать настройки": "Export settings",
     "Импортировать настройки": "Import settings",
@@ -302,6 +377,7 @@ const I18N = {
     "Мужской": "Male",
     "Женский": "Female",
     "Пак персонажей": "Character pack",
+    "Все доступные": "All available",
     "Доступен для новых чатов": "Available for new chats",
     "Выключен": "Disabled",
     "Выбрать персонажа": "Select character",
@@ -312,6 +388,14 @@ const I18N = {
     "Персонаж выключен: в новых чатах не появится, включить в текущем чате нельзя.":
       "The character is off: it will not appear in new chats and cannot be enabled in this chat.",
     "Размер персонажа": "Character size",
+    "Расположение персонажа": "Character position",
+    "Как в общих настройках": "Use global setting",
+    "Слева": "Left",
+    "Справа": "Right",
+    "Слева или справа от окна. «Как в общих настройках» — значение из «Дополнительно».":
+      "Left or right of the window. “Use global setting” takes the value from Advanced.",
+    "Применится не ко всем: у персонажей со своей стороной останется та, что выбрана в их настройках.":
+      "Not everyone will move: characters with their own side keep the one chosen in their settings.",
     "Голос персонажа": "Character voice",
     "загружаю голоса…": "loading voices…",
     "По умолчанию": "Default",
@@ -329,13 +413,15 @@ const I18N = {
     "Переводить на {lang}": "Translate into {lang}",
     "русский": "Russian",
     "английский": "English",
-    "Не читает и не озвучивает ответы сама: сжимает текст для «Кратко» и переводит рассуждения на язык озвучки, если включён перевод. Локальные и бесплатные модели — в начале списка.":
-      "Does not read or voice answers itself: it shortens the text for Brief mode and translates reasoning into the speech language when translation is on. Local and free models come first.",
+    "Не читает и не озвучивает ответы сама: сжимает текст для «Кратко» и переводит рассуждения на язык озвучки, если включён перевод. Локальные и бесплатные модели — в начале списка. Если модель недоступна, персонаж молчит: машинного перевода нет.":
+      "Does not read or voice answers itself: it shortens the text for Brief mode and translates reasoning into the speech language when translation is on. Local and free models come first. If the model is unavailable, the character stays silent: there is no machine translation.",
     "Отключено": "Off",
     "Включено": "On",
     "Поиск модели": "Search model",
     "не удалось получить список": "could not load the list",
     "локальных и бесплатных моделей нет": "no local or free models",
+    "ничего не найдено": "nothing found",
+    "Обновить список": "Refresh list",
     "{name} · локальная": "{name} · local",
     "Показать ещё {n}": "Show {n} more",
     "всего подходит: {n}": "total matching: {n}",
@@ -356,6 +442,21 @@ const I18N = {
     "Сбросить": "Reset",
     "Озвучено ответов: {n} · речи: {m} мин": "Answers spoken: {n} · speech: {m} min",
     "спит": "asleep",
+    "дремлет": "dozing",
+    "Показывать логи": "Show logs",
+    "правила чата: выданы": "chat rules: sent",
+    "правила чата: ещё нет": "chat rules: not yet",
+    "правила чата: неизвестно": "chat rules: unknown",
+    "Потягивание": "Stretching",
+    "Улыбка": "Smile",
+    "Радость": "Joy",
+    "Гордость": "Pride",
+    "Любопытство": "Curiosity",
+    "Тревога": "Worry",
+    "Смена чата": "Chat switch",
+    "Смущение": "Blush",
+    "Скука": "Boredom",
+    "Злость": "Anger",
     "злится": "angry",
     "Аниме": "Anime",
     "Характер": "Character",
@@ -364,6 +465,8 @@ const I18N = {
     "Пиксельарт": "Pixel art",
     "Следующий персонаж из пака": "Next character from the pack",
     "Выключить озвучку": "Mute speech",
+    "Выключить плагин": "Turn plugin off",
+    "Включить плагин": "Turn plugin on",
     "Включить озвучку": "Unmute speech",
   },
 };
@@ -393,6 +496,18 @@ const EN_VOICE_BY_BASE = {
   fx_cat: "eng_f5",
   fx_penguin: "eng_m2_whisper",
   fx_ghost: "eng_f4_whisper",
+  x2ai_ment: "eng_m3",
+  x2ai_alkash: "eng_m3",
+  x2ai_bratok: "eng_m3",
+  x2ai_babka: "eng_f3",
+  x2ai_sosochka: "eng_f3",
+  x2ai_telochka: "eng_f3",
+  x2ai_narik: "eng_m3",
+  x2ai_novyi_russkiy: "eng_m3",
+    x2ai_kotohaker: "eng_m3",
+    x2ai_coder: "eng_m3",
+    x2ai_programmer: "eng_f3",
+    x2ai_codergirl: "eng_f3",
 };
 // Точечные исключения по id персонажа: важнее общей привязки по голосу.
 const EN_VOICE_BY_KEY = { px_ru_f1: "eng_f5" };
@@ -404,15 +519,25 @@ const defaultVoiceFor = (base, lang, key) => {
 };
 
 // Персонажи пака известны из манифеста, кадры могут быть ещё не загружены.
+// У «все доступные» — объединение всех паков без повторов.
 function packVoices(name) {
   const key = name || activePack;
+  if (key === ALL_PACK) {
+    const out = [];
+    for (const packName of packList()) {
+      for (const voice of packVoices(packName)) {
+        if (!out.includes(voice)) out.push(voice);
+      }
+    }
+    return out;
+  }
   const pack = PACKS[key] || {};
   const list = Object.keys(pack).length ? Object.keys(pack) : PACK_INDEX[key] || [];
   return list.filter((voice) => !pack[voice] || (pack[voice] && pack[voice].closed));
 }
 
 function setPack(name) {
-  if (!PACK_INDEX[name]) return;
+  if (name !== ALL_PACK && !PACK_INDEX[name]) return;
   activePack = name;
   try {
     localStorage.setItem(PACK_KEY, name);
@@ -437,11 +562,23 @@ function packKey(voice) {
 const EMPTY_FRAME =
   "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
 
-function frame(voice, state) {
+// Набор кадров персонажа: в «все доступные» ищем по всем пакам, иначе —
+// выбранный пак с запасным аниме.
+function frameSetFor(voice) {
   const key = packKey(voice);
+  if (activePack === ALL_PACK) {
+    for (const name of packList()) {
+      const set = PACKS[name] && PACKS[name][key];
+      if (set) return set;
+    }
+  }
   const pack = PACKS[activePack] || {};
   const base = PACKS.anime || {};
-  const set = pack[key] || base[key] || base.ru_f1 || EMPTY_FRAME;
+  return pack[key] || base[key] || base.ru_f1 || EMPTY_FRAME;
+}
+
+function frame(voice, state) {
+  const set = frameSetFor(voice);
   if (typeof set === "string") return set; // пустой пак ещё не загружен
   return set[state] || set.closed || EMPTY_FRAME;
 }
@@ -492,24 +629,15 @@ function createView(ctx) {
     `height:${charHeight}px`,
     "width:auto",
     "display:block",
+    // Кадры рисуются в 336 px, а на экране обычно 224 — при сглаживании
+    // браузер размазывает контур и белую рубашку в кайму. Nearest-neighbor
+    // держит пиксель-арт чистым, без серой обводки.
+    "image-rendering:pixelated",
     "filter:drop-shadow(0 2px 6px rgba(0,0,0,.28))",
     "transition:opacity 90ms linear",
   ].join(";");
   box.appendChild(img);
 
-  // Бейдж: сколько ответов озвучено и сколько шёл последний.
-  const badge = document.createElement("div");
-  badge.style.cssText = [
-    "margin-left:5px",
-    "align-self:flex-end",
-    "font-size:10px",
-    "line-height:1",
-    "opacity:.55",
-    "white-space:nowrap",
-    "pointer-events:auto",
-    "text-shadow:0 1px 2px rgba(0,0,0,.55)",
-  ].join(";");
-  box.appendChild(badge);
 
   let evCount = 0;
   let lastSid = "";
@@ -529,6 +657,7 @@ function createView(ctx) {
     if (moodState.value !== "awake") setMood(moodState.value, true);
     root.title = `x2ai · ${charName(voice)} · ${voice}`;
     applyHeightFor(packKey(next));
+    applySide(packKey(next));
     applyPrefsFor(packKey(next));
   };
 
@@ -632,6 +761,34 @@ function createView(ctx) {
     nextCharacter();
   };
   box.appendChild(swapBtn);
+
+  // Кнопка питания: общий выключатель плагина. Живёт прямо в root, а не в box:
+  // при выключении box вместе со спрайтом и панелью прячется, а кнопка
+  // остаётся на нижнем краю окна — иначе включить было бы нечем.
+  const powerBtn = document.createElement("button");
+  powerBtn.type = "button";
+  powerBtn.textContent = "⏻";
+  powerBtn.title = t("Выключить плагин");
+  powerBtn.style.cssText = [
+    "position:absolute",
+    "left:10px",
+    "bottom:12px",
+    "width:22px",
+    "height:22px",
+    "padding:0",
+    "border-radius:50%",
+    "border:1px solid rgba(255,255,255,.25)",
+    "background:rgba(20,20,24,.78)",
+    "color:#ddd",
+    "font-size:13px",
+    "line-height:1",
+    "cursor:pointer",
+    "opacity:0",
+    "z-index:4",
+    "pointer-events:auto",
+    "transition:opacity 120ms ease",
+  ].join(";");
+  root.appendChild(powerBtn);
 
   const panel = document.createElement("div");
   panel.style.cssText = [
@@ -761,12 +918,15 @@ function createView(ctx) {
   };
 
   // У персонажей пака ещё нет своих настроек — запоминаем текущие общие,
-  // дальше каждый живёт отдельно.
+  // дальше каждый живёт отдельно. Для «все доступные» правило то же самое:
+  // дефолты у паков и виртуального пака одинаковы.
   function seedPackSettings() {
     for (const k of packVoices()) {
       const cs = charSettingsFor(k);
       if (!cs.speech) saveCharSetting(k, { speech: speechMode || "summary" });
-      if (!cs.reason) saveCharSetting(k, { reason: reasonState || { mode: "off", translate: true } });
+      if (!cs.reason) {
+        saveCharSetting(k, { reason: reasonState || { mode: "off", translate: true } });
+      }
     }
   }
   const setHeight = (value, key) => {
@@ -781,29 +941,50 @@ function createView(ctx) {
   // Готовые клипы записаны русскими голосами: берём базовый голос персонажа,
   // а не тот, которым он говорит на текущем языке.
   const clipVoice = (id) => VOICE_ALIAS[packKey(id)] || packKey(id);
+  // Зеркальный персонаж? Проверяем и id пака (px_…), и базовый голос.
+  const isMirror = (id) => {
+    const key = packKey(id || voice);
+    return MIRROR_CHARS.has(key) || MIRROR_CHARS.has(VOICE_ALIAS[key] || key);
+  };
+  // Левостороннее зеркало: кадр отражается, когда персонаж стоит слева.
+  const isMirrorLeft = (id) => {
+    const key = packKey(id || voice);
+    return MIRROR_LEFT_CHARS.has(key) || MIRROR_LEFT_CHARS.has(VOICE_ALIAS[key] || key);
+  };
   function pickClip(list) {
     return list && list.length ? list[Math.floor(Math.random() * list.length)] : null;
   }
-  function playClip(item, text = "") {
-    if (!item || !item.src) return 0;
+  // voiceId — чей голос: при смене персонажа voice ещё старый (apply ждёт
+  // конца анимации), поэтому реплику озвучиваем голосом того, на кого уходим.
+  function playClip(item, text = "", voiceId, rawVoice = false) {
+    const line = text || (item && item.text) || "";
+    if (!item || !line) return 0;
     // Звук выключен — клика не слышно, но текст реплики уходит в пузырь
     // (если пузырь вообще разрешён настройкой).
     if (mutedState) {
-      showLineOnly(text || item.text);
+      showLineOnly(line);
       return 0;
     }
-    stopClick();
-    try {
-      clickAudio = new Audio(item.src);
-      clickAudio.play();
-    } catch (e) {
-      clickAudio = null;
-    }
-    const ms = item.ms > 0 ? item.ms : 1200;
-    // Артикуляцию запускаем здесь же: вызывающие раньше звали startSpeaking
-    // вторым разом, и первая, бестекстовая, партитура тут же сбрасывалась.
-    startSpeaking(ms, "", text || item.text || "");
-    return ms;
+    // Клик озвучивает движок: готовых звуков в плагине нет, артикуляция
+    // приходит из /state как обычно. Движок может быть занят чужой фразой —
+    // тогда ждём её конца и повторяем один раз, иначе клик пропадал бы молча.
+    // rawVoice — озвучить ровно этот голос, не глядя на настройки персонажа:
+    // так пример в списке голосов звучит выбранным голосом, а не прежним.
+    const sayVoice = rawVoice && voiceId ? voiceId : charVoice(voiceId || voice);
+    const ask = () =>
+      bridge("/say", { text: line, sid: currentSid || "", voice: sayVoice })
+        .then((res) => {
+          const wait = Number(res && res.wait) || 0;
+          if (res && res.ok === false && res.reason === "busy" && wait > 0) {
+            setTimeout(
+              () => bridge("/say", { text: line, sid: currentSid || "", voice: sayVoice }).catch(() => {}),
+              Math.min(5000, wait + 200),
+            );
+          }
+        })
+        .catch(() => {});
+    ask();
+    return 0;
   }
 
   // Реплика при выключенном звуке: без аудио и без артикуляции, только текст в
@@ -864,7 +1045,7 @@ function createView(ctx) {
     } else {
       // Реплики есть по голосу, а не по id персонажа.
       const line = pickClip(LINES.lines && (LINES.lines[clipVoice(next)] || LINES.lines[next]));
-      playClip(line, line && line.text);
+      playClip(line, line && line.text, next);
     }
     return next;
   };
@@ -891,7 +1072,7 @@ function createView(ctx) {
   };
 
   // Раскрывающиеся блоки настроек: по умолчанию свёрнуты.
-  const sectionOpen = { pack: false, voice: false, char: false, speech: false, model: false, user: false, stats: false, reason: false, temper: false };
+  const sectionOpen = { pack: false, voice: false, char: false, side: false, speech: false, model: false, user: false, stats: false, reason: false, temper: false };
 
   // Статистика: сколько ответов озвучено и сколько всего речи. Живёт в localStorage.
   const STATS_KEY = "x2ai-avatar:stats";
@@ -910,11 +1091,6 @@ function createView(ctx) {
     } catch (e) {}
   };
   let lastAnswerMs = 0;
-  const refreshBadge = () => {
-    const mins = stats.ms > 0 ? Math.round(stats.ms / 60000) : 0;
-    badge.textContent = lastAnswerMs > 0 ? `${stats.count} · ${Math.round(lastAnswerMs / 1000)}с` : `${stats.count}`;
-    badge.title = tf("Озвучено ответов: {n} · речи: {m} мин", { n: stats.count, m: mins });
-  };
 
   // Позиции прокрутки списков: панель перерисовывается целиком, поэтому
   // запоминаем offset и возвращаем его, иначе список прыгает наверх.
@@ -1035,7 +1211,8 @@ function createView(ctx) {
       // Персонаж называет пак своим голосом.
       if (voiceLang() === "ru") {
         const packClips = LINES.packs && LINES.packs[name];
-        playClip(packClips && packClips[pick || voice]);
+        const packKeyNow = pick || voice;
+        playClip(packClips && (packClips[packKeyNow] || packClips[clipVoice(packKeyNow)]));
       }
     };
 
@@ -1385,7 +1562,9 @@ function createView(ctx) {
       loadExternalPacks();
       const pList = keepScroll(document.createElement("div"), "pack");
       pList.style.cssText = "max-height:132px;overflow-y:auto;display:flex;flex-direction:column;gap:4px";
-      for (const name of packList()) {
+      // «Все доступные» — виртуальный пак: все персонажи всех паков сразу,
+      // со своими включениями и настройками (не наследует настройки паков).
+      for (const name of [ALL_PACK, ...packList()]) {
         const count = packVoices(name).length;
         pList.appendChild(
           vRow(`${t(PACK_NAMES[name] || name)} · ${count}`, name === activePack, () => {
@@ -1395,6 +1574,7 @@ function createView(ctx) {
         );
       }
       pBody.appendChild(pList);
+      hint("«Все доступные» — персонажи всех паков сразу. Его галочки доступности и настройки персонажей хранятся отдельно и не меняют настройки самих паков.", pBody);
 
       const rule = document.createElement("hr");
       rule.style.cssText = "border:none;border-top:1px solid rgba(255,255,255,.12);margin:2px 0";
@@ -1494,35 +1674,11 @@ function createView(ctx) {
       box.appendChild(nameInput);
       hint("Пусто — имя по умолчанию. Своё имя не переводится.", box);
 
-      // Живость персонажа: одна галочка на два поведения — злится на
-      // ошибках и засыпает, когда ничего не происходит. По умолчанию включена.
-      const reactRow = document.createElement("label");
-      reactRow.style.cssText =
-        "display:flex;align-items:center;gap:8px;margin-top:10px;font-size:11px;cursor:pointer";
-      const reactCb = document.createElement("input");
-      reactCb.type = "checkbox";
-      reactCb.checked = charSettingsFor(packKey(key)).react !== false;
-      reactCb.style.cssText = "width:14px;height:14px;margin:0;accent-color:#5b8dee;cursor:pointer";
-      const reactLabel = document.createElement("span");
-      reactLabel.textContent = t("Живой персонаж");
-      reactRow.append(reactCb, reactLabel);
-      reactRow.onclick = (ev) => ev.stopPropagation();
-      reactCb.onchange = () => {
-        saveCharSetting(packKey(key), { react: reactCb.checked });
-        // Выключили живость — сразу поднять, если он успел заснуть.
-        if (!reactCb.checked && moodState.value !== "awake") {
-          if (moodTimer) clearTimeout(moodTimer);
-          setMood("awake");
-        }
-        resetIdle();
-      };
-      box.appendChild(reactRow);
-      hint("Хмурится, когда инструмент или ответ упал, и засыпает, если ничего не происходит.", box);
 
-      // Характер: галочка «Активировать», своё описание и манера озвучки —
+      // Поведение: галочка «Характер», своё описание и реакции персонажа —
       // всё в одном блоке: в правила чата уходит именно манера речи
       // персонажа, а не только имя и род.
-      const tBody = collapsible("Характер", "temper", box);
+      const tBody = collapsible("Поведение", "temper", box);
       const temperRow = document.createElement("label");
       temperRow.style.cssText = "display:flex;align-items:center;gap:8px;font-size:11px;cursor:pointer";
       const temperCb = document.createElement("input");
@@ -1530,7 +1686,7 @@ function createView(ctx) {
       temperCb.checked = charTemper(key);
       temperCb.style.cssText = "width:14px;height:14px;margin:0;accent-color:#5b8dee;cursor:pointer";
       const temperLabel = document.createElement("span");
-      temperLabel.textContent = t("Активировать");
+      temperLabel.textContent = t("Характер");
       temperRow.append(temperCb, temperLabel);
       temperRow.onclick = (ev) => ev.stopPropagation();
       temperCb.onchange = () => {
@@ -1547,12 +1703,12 @@ function createView(ctx) {
       const temperPreset =
         (temperPresets && (temperPresets[packKey(key)] || temperPresets[key])) || "";
       const temperText = document.createElement("textarea");
-      temperText.rows = 3;
+      temperText.rows = 5;
       temperText.maxLength = 400;
       temperText.placeholder = temperPreset || t("Свой характер (пусто — готовый)");
       temperText.value = String(charSettingsFor(packKey(key)).temperText || "");
       temperText.style.cssText =
-        "width:100%;box-sizing:border-box;min-height:66px;resize:vertical;display:block;" +
+        "width:100%;box-sizing:border-box;min-height:104px;resize:vertical;display:block;" +
         "font:inherit;font-size:11px;line-height:1.4;padding:6px 8px;margin-top:6px;" +
         "border:1px solid rgba(255,255,255,.16);border-radius:7px;" +
         "background:rgba(255,255,255,.05);color:inherit;outline:none";
@@ -1571,11 +1727,131 @@ function createView(ctx) {
       tBody.appendChild(temperText);
       hint("Например: «говори дерзко, подкалывай, но по делу». Пусто — готовый характер.", tBody);
 
+      // Живость персонажа: одна галочка на два поведения — злится на
+      // ошибках и засыпает, когда ничего не происходит. По умолчанию включена.
+      const reactRow = document.createElement("label");
+      reactRow.style.cssText =
+        "display:flex;align-items:center;gap:8px;margin-top:10px;font-size:11px;cursor:pointer";
+      const reactCb = document.createElement("input");
+      reactCb.type = "checkbox";
+      reactCb.checked = charSettingsFor(packKey(key)).react !== false;
+      reactCb.style.cssText = "width:14px;height:14px;margin:0;accent-color:#5b8dee;cursor:pointer";
+      const reactLabel = document.createElement("span");
+      reactLabel.textContent = t("Реакции");
+      reactRow.append(reactCb, reactLabel);
+      reactRow.onclick = (ev) => ev.stopPropagation();
+      reactCb.onchange = () => {
+        saveCharSetting(packKey(key), { react: reactCb.checked });
+        // Выключили живость — сразу поднять, если он успел заснуть.
+        if (!reactCb.checked && moodState.value !== "awake") {
+          if (moodTimer) clearTimeout(moodTimer);
+          setMood("awake");
+        }
+        resetIdle();
+      };
+      tBody.appendChild(reactRow);
+      hint("Хмурится, когда инструмент или ответ упал, и засыпает, если ничего не происходит.", tBody);
+
+      if (!isCharEnabled(key)) {
+        hint("Персонаж выключен: в новых чатах не появится, включить в текущем чате нельзя.", box);
+      }
+
+      // Размер персонажа: свой у каждого.
+      const hBody = collapsible("Размер персонажа", "char", box);
+      const hRow = document.createElement("div");
+      hRow.style.cssText = "display:flex;align-items:center;gap:8px";
+      const hInput = document.createElement("input");
+      hInput.type = "range";
+      hInput.min = String(HEIGHT_MIN);
+      hInput.max = String(HEIGHT_MAX);
+      hInput.step = "4";
+      const curHeight = charSettingsFor(key).height || DEFAULT_HEIGHT;
+      hInput.value = String(curHeight);
+      hInput.style.cssText = "flex:1;accent-color:#5b8dee;cursor:pointer";
+      const hVal = document.createElement("span");
+      hVal.textContent = `${curHeight} px`;
+      hVal.style.cssText = "font-size:11px;opacity:.7;width:48px;text-align:right";
+      hInput.oninput = () => {
+        hVal.textContent = `${setHeight(hInput.value, key)} px`;
+      };
+      hRow.append(hInput, hVal);
+      hBody.appendChild(hRow);
+
+      // Сторона окна: своя у персонажа; пусто — как в общих настройках.
+      const sideBody = collapsible("Расположение персонажа", "side", box);
+      const sideSel = document.createElement("select");
+      sideSel.style.cssText =
+        "display:block;width:100%;font:inherit;font-size:11px;padding:3px 6px;border-radius:7px;cursor:pointer;color:inherit;" +
+        "border:1px solid rgba(255,255,255,.16);background:rgba(255,255,255,.05)";
+      for (const [val, label] of [
+        ["", "Как в общих настройках"],
+        ["left", "Слева"],
+        ["right", "Справа"],
+      ]) {
+        const opt = document.createElement("option");
+        opt.value = val;
+        opt.textContent = t(label);
+        sideSel.appendChild(opt);
+      }
+      const ownSide = charSettingsFor(packKey(key)).side;
+      sideSel.value = SIDES.includes(ownSide) ? ownSide : "";
+      sideSel.onchange = () => {
+        saveCharSetting(packKey(key), { side: SIDES.includes(sideSel.value) ? sideSel.value : "" });
+        applySide(packKey(key));
+      };
+      sideBody.appendChild(sideSel);
+      hint("Слева или справа от окна. «Как в общих настройках» — значение из «Дополнительно».", sideBody);
+
+      // Голос персонажа: свой у каждого, живёт в localStorage.
+      const vBody = collapsible("Голос персонажа", "voice", box);
+      const defaultVoiceOf = () => defaultVoiceFor(VOICE_ALIAS[key] || key, voiceLang(), key);
+      // Голос хранится отдельно для каждого языка: русский выбор не должен
+      // подставляться, когда включён английский.
+      const pickedVoice = () => {
+        const cs = charSettingsFor(key);
+        const lang = voiceLang();
+        const byLang = cs.voiceByLang || {};
+        if (byLang[lang]) return byLang[lang];
+        if (lang === "ru" && cs.voice) return cs.voice;
+        return "";
+      };
+      const isDefaultVoice = () => {
+        const picked = pickedVoice();
+        return !picked || picked === defaultVoiceOf();
+      };
+
+      // Проверка установки: сравниваем базовый голос (px_ru_f1 → ru_f1)
+      // со списком папок teratts-model/styles. Нет списка — молчим.
+      const refreshVoiceWarn = () => {
+        const base = VOICE_ALIAS[pickedVoice() || defaultVoiceOf()] || pickedVoice() || defaultVoiceOf();
+        // FX-голоса (fx_cat, fx_ghost) — пресеты движка, а не папки в styles,
+        // поэтому сверяемся ещё и с каталогом: он знает и их.
+        const known = (voiceCatalog || []).some((v) => v && v.id === base);
+        let msg = "";
+        if (ttsEngine === false) {
+          msg = t("Движок TeraTTS не установлен — поставь его, иначе персонаж говорит системным голосом без артикуляции.");
+        } else if (installedVoices && installedVoices.length === 0) {
+          msg = t("Голоса TeraTTS не установлены — поставь их в teratts-model/styles, иначе персонаж молчит.");
+        } else if (installedVoices && installedVoices.length && base && !known && !installedVoices.includes(base)) {
+          msg = tf("Голос «{v}» не установлен — поставь его, иначе персонаж молчит.", { v: base });
+        }
+        voiceWarn.textContent = msg;
+        voiceWarn.style.display = msg ? "block" : "none";
+      };
+
+      const vCur = document.createElement("div");
+      vCur.style.cssText = "font-size:11px;opacity:.7;margin-bottom:6px";
+      vBody.appendChild(vCur);
+
+      const vList = keepScroll(document.createElement("div"), "voice");
+      vList.style.cssText = "max-height:132px;overflow-y:auto;display:flex;flex-direction:column;gap:4px";
+      vBody.appendChild(vList);
+
       // Манера озвучки: скорость и окраска (эмоция движка) этого персонажа.
       const mTitle = document.createElement("div");
       mTitle.textContent = t("Манера речи");
       mTitle.style.cssText = "font-size:11px;font-weight:600;opacity:.85;margin:12px 0 6px";
-      tBody.appendChild(mTitle);
+      vBody.appendChild(mTitle);
       // Ползунок скрыт, пока в «Окраске» не выбрано «Настроить». Движок
       // понимает значение как множитель ДЛИТЕЛЬНОСТИ, поэтому на панели
       // показываем обратное: вправо — быстрее.
@@ -1665,80 +1941,13 @@ function createView(ctx) {
           emotion: custom ? speedEmotion(engine) : emoSelect.value,
         }).catch(() => {});
       };
-      tBody.appendChild(emoRow);
-      tBody.appendChild(mRow);
+      vBody.appendChild(emoRow);
+      vBody.appendChild(mRow);
       syncSpeedRow();
       hint(
         "Окраска задаёт и интонацию, и темп: бодро — быстрее, устало — медленнее. «Настроить» — свой темп, окраска подберётся по нему. Реплика прозвучит сразу после изменения.",
-        tBody,
+        vBody,
       );
-
-      if (!isCharEnabled(key)) {
-        hint("Персонаж выключен: в новых чатах не появится, включить в текущем чате нельзя.", box);
-      }
-
-      // Размер персонажа: свой у каждого.
-      const hBody = collapsible("Размер персонажа", "char", box);
-      const hRow = document.createElement("div");
-      hRow.style.cssText = "display:flex;align-items:center;gap:8px";
-      const hInput = document.createElement("input");
-      hInput.type = "range";
-      hInput.min = String(HEIGHT_MIN);
-      hInput.max = String(HEIGHT_MAX);
-      hInput.step = "4";
-      const curHeight = charSettingsFor(key).height || DEFAULT_HEIGHT;
-      hInput.value = String(curHeight);
-      hInput.style.cssText = "flex:1;accent-color:#5b8dee;cursor:pointer";
-      const hVal = document.createElement("span");
-      hVal.textContent = `${curHeight} px`;
-      hVal.style.cssText = "font-size:11px;opacity:.7;width:48px;text-align:right";
-      hInput.oninput = () => {
-        hVal.textContent = `${setHeight(hInput.value, key)} px`;
-      };
-      hRow.append(hInput, hVal);
-      hBody.appendChild(hRow);
-
-      // Голос персонажа: свой у каждого, живёт в localStorage.
-      const vBody = collapsible("Голос персонажа", "voice", box);
-      const defaultVoiceOf = () => defaultVoiceFor(VOICE_ALIAS[key] || key, voiceLang(), key);
-      // Голос хранится отдельно для каждого языка: русский выбор не должен
-      // подставляться, когда включён английский.
-      const pickedVoice = () => {
-        const cs = charSettingsFor(key);
-        const lang = voiceLang();
-        const byLang = cs.voiceByLang || {};
-        if (byLang[lang]) return byLang[lang];
-        if (lang === "ru" && cs.voice) return cs.voice;
-        return "";
-      };
-      const isDefaultVoice = () => {
-        const picked = pickedVoice();
-        return !picked || picked === defaultVoiceOf();
-      };
-
-      // Проверка установки: сравниваем базовый голос (px_ru_f1 → ru_f1)
-      // со списком папок teratts-model/styles. Нет списка — молчим.
-      const refreshVoiceWarn = () => {
-        const base = VOICE_ALIAS[pickedVoice() || defaultVoiceOf()] || pickedVoice() || defaultVoiceOf();
-        let msg = "";
-        if (ttsEngine === false) {
-          msg = t("Движок TeraTTS не установлен — поставь его, иначе персонаж говорит системным голосом без артикуляции.");
-        } else if (installedVoices && installedVoices.length === 0) {
-          msg = t("Голоса TeraTTS не установлены — поставь их в teratts-model/styles, иначе персонаж молчит.");
-        } else if (installedVoices && installedVoices.length && base && !installedVoices.includes(base)) {
-          msg = tf("Голос «{v}» не установлен — поставь его, иначе персонаж молчит.", { v: base });
-        }
-        voiceWarn.textContent = msg;
-        voiceWarn.style.display = msg ? "block" : "none";
-      };
-
-      const vCur = document.createElement("div");
-      vCur.style.cssText = "font-size:11px;opacity:.7;margin-bottom:6px";
-      vBody.appendChild(vCur);
-
-      const vList = keepScroll(document.createElement("div"), "voice");
-      vList.style.cssText = "max-height:132px;overflow-y:auto;display:flex;flex-direction:column;gap:4px";
-      vBody.appendChild(vList);
 
       // Строки списка голосов: подсветку обновляем на месте, панель не перерисовываем.
       const voiceRows = [];
@@ -1752,16 +1961,14 @@ function createView(ctx) {
 
       const bindVoice = (id) => {
         const value = id || defaultVoiceOf();
-        if (voiceLang() === "ru") {
-          // Пример голоса звучит сразу, не дожидаясь ответа моста.
-          playClip((LINES.samples && (LINES.samples[id] || LINES.samples[key])) || null);
-        } else {
-          const text = pickClip(EN_SAMPLE);
-          if (text) {
-            if (mutedState) showLineOnly(text);
-            else bridge("/say", { text, sid: currentSid, voice: value }).catch(() => {});
-          }
-        }
+        // Пример озвучиваем именно выбранным голосом (rawVoice), иначе playClip
+        // брал голос персонажа из настроек и звучал прежний выбор. Если своего
+        // сэмпла у голоса нет — говорим нейтральную фразу, а не молчим.
+        const sample = (LINES.samples && (LINES.samples[id] || LINES.samples[key])) || null;
+        const text =
+          (sample && sample.text) ||
+          (voiceLang() === "en" ? pickClip(EN_SAMPLE) : "Привет. Это мой голос.");
+        if (text) playClip({ text }, text, value, true);
         const lang = voiceLang();
         const byLang = { ...(charSettingsFor(key).voiceByLang || {}) };
         byLang[lang] = value;
@@ -1926,7 +2133,7 @@ function createView(ctx) {
 
       const desc = document.createElement("div");
       desc.textContent = t(
-        "Не читает и не озвучивает ответы сама: сжимает текст для «Кратко» и переводит рассуждения на язык озвучки, если включён перевод. Локальные и бесплатные модели — в начале списка.",
+        "Не читает и не озвучивает ответы сама: сжимает текст для «Кратко» и переводит рассуждения на язык озвучки, если включён перевод. Локальные и бесплатные модели — в начале списка. Если модель недоступна, персонаж молчит: машинного перевода нет.",
       );
       desc.style.cssText = "font-size:10px;line-height:1.45;opacity:.55;margin:0 0 2px 2px";
       box.appendChild(desc);
@@ -2027,19 +2234,40 @@ function createView(ctx) {
         const current = (modelsData && modelsData.current) || {};
         // Порядок приходит с моста: локальные, затем бесплатные.
         const q = modelQuery.trim().toLowerCase();
-        const free = models.filter((m) => {
-          if (!(m.local || m.free)) return false;
+        const matches = models.filter((m) => {
           if (!q) return true;
           return `${m.name} ${m.providerID}/${m.id}`.toLowerCase().includes(q);
         });
+        // Сначала локальные и бесплатные. Если таких нет вовсе (все провайдеры
+        // платные), показываем весь список: пустая панель хуже, чем модель
+        // не из начала списка.
+        const preferred = matches.filter((m) => m.local || m.free);
+        const free = preferred.length ? preferred : matches;
         const shown = free.slice(0, modelLimit);
         if (!shown.length) {
           const empty = document.createElement("div");
           empty.textContent = t(
-            data && data.error ? "не удалось получить список" : "локальных и бесплатных моделей нет",
+            data && (data.error || data.source === "error")
+              ? "не удалось получить список"
+              : models.length
+                ? "ничего не найдено"
+                : "локальных и бесплатных моделей нет",
           );
           empty.style.cssText = "opacity:.5;font-size:11px";
           mList.appendChild(empty);
+          // Мост мог быть ещё не готов на старте окна — даём перезапросить,
+          // не закрывая настройки.
+          const retry = document.createElement("button");
+          retry.type = "button";
+          retry.textContent = t("Обновить список");
+          retry.style.cssText =
+            "margin:6px 0 0;padding:4px 8px;font:inherit;font-size:11px;cursor:pointer;border-radius:7px;" +
+            "border:1px solid rgba(255,255,255,.16);background:rgba(255,255,255,.05);color:inherit";
+          retry.onclick = (ev) => {
+            ev.stopPropagation();
+            loadModels(true);
+          };
+          mList.appendChild(retry);
           return;
         }
         for (const m of shown) {
@@ -2092,8 +2320,10 @@ function createView(ctx) {
         }
       };
 
-      const loadModels = () => {
-        if (modelsLoaded) {
+      const loadModels = (force) => {
+        // Кеш пустого ответа не держим: мост мог ещё не подняться, когда окно
+        // стартовало. При пустом списке пробуем ещё раз при открытии раздела.
+        if (!force && modelsLoaded && modelsData && ((modelsData.models || []).length || modelsData.error)) {
           renderModels();
           centerActive("model");
           return;
@@ -2107,7 +2337,10 @@ function createView(ctx) {
         mList.appendChild(noteEl);
         bridge("/models")
           .then((data) => {
-            modelsLoaded = true;
+            const list = (data && data.models) || [];
+            // Пустой ответ не считаем загруженным, иначе панель останется
+            // пустой до Cmd+R.
+            modelsLoaded = list.length > 0;
             modelsLoading = false;
             if (data && data.disabled !== undefined) modelDisabled = Boolean(data.disabled);
             renderModels(data);
@@ -2262,6 +2495,40 @@ function createView(ctx) {
         "Короткая фраза, которую персонаж говорит сейчас. Если озвучка ответа или рассуждений выключена, пузырь не появляется.",
       );
       box.append(bubbleRow, bubbleHint);
+
+      // Расположение: общее для всех, у кого не выбрана своя сторона.
+      const posRow = document.createElement("div");
+      posRow.style.cssText = "margin-top:10px;font-size:11px";
+      const posLabel = document.createElement("div");
+      posLabel.textContent = t("Расположение персонажа");
+      posLabel.style.cssText = "margin-bottom:4px";
+      const posSel = document.createElement("select");
+      posSel.style.cssText = bubbleSel.style.cssText;
+      for (const [val, label] of [
+        ["left", "Слева"],
+        ["right", "Справа"],
+      ]) {
+        const opt = document.createElement("option");
+        opt.value = val;
+        opt.textContent = t(label);
+        posSel.appendChild(opt);
+      }
+      posSel.value = SIDES.includes(uiPrefs.side) ? uiPrefs.side : "left";
+      const posHint = document.createElement("div");
+      posHint.style.cssText =
+        bubbleHint.style.cssText + ";display:none;color:#f0a24a;opacity:.95;margin-top:6px";
+      // Показываем только после смены: иначе подсказка висит постоянно и
+      // читается как ошибка ещё до того, как что-то выбрали.
+      posHint.textContent = t(
+        "Применится не ко всем: у персонажей со своей стороной останется та, что выбрана в их настройках.",
+      );
+      posSel.onchange = () => {
+        saveUiPref({ side: posSel.value });
+        applySide(voice);
+        posHint.style.display = "block";
+      };
+      posRow.append(posLabel, posSel);
+      box.append(posRow, posHint);
       flagRow("Горячие клавиши", "⌘/Ctrl+Shift+M — звук, +S — стоп, +A — панель.", uiPrefs.keys, (on) =>
         saveUiPref({ keys: on }),
       );
@@ -2314,6 +2581,7 @@ function createView(ctx) {
             } catch (e) {}
             if (data.ui && typeof data.ui === "object") saveUiPref(data.ui);
             ioHint.textContent = tf("Загружено персонажей: {n}", { n: Object.keys(data.chars).length });
+            applySide(voice);
             renderPanel();
           })
           .catch(() => {
@@ -2344,10 +2612,54 @@ function createView(ctx) {
         stats.ms = 0;
         saveStats();
         refreshStats();
-        refreshBadge();
       };
       refreshStats();
       box.append(stText, stReset);
+
+      // Логи: по умолчанию выключены, включаются галочкой. Показывают,
+      // получал ли этот чат правила общения, и хвост журнала плагина.
+      const logsRow = document.createElement("label");
+      logsRow.style.cssText = "display:flex;align-items:center;gap:8px;margin-top:10px;font-size:11px;cursor:pointer";
+      const logsCb = document.createElement("input");
+      logsCb.type = "checkbox";
+      logsCb.checked = Boolean(uiPrefs.logs);
+      logsCb.style.cssText = "width:14px;height:14px;accent-color:#5b8dee;cursor:pointer";
+      logsCb.onclick = (ev) => ev.stopPropagation();
+      const logsLabel = document.createElement("span");
+      logsLabel.textContent = t("Показывать логи");
+      logsRow.append(logsCb, logsLabel);
+
+      const logBox = document.createElement("pre");
+      logBox.style.cssText =
+        "margin:6px 0 0;padding:6px 7px;border-radius:7px;background:rgba(0,0,0,.25);" +
+        "font-family:ui-monospace,Menlo,monospace;font-size:9px;line-height:1.35;" +
+        "max-height:150px;overflow:auto;white-space:pre-wrap;word-break:break-word;opacity:.85";
+
+      const refreshLog = () => {
+        if (!uiPrefs.logs) {
+          logBox.style.display = "none";
+          return;
+        }
+        logBox.style.display = "block";
+        logBox.textContent =
+          chatRules === null
+            ? t("правила чата: неизвестно")
+            : chatRules
+              ? t("правила чата: выданы")
+              : t("правила чата: ещё нет");
+        bridge("/log?lines=15")
+          .then((data) => {
+            const lines = (data && data.lines) || [];
+            if (lines.length) logBox.textContent += "\n" + lines.join("\n");
+          })
+          .catch(() => {});
+      };
+      logsCb.onchange = () => {
+        saveUiPref({ logs: logsCb.checked });
+        refreshLog();
+      };
+      refreshLog();
+      box.append(logsRow, logBox);
 
       // Донат: список кошельков из DONATE. Пока он пуст — вежливая заглушка.
       const donHead = document.createElement("div");
@@ -2446,19 +2758,29 @@ function createView(ctx) {
     gear.style.opacity = "1";
     swapBtn.style.opacity = "1";
     muteBtn.style.opacity = "1";
+    if (pluginOn()) powerBtn.style.opacity = "1";
   };
   box.onmouseleave = () => {
     if (!panelOpen) {
       gear.style.opacity = "0";
       swapBtn.style.opacity = "0";
       muteBtn.style.opacity = "0";
+      if (pluginOn()) powerBtn.style.opacity = "0";
     }
+  };
+  // Выключенный плагин прячет box, поэтому кнопка питания должна показываться
+  // и без наведения на персонажа.
+  powerBtn.onmouseenter = () => {
+    if (pluginOn()) powerBtn.style.opacity = "1";
+  };
+  powerBtn.onmouseleave = () => {
+    if (pluginOn()) powerBtn.style.opacity = "0";
   };
 
   // Персонаж показывается только в реальном чате: на Home и в черновике
   // ctx.sessions.current() === undefined, там его нет.
   const setVisible = (on) => {
-    box.style.display = on ? "flex" : "none";
+    box.style.display = on && pluginOn() ? "flex" : "none";
   };
   setVisible(false);
 
@@ -2479,6 +2801,31 @@ function createView(ctx) {
     }
     setVisible(!sideOpen(session));
   };
+
+  // Кнопка питания: когда плагин выключен, она единственная остаётся на экране.
+  const paintPower = () => {
+    const on = pluginOn();
+    powerBtn.title = t(on ? "Выключить плагин" : "Включить плагин");
+    powerBtn.style.opacity = on ? "0" : "1";
+    powerBtn.style.color = on ? "#ddd" : "#ffc2b8";
+    powerBtn.style.borderColor = on ? "rgba(255,255,255,.25)" : "rgba(255,120,100,.75)";
+    powerBtn.style.background = on ? "rgba(20,20,24,.78)" : "rgba(70,20,20,.92)";
+  };
+  powerBtn.onclick = (ev) => {
+    ev.stopPropagation();
+    const next = !pluginOn();
+    saveUiPref({ enabled: next });
+    if (!next) {
+      stopAll();
+      togglePanel(false);
+      if (moodState.value !== "awake") setMood("awake");
+    }
+    bridge("/power", { on: next }).catch(() => {});
+    paintPower();
+    refreshVisibility();
+    if (next) resetIdle();
+  };
+  paintPower();
 
   try {
     createEffect(() => {
@@ -2510,6 +2857,9 @@ function createView(ctx) {
       "@keyframes x2ai-zzz{0%{opacity:0;transform:translate(0,0) scale(.7)}25%{opacity:.85}",
       "100%{opacity:0;transform:translate(9px,-24px) scale(1.15)}}",
       "@keyframes x2ai-dot{0%,100%{opacity:.25;transform:translateY(0)}50%{opacity:1;transform:translateY(-2px)}}",
+      // Реакции: всплывающая эмодзи/румянец — появляется и растворяется.
+      "@keyframes x2ai-fx{0%{opacity:0;transform:translateX(-50%) translateY(4px) scale(.8)}",
+      "18%{opacity:1}70%{opacity:.9}100%{opacity:0;transform:translateX(-50%) translateY(-14px) scale(1.05)}}",
     ].join("");
     document.head.appendChild(st);
   } catch (e) {}
@@ -2607,6 +2957,9 @@ function createView(ctx) {
   const hideBubble = () => {
     if (!bubble.style.display || bubble.style.display === "none") return;
     bubbleDismissed = true;
+    // Пузырь спрятан — «работа идёт» больше не держим: иначе персонаж
+    // никогда не заснёт после мысли, показанной без звука.
+    bubbleThinking = false;
     stopBubbleRotate();
     bubble.style.opacity = "0";
     bubble.style.transform = "translateY(5px) scale(.94)";
@@ -2631,7 +2984,8 @@ function createView(ctx) {
     const hasLine = Boolean(bubbleText.textContent) && bubbleText.textContent !== "…";
     const mode = BUBBLE_MODES.includes(uiPrefs.bubble) ? uiPrefs.bubble : "mute";
     const want = mode === "always" ? true : mode === "mute" ? mutedState : false;
-    const show = !panelOpen && want && !bubbleDismissed && bubbleChannelOn() && (hasLine || bubbleThinking);
+    const show =
+      pluginOn() && !panelOpen && want && !bubbleDismissed && bubbleChannelOn() && (hasLine || bubbleThinking);
     bubble.style.display = show ? "block" : "none";
     // Кружочки вместо звука: только когда звук выключен.
     bubbleTail.style.display = show && mutedState ? "flex" : "none";
@@ -2691,12 +3045,62 @@ function createView(ctx) {
   ].join(";");
   box.appendChild(zzz);
 
+  // Сторона окна: общая настройка плюс своя у персонажа. Панель, кнопки и
+  // пузырь переезжают вместе со спрайтом и прижимаются к тому же краю,
+  // иначе на правой стороне они уезжают за границу окна.
+  let sideReady = false;
+  const charSide = (key) => {
+    const own = charSettingsFor(packKey(key || voice)).side;
+    if (SIDES.includes(own)) return own;
+    return SIDES.includes(uiPrefs.side) ? uiPrefs.side : "left";
+  };
+  function applySide(key) {
+    if (!sideReady) return;
+    const right = charSide(key) === "right";
+    box.style.left = right ? "auto" : "10px";
+    box.style.right = right ? "10px" : "auto";
+    for (const btn of [gear, muteBtn, swapBtn]) {
+      btn.style.left = right ? "auto" : "0";
+      btn.style.right = right ? "0" : "auto";
+    }
+    // Кнопка питания живёт в root, а не в box: у неё свой отступ от края,
+    // такой же, как у box (10 px), иначе она съезжает к самому краю окна.
+    powerBtn.style.left = right ? "auto" : "10px";
+    powerBtn.style.right = right ? "10px" : "auto";
+    panel.style.left = right ? "auto" : "0";
+    panel.style.right = right ? "0" : "auto";
+    bubble.style.left = right ? "auto" : "0";
+    bubble.style.right = right ? "0" : "auto";
+    bubbleTail.style.left = right ? "auto" : "12px";
+    bubbleTail.style.right = right ? "12px" : "auto";
+    bubbleTail.style.alignItems = right ? "flex-end" : "flex-start";
+    const shifts = [0, 3, 7];
+    for (let i = 0; i < bubbleTail.children.length; i++) {
+      bubbleTail.children[i].style.marginLeft = right ? "0" : `${shifts[i]}px`;
+      bubbleTail.children[i].style.marginRight = right ? `${shifts[i]}px` : "0";
+    }
+    dots.style.left = right ? "-6px" : "auto";
+    dots.style.right = right ? "auto" : "-6px";
+    zzz.style.left = right ? "-4px" : "auto";
+    zzz.style.right = right ? "auto" : "-4px";
+    // scale — отдельное свойство, не конфликтует с transform (нырок при
+    // смене персонажа и наклон эмоций остаются как были). У правосторонних
+    // персонажей кадр обрезан с краю: справа отражаем, чтобы обрез ушёл за
+    // край окна. У призрака наоборот — отражаем только слева.
+    const flip = right ? isMirror(key) : isMirrorLeft(key);
+    img.style.scale = flip ? "-1 1" : "";
+  }
+
   const IDLE_MS = 3 * 60 * 1000;
   const SHADOW = "drop-shadow(0 2px 6px rgba(0,0,0,.28))";
+  // Красная подсветка злости: одна строка на все места, где речь её касается.
+  const ANGRY_GLOW = "drop-shadow(0 0 7px rgba(255,64,64,.6))";
   let moodTimer = null;
   // Какой кадр настроения сейчас стоит в img: речь и перерисовки могли
   // вернуть «closed», хотя персонаж спит или злится.
   let moodFrameShown = "closed";
+  // Кадр, которым персонаж спит: blink или (с шансом 25 %) idle2.
+  let sleepFrame = "blink";
   let idleTimer = null;
 
   // Короткий мягкий сигнал пробуждения: два синуса, без внешних файлов.
@@ -2723,29 +3127,48 @@ function createView(ctx) {
 
   // Кадр под текущее настроение: злость — с открытым ртом, сон — с закрытыми глазами.
   const moodFrame = () =>
-    moodState.value === "angry" ? "wide" : moodState.value === "sleeping" ? "blink" : "closed";
+    moodState.value === "angry"
+      ? "wide"
+      : moodState.value === "sleeping"
+        ? sleepFrame
+        : moodState.value === "dozing"
+          ? sleepFrame
+          : "closed";
 
   const setMood = (next, quiet) => {
     const prev = moodState.value;
     moodState.value = next;
-    if (next === "sleeping") {
-      img.src = frame(voice, "blink");
-      moodFrameShown = "blink";
-      img.style.filter = `${SHADOW} saturate(.7) brightness(.9)`;
+    if (next === "sleeping" || next === "dozing") {
+      const dozing = next === "dozing";
+      if (!dozing) {
+        // Кадр сна выбираем один раз за эпизод: 25 % — idle2, иначе blink.
+        // idle2Supported объявлен ниже; на случай раннего вызова — try/catch.
+        let hasIdle2 = false;
+        try {
+          hasIdle2 = idle2Supported();
+        } catch (e) {
+          hasIdle2 = false;
+        }
+        sleepFrame = hasIdle2 && Math.random() < SLEEP_IDLE2_CHANCE ? "idle2" : "blink";
+      }
+      const shown = sleepFrame;
+      img.src = frame(voice, shown);
+      moodFrameShown = shown;
+      img.style.filter = dozing ? `${SHADOW} saturate(.85) brightness(.95)` : `${SHADOW} saturate(.7) brightness(.9)`;
       // Наклон живёт внутри кейфреймов: animation перебивает inline-transform.
       box.style.transform = "";
       box.style.filter = "";
-      box.style.animation = "x2ai-sleep 3.6s ease-in-out infinite";
-      zzz.style.animation = "x2ai-zzz 2.6s ease-out infinite";
+      box.style.animation = dozing ? "x2ai-breathe 4.2s ease-in-out infinite" : "x2ai-sleep 3.6s ease-in-out infinite";
+      zzz.style.animation = dozing ? "x2ai-zzz 4.2s ease-out infinite" : "x2ai-zzz 2.6s ease-out infinite";
       zzz.style.opacity = "0";
-      root.title = `x2ai · ${charName(voice)} · ${t("спит")}`;
+      root.title = `x2ai · ${charName(voice)} · ${t(dozing ? "дремлет" : "спит")}`;
     } else if (next === "angry") {
       img.src = frame(voice, "wide");
       moodFrameShown = "wide";
       img.style.filter = `${SHADOW} saturate(1.35) brightness(1.05)`;
       box.style.transform = "";
       // Красная подсветка + дрожь: злость видно боковым зрением.
-      box.style.filter = "drop-shadow(0 0 7px rgba(255,64,64,.6))";
+      box.style.filter = ANGRY_GLOW;
       box.style.animation = "x2ai-rage .18s linear infinite";
       zzz.style.animation = "";
       zzz.style.opacity = "0";
@@ -2765,53 +3188,183 @@ function createView(ctx) {
   };
 
   const resetIdle = () => {
+    // Плагин выключен — никаких таймеров сна и злости.
+    if (!pluginOn()) {
+      if (idleTimer) clearTimeout(idleTimer);
+      idleTimer = null;
+      return;
+    }
     if (idleTimer) clearTimeout(idleTimer);
     // Живость выключена — персонаж не засыпает и не злится (см. sadFor).
     if (!charReact(voice)) {
       idleTimer = null;
       return;
     }
+    idleSince = Date.now();
     idleTimer = setTimeout(() => {
-      if (speaking || panelOpen || moodState.value === "angry") {
+      // Пока идёт работа (звук, открытая панель, чужая мысль в пузыре) —
+      // спать рано: при выключенном звуке это единственный признак жизни.
+      if (speaking || panelOpen || bubbleThinking || reactPlaying || moodState.value === "angry") {
         resetIdle();
         return;
       }
-      setMood("sleeping");
+      // Ночью — не полный сон, а дремота: приоткрытые глаза без наклона.
+      setMood(isNight() ? "dozing" : "sleeping");
     }, IDLE_MS);
   };
 
   // Любая активность будит персонажа; из сна — со звуком. Грусть не трогаем:
   // она доигрывает свою очередь и не может быть сбита ответом.
   const wake = () => {
-    const wasAsleep = moodState.value === "sleeping";
+    const wasAsleep = moodState.value === "sleeping" || moodState.value === "dozing";
     if (wasAsleep) {
       if (moodTimer) clearTimeout(moodTimer);
       setMood("awake");
       wakeBlip();
+      // Потягивание: глаза широко, прищур, обычный кадр.
+      playReact("stretch", [
+        { frame: "wide", hold: 260, tilt: 2 },
+        { frame: "half", hold: 240, tilt: -1 },
+        { frame: "closed", hold: 160 },
+      ]);
     }
     resetIdle();
   };
 
   // Ошибки встают в очередь: каждая отыгрывается целиком, следующая — после
   // неё. Речь и другие действия злость не сбрасывают.
+  // Злость голосом: короткая реплика в начале вспышки, а не на каждую
+  // ошибку серии — иначе персонаж начинает бубнить без остановки.
+  // Mute и тихие часы режет уже мост (/say), поэтому здесь только пауза
+  // между репликами и галочка «Реакции».
+  const RAGE_BANK = {
+    ru: {
+      chars: {
+        ru_m5: ["Да ты издеваешься?!", "Ну всё, достал.", "Опять двадцать пять!", "Слышь, так не пойдёт.", "Да ёлки-палки!"],
+        ru_m1: ["Опять этот баг.", "Плохо. Очень плохо.", "Логи бы сюда.", "Классика. Как в туториале.", "Ну конечно, на проде."],
+        ru_f1: ["Да что ж такое!", "Ну вот опять…", "Это уже не смешно.", "Ох, как обидно.", "Так, без паники. Но обидно."],
+        fx_robot: ["Ошибка. Гнев.", "Сбой. Повторите.", "Это неприемлемо.", "Система раздражена.", "Диагностика: виноват человек."],
+        fx_penguin: ["На вашей планете всё ломается!", "Ужас! Снова сбой!", "Как это по-земному глупо!", "У нас такого не бывает. У нас нечему падать.", "Зачем вы вообще это нажали?"],
+        fx_demoness: ["Скучно и бесит.", "Ну кто так делает?!", "Жалкое зрелище.", "Я даже не удивлена.", "Смертные, вы предсказуемы."],
+        fx_ghost: ["Не надо было.", "Я расстроена… очень.", "Ты слышишь этот скрип?", "Зря ты так.", "Я запомню. Я всё помню."],
+        x2ai_ment: ["Ну ё-моё, опять.", "Ты чё, не по-хорошему?", "Да я ж по-человечески просил.", "Слышь, ты нарушаешь.", "Опять двадцать пять, ёлки."],
+        x2ai_alkash: ["Эх, опять…", "Ну вот, всю малину испортили.", "Да ты чё, брат…", "Вот же ж, а я только успокоился.", "Ох, ёлки-моталки."],
+        x2ai_bratok: ["Да ты чё, братан?!", "Э, ты чё делаешь?", "Ну это ваще беспредел.", "Слышь, аккуратнее.", "Да я тебя… ладно, спокойно."],
+        x2ai_babka: ["Да что ты говоришь.", "Ох, горе с тобой.", "Вот у нас во дворе такого не было.", "Тьфу, безрукий.", "Да я тебя ещё щами кормила бы…"],
+        x2ai_sosochka: ["Ну и что это было, зайка?", "Милый, ты серьёзно?", "Опять ты всё сломал.", "За такое доплачивать надо.", "Я так и думала, честно."],
+        x2ai_telochka: ["Фу, бред какой.", "Ну капец вообще.", "Чо, ты серьёзно?", "Это что сейчас было?", "Я аж растерялась."],
+        x2ai_narik: ["Да ну на…", "Опять, блин.", "Ну это… не работает.", "Блин, как так-то.", "Эх, ёлки…"],
+        x2ai_novyi_russkiy: ["Да ты чё, братан?!", "Это уже беспредел.", "У меня всё схвачено, а тут такое.", "Ну это не по понятиям.", "Я вопрос решу. Но я недоволен."],
+        x2ai_kotohaker: ["Мяу. Это баг.", "Кто трогал мой терминал?", "Хвост мешает, но я в логах.", "Без паники. Сейчас взломаю обратно.", "Опять без файрвола? Серьёзно?"],
+        x2ai_coder: ["Опять легаси.", "Кто это писал?", "Тесты бы не помешали.", "Классика. Как в туториале.", "Даже не удивлён."],
+        x2ai_programmer: ["Ох, опять…", "Ну кто так пишет?", "Я же предупреждала.", "Спокойно. Сейчас починим.", "Костыли. Опять костыли."],
+        x2ai_codergirl: ["Серьёзно?", "Кто трогал прод?", "Это уже стыд.", "Ладно, сейчас починю.", "Без паники. Но руки убрал."],
+      },
+      neutral: {
+        m: ["Я так и знал.", "Ну что за дела.", "Я же говорил.", "Опять сломалось. Классика.", "Да сколько можно, а?"],
+        f: ["Я так и знала.", "Ну что за дела.", "Я же говорила.", "Опять сломалось. Классика.", "Да сколько можно, а?"],
+      },
+    },
+    en: {
+      chars: {
+        ru_m5: ["Oh, come on!", "You've got to be kidding.", "Not again, seriously.", "What is this mess?", "I told you not to touch it."],
+        ru_m1: ["Another bug.", "This is bad. Really bad.", "Where are the logs.", "Classic. Straight from the tutorial.", "Of course. On production."],
+        ru_f1: ["Oh, what now!", "Not this again…", "That's not funny anymore.", "Oh, that's just sad.", "Okay, no panic. But still."],
+        fx_robot: ["Error. Anger.", "Malfunction. Retry.", "Unacceptable.", "System irritated.", "Diagnosis: human error."],
+        fx_penguin: ["Everything breaks on your planet!", "Horror! A failure!", "How very human.", "Nothing like this falls on my planet.", "Why did you even press that?"],
+        fx_demoness: ["Boring and infuriating.", "Who does it like that?!", "Pathetic.", "I'm not even surprised.", "Mortals. So predictable."],
+        fx_ghost: ["Shouldn't have done that.", "I'm upset… very.", "Do you hear that creak?", "You shouldn't have.", "I'll remember. I remember everything."],
+        x2ai_ment: ["Not again, damn it.", "We can do this the easy way.", "I asked you nicely.", "You're in violation, friend.", "Oh, for heaven's sake."],
+        x2ai_alkash: ["Ah, not again…", "There goes the mood.", "Come on, brother…", "Just when I settled down.", "Oh, for crying out loud."],
+        x2ai_bratok: ["What are you doing, bro?!", "Hey, easy there.", "That's out of line, man.", "Watch it, friend.", "I ought to… fine, calm down."],
+        x2ai_babka: ["Oh, listen to you.", "What a burden you are.", "We never had this in my day.", "Useless, honestly.", "I'd have fed you soup, you know."],
+        x2ai_sosochka: ["And what was that, sweetie?", "Seriously, darling?", "You broke it again.", "That costs extra, you know.", "I knew it, honestly."],
+        x2ai_telochka: ["Ew, so cringe.", "Ugh, seriously?", "What was that even?", "I\u2019m literally lost.", "Total mess, babe."],
+        x2ai_narik: ["Oh, come on…", "Again, man.", "It's just… not working.", "How does that even happen.", "Ugh, whatever…"],
+        x2ai_novyi_russkiy: ["Come on, brother!", "This is a mess.", "I've got everything covered, and this happens.", "That's not how we do business.", "I'll sort it out. But I'm not happy."],
+        x2ai_kotohaker: ["Meow. That's a bug.", "Who touched my terminal?", "Tail in the way, but I'm in the logs.", "Easy. I'll hack it back.", "No firewall again? Seriously?"],
+        x2ai_coder: ["Legacy again.", "Who wrote this?", "Tests would help.", "Classic. Straight from a tutorial.", "Not even surprised."],
+        x2ai_programmer: ["Oh, not again…", "Who writes it like that?", "I warned you.", "Easy. We'll fix it.", "Spaghetti. Again."],
+        x2ai_codergirl: ["Seriously?", "Who touched prod?", "This is embarrassing.", "Fine, I'll fix it.", "No panic. But hands off."],
+      },
+      neutral: {
+        m: ["I knew it.", "Come on, really.", "I told you so.", "Broken again. Classic.", "How much longer."],
+        f: ["I knew it.", "Come on, really.", "I told you so.", "Broken again. Classic.", "How much longer."],
+      },
+    },
+  };
+  // Пол нужен только для нейтральных реплик: у персонажа с выключенным
+  // характером своей манеры нет, но род у фразы остаётся (говорил/говорила).
+  const lineGender = () => {
+    const v = clipVoice(voice);
+    if (/^ru_m|^fx_robot|^fx_penguin|^fx_demon$|^x2ai_(ment|alkash|bratok|narik|novyi_russkiy|kotohaker|coder)$/.test(v)) return "m";
+    if (/^ru_f|^fx_demoness|^fx_alien|^fx_cat|^fx_ghost|^x2ai_(babka|sosochka|telochka|programmer|codergirl)$/.test(v)) return "f";
+    return "m";
+  };
+  // Характер включён — свои реплики персонажа; выключен — нейтральные по полу.
+  // Незнакомый персонаж (пак без своих строк) тоже получает нейтральные.
+  const pickByTemper = (bank) => {
+    const own = charTemper(voice) ? bank.chars && bank.chars[clipVoice(voice)] : null;
+    return own || bank.neutral[lineGender()] || bank.neutral.m;
+  };
+  let lastRageSay = 0;
+  const rageSay = (retry) => {
+    if (!charReact(voice)) return;
+    const now = Date.now();
+    if (!retry) {
+      if (now - lastRageSay < 15000) return;
+      lastRageSay = now;
+    }
+    const bank = RAGE_BANK[voiceLang()] || RAGE_BANK.ru;
+    const text = pickClip(pickByTemper(bank));
+    if (!text) return;
+    // down — ниже и медленнее: та же фраза звучит раздражённо.
+    // kind=rage — по нему окно держит красный фон, пока реплика звучит.
+    bridge("/say", { text, sid: currentSid || "", voice: charVoice(voice), emotion: "down", kind: "rage" })
+      .then((r) => {
+        // Персонаж ещё говорил — повторяем один раз, когда голос освободится:
+        // ошибка чаще всего и приходит во время ответа.
+        if (!retry && r && r.ok === false && r.reason === "busy") {
+          const wait = Math.max(400, Math.min((Number(r.wait) || 1200) + 250, 20000));
+          setTimeout(() => rageSay(true), wait);
+        }
+      })
+      .catch(() => {});
+  };
+
   const rageQueue = [];
   let ragePlaying = false;
+  let moodEndsAt = 0;
+  const rageDone = () => {
+    ragePlaying = false;
+    if (rageQueue.length) {
+      playRage();
+      return;
+    }
+    if (moodState.value === "angry") setMood("awake");
+    resetIdle();
+  };
+  // Красный фон держится, пока звучит злая реплика: продлеваем её концом,
+  // а не фиксированными секундами (реплика бывает длиннее вспышки).
+  const holdRage = (ms) => {
+    if (!ragePlaying) return;
+    const end = Date.now() + Math.max(0, Number(ms) || 0);
+    if (end <= moodEndsAt) return;
+    moodEndsAt = end;
+    if (moodTimer) clearTimeout(moodTimer);
+    moodTimer = setTimeout(rageDone, Math.max(0, moodEndsAt - Date.now()));
+  };
   const playRage = () => {
     if (ragePlaying) return;
     const ms = rageQueue.shift();
     if (!ms) return;
     ragePlaying = true;
+    const wasAngry = moodState.value === "angry";
     setMood("angry");
+    moodEndsAt = Date.now() + ms;
     if (moodTimer) clearTimeout(moodTimer);
-    moodTimer = setTimeout(() => {
-      ragePlaying = false;
-      if (rageQueue.length) {
-        playRage();
-        return;
-      }
-      if (moodState.value === "angry") setMood("awake");
-      resetIdle();
-    }, ms);
+    moodTimer = setTimeout(rageDone, ms);
+    if (!wasAngry) rageSay();
   };
 
   const sadFor = (ms) => {
@@ -2820,6 +3373,423 @@ function createView(ctx) {
     if (rageQueue.length > 5) rageQueue.shift();
     playRage();
   };
+
+  // --- Реакции: короткие сценки поверх настроения, строго по очереди ---
+  // Каждая сценка доигрывает до конца; новая встаёт в очередь и не сбивает
+  // текущую. Всё выключается той же галочкой «Реакции», что и эмоции.
+  const REACT_MAX = 3;
+  const reactQueue = [];
+  let reactPlaying = false;
+  let reactTimer = null;
+  let idleSince = Date.now();
+  let lastBoredAt = 0;
+
+  // Слой эффектов: эмодзи и румянец живут отдельно от спрайта.
+  const fx = document.createElement("div");
+  fx.style.cssText = "position:absolute;inset:0;pointer-events:none;overflow:visible";
+  box.appendChild(fx);
+
+  const fxFloat = (text, ms, top, size) => {
+    const el = document.createElement("div");
+    el.textContent = text;
+    el.style.cssText =
+      `position:absolute;left:50%;top:${top || "6%"};font-size:${size || 13}px;line-height:1;` +
+      "opacity:0;pointer-events:none;text-shadow:0 1px 3px rgba(0,0,0,.55);" +
+      `animation:x2ai-fx ${ms || 1600}ms ease-out forwards`;
+    fx.appendChild(el);
+    setTimeout(() => el.remove(), (ms || 1600) + 150);
+  };
+
+  const blushOn = (ms) => {
+    const el = document.createElement("div");
+    el.style.cssText =
+      "position:absolute;left:50%;top:50%;width:54%;height:18%;" +
+      "background:radial-gradient(ellipse at center,rgba(255,120,140,.55),rgba(255,120,140,0) 70%);" +
+      `opacity:0;pointer-events:none;animation:x2ai-fx ${ms || 1800}ms ease-out forwards`;
+    fx.appendChild(el);
+    setTimeout(() => el.remove(), (ms || 1800) + 150);
+  };
+
+  const showReactFrame = (name) => {
+    if (!name) return;
+    img.src = frame(voice, name);
+    moodFrameShown = name;
+  };
+
+  const isNight = () => {
+    const h = new Date().getHours();
+    return h >= 23 || h < 9;
+  };
+
+  // Демо: название реакции произносим и пишем в пузырь — иначе сценки
+  // мелькают одна за другой без подписи.
+  const sayReactName = (text) => {
+    setBubbleText(text);
+    bubbleKind = "answer";
+    bubbleThinking = false;
+    paintBubble();
+    if (!mutedState) {
+      bridge("/say", { text, sid: currentSid || "", voice: charVoice(voice) }).catch(() => {});
+    }
+  };
+
+  const runReact = () => {
+    if (reactPlaying) return;
+    const task = reactQueue.shift();
+    if (!task) return;
+    reactPlaying = true;
+    idleSince = Date.now();
+    const finish = () => {
+      reactPlaying = false;
+      if (reactTimer) clearTimeout(reactTimer);
+      reactTimer = null;
+      box.style.transform = "";
+      box.style.animation = "";
+      const mood = moodState.value;
+      if (mood === "sleeping" || mood === "dozing" || mood === "angry") setMood(mood, true);
+      else setMood("awake", true);
+      idleSince = Date.now();
+      if (reactQueue.length) runReact();
+      else resetIdle();
+    };
+    let i = 0;
+    const step = () => {
+      if (i >= task.steps.length) {
+        finish();
+        return;
+      }
+      const s = task.steps[i++];
+      if (s.say) sayReactName(s.say);
+      // Во время речи кадры принадлежат артикуляции: кадр сценки мгновенно
+      // затирался планом рта, и сценка была не видна. Пока звучит голос,
+      // показываем только эффект и наклон.
+      if (s.frame && !speaking) showReactFrame(s.frame);
+      // Наклон корпуса убран: сценка играет только мимикой (кадры, эффекты,
+      // румянец). Поворот сбрасываем, чтобы старый наклон не залипал.
+      if (s.tilt !== undefined) box.style.transform = "";
+      if (s.shake) box.style.animation = "x2ai-rage .34s linear infinite";
+      if (s.blush) blushOn(s.ms);
+      if (s.fx) fxFloat(s.fx, s.ms, s.top, s.size);
+      reactTimer = setTimeout(step, s.hold || s.ms || 260);
+    };
+    step();
+  };
+
+  const playReact = (name, steps, opts) => {
+    if (!charReact(voice)) return;
+    // Очередь переполнена — не выбрасываем сценку, а подклеиваем её шаги в
+    // последнюю в очереди и чуть укорачиваем: так ничего не теряется и
+    // персонаж не отстаёт от чата. force (демо) идёт как есть.
+    if (!(opts && opts.force) && reactPlaying && reactQueue.length >= REACT_MAX) {
+      const tail = reactQueue[reactQueue.length - 1];
+      if (tail && Array.isArray(tail.steps)) {
+        const extra = (steps || []).map((st) => ({
+          ...st,
+          hold: Math.max(140, Math.round(Number(st.hold || st.ms || 300) * 0.7)),
+        }));
+        tail.steps = tail.steps.concat(extra);
+        return;
+      }
+    }
+    if (!reactPlaying && !reactQueue.length && (moodState.value === "sleeping" || moodState.value === "dozing")) wake();
+    reactQueue.push({ name, steps, opts });
+    runReact();
+  };
+
+  // Реплики компактизации: короткая фраза на старте и на финише. Саму сводку
+  // не читаем — персонаж только комментирует, что уложил мысли.
+  const COMPACT_BANK = {
+    ru: {
+      chars: {
+        ru_m5: {
+          start: ["Так, мысли в кучу…", "Ща всё утрамбуем.", "Погоди, приберусь в голове.", "Лишнее — в сторону.", "Сжимаю. Не мешай."],
+          done: ["Всё, уложил.", "Готово, чисто.", "Утрамбовал. Погнали.", "Всё влезло.", "Ну вот, порядок."],
+        },
+        ru_m1: {
+          start: ["Сжимаю…", "Схлопываю контекст.", "Отжимаю лишнее.", "Оптимизирую память.", "Собираю всё в один дифф."],
+          done: ["Готово.", "Готово. Контекст чист.", "Сжал. Сборка зелёная.", "Оптимизация завершена.", "Всё, без потерь."],
+        },
+        ru_f1: {
+          start: ["Так, всё лишнее в сторону…", "Секунду, соберу мысли.", "Приберусь немного, ладно?", "Оставлю только важное.", "Сейчас всё аккуратно сложу."],
+          done: ["Уложила.", "Готово, всё под рукой.", "Сложила. Ничего не потеряла.", "Всё, теперь легко.", "Прибралась!"],
+        },
+        fx_robot: {
+          start: ["Сжатие контекста.", "Уплотняю память.", "Архивирую лишнее.", "Рекурсивная очистка.", "Сжатие. Не двигайтесь."],
+          done: ["Оптимизация завершена.", "Готово.", "Контекст уплотнён.", "Память очищена. Продолжаем.", "Сжатие успешно."],
+        },
+        fx_penguin: {
+          start: ["Сейчас всё утрамбую!", "Ой, тут много всего. Секунду!", "У нас так не складывают. Попробую!", "Важное — в карман.", "Сейчас всё проверю и сложу!"],
+          done: ["Готово, всё влезло!", "Уложил! Как у нас, только хуже.", "Всё поместилось. Удивительно!", "Готово! Ничего не потерялось?", "Сложил. На вашей планете это работает!"],
+        },
+        fx_demoness: {
+          start: ["Складываю ваши мысли.", "Секунду. Разложу по полочкам.", "Сожму это в приличный вид.", "Убираю мусор из головы. Вашей.", "Лишнее — в бездну."],
+          done: ["Компактно. Продолжаем.", "Готово. Даже приятно.", "Уложила. Не благодарите.", "Чисто. Как в аду после уборки.", "Всё. Теперь дышится легче."],
+        },
+        fx_ghost: {
+          start: ["Собираю мысли в туман…", "Сейчас лишнее растворится…", "Тише… я складываю.", "Развею всё ненужное.", "Погоди, я в тени."],
+          done: ["Всё. Только важное осталось.", "Растворила лишнее.", "Готово… тихо.", "Всё уместилось в тень.", "Я закончила. Слышишь эхо?"],
+        },
+        fx_ghost: {
+          start: ["Gathering thoughts into mist…", "Letting the extra fade…", "Quiet… I'm folding it.", "I'll scatter what's unnecessary.", "Wait, I'm in the shadows."],
+          done: ["There. Only what matters remains.", "The extra has dissolved.", "Done… quietly.", "It all fits in the shadow.", "I'm done. Hear the echo?"],
+        },
+        x2ai_ment: {
+          start: ["Ну чё, сожмём по-тихому…", "Погоди, разложу бумажки.", "Так, всё лишнее — в урну.", "Убираю показания, оставляю суть.", "Сейчас всё по папочкам."],
+          done: ["Всё, подшито.", "Готово, дело закрыто.", "Утрамбовал. Никто не видел.", "Всё, чисто, как в отделении.", "Подписал и в сейф."],
+        },
+        x2ai_alkash: {
+          start: ["Ща, соберу мысли в кучку…", "Погоди, у меня в голове туман.", "Так, выкинем лишнее, ага.", "Секунду, брат, соображу.", "Мысли-то разбежались… сейчас."],
+          done: ["Всё, вроде уложил.", "Ну вот, теперь ясно.", "Утрамбовал, вроде ничего не забыл.", "Готово. А что было-то?", "Всё, брат, по полочкам."],
+        },
+        x2ai_bratok: {
+          start: ["Ща, братан, всё по-быстрому.", "Погоди, раскидаю по понятиям.", "Так, лишнее — в сторону.", "Секунду, соберу в кучу.", "Сжимаю. Не лезь."],
+          done: ["Всё, уложил, братан.", "Готово, по-братски.", "Утрамбовал. Ничё не потерял.", "Всё, чисто, как в падике.", "Готово. Погнали дальше."],
+        },
+        x2ai_babka: {
+          start: ["Так, приберусь тут.", "Сейчас всё по местам разложу.", "Ох, намусорили-то.", "Дай-ка, я лучше знаю.", "Так, лишнее — на помойку."],
+          done: ["Всё, чисто.", "Готово, не благодари.", "Разложила, как надо.", "Всё убрано, наконец-то.", "Ну вот, другое дело."],
+        },
+        x2ai_sosochka: {
+          start: ["Так, зайка, я всё приберу.", "Секунду, милый, не мешай.", "Складываю ваши мысли, ага.", "Лишнее — мне, нужное — вам.", "Сейчас всё будет красиво."],
+          done: ["Всё, чисто и красиво.", "Готово, можешь не благодарить.", "Уложила. Со скидкой.", "Всё, зайка, порядок.", "Готово. И это мне тоже зачтётся."],
+        },
+        x2ai_telochka: {
+          start: ["Так, сейчас всё будет красиво.", "Секунду, я подумаю.", "Убираю лишнее, ага.", "Так-сс, подожди немного.", "Сейчас всё уложу по полочкам."],
+          done: ["Всё, готово, красота.", "Уложила. Даже приятно.", "Готово, все чотенько.", "Всё влезло, вообще легко.", "Капец, как чисто."],
+        },
+        x2ai_narik: {
+          start: ["Ну это… сейчас соберу.", "Погоди, я подумаю…", "Так, лишнее — в сторону.", "Ща, только соберусь.", "Как бы это… сжать."],
+          done: ["Всё, уложил… вроде.", "Готово. Кажется.", "Ну вот, чисто.", "Утрамбовал, как смог.", "Всё, мысли на месте."],
+        },
+        x2ai_novyi_russkiy: {
+          start: ["Так, братан, сейчас всё порешаем.", "Секунду, вопрос закрою.", "Уберу лишнее, по понятиям.", "Ща, только соберу всё в кучу.", "Всё под контролем, сжимаю."],
+          done: ["Всё, братан, чисто.", "Готово. Вопрос закрыт.", "Уложил. Всё по понятиям.", "Компактно, как в лучших домах.", "Всё, теперь можно и отдохнуть."],
+        },
+        x2ai_kotohaker: {
+          start: ["Сворачиваю вкладки…", "Секунду, чищу кэш.", "Упаковываю мысли в архив.", "Мяу. Сжимаю без потерь.", "Сейчас всё сожму в один файл."],
+          done: ["Готово. Всё в архиве.", "Сжал. Хвост не пострадал.", "Чисто. Можно продолжать.", "Упаковано. Мур.", "Всё, контекст оптимизирован."],
+        },
+        x2ai_coder: {
+          start: ["Сворачиваю лишнее…", "Секунду, чищу контекст.", "Соберу всё в один коммит.", "Убираю шум из логов.", "Сжимаю без потерь."],
+          done: ["Готово. Можно мержить.", "Контекст чист.", "Сжал. Сборка зелёная.", "Всё, без регрессий.", "Готово. Открываю PR."],
+        },
+        x2ai_programmer: {
+          start: ["Так, приберусь в мыслях…", "Секунду, только важное.", "Складываю всё по полочкам.", "Оставлю только суть.", "Аккуратно всё сожму."],
+          done: ["Готово, всё на месте.", "Сложила. Ничего не потеряла.", "Чисто и понятно.", "Всё, можно продолжать.", "Готово. Дышится легче."],
+        },
+        x2ai_codergirl: {
+          start: ["Сжимаю этот хаос…", "Убираю мусор из головы. Вашей.", "Секунду, соберу мысли в кучу.", "Лишнее — в архив.", "Сейчас всё упакую."],
+          done: ["Готово. Красиво.", "Упаковала. Продолжаем.", "Чисто. Даже приятно.", "Всё влезло.", "Готово. Не благодарите."],
+        },
+      },
+      neutral: {
+        m: {
+          start: ["Так, я готов. Сжимаю…", "Сейчас всё уложу.", "Прибираюсь в контексте.", "Лишнее — в сторону.", "Сжимаю, секунду."],
+          done: ["Готово. Всё уложил.", "Всё, я закончил.", "Уложил, ничего не потерял.", "Готово, контекст чистый.", "Всё влезло."],
+        },
+        f: {
+          start: ["Так, я готова. Сжимаю…", "Сейчас всё уложу.", "Прибираюсь в контексте.", "Лишнее — в сторону.", "Сжимаю, секунду."],
+          done: ["Готово. Всё уложила.", "Всё, я закончила.", "Уложила, ничего не потеряла.", "Готово, контекст чистый.", "Всё влезло."],
+        },
+      },
+    },
+    en: {
+      chars: {
+        ru_m5: {
+          start: ["Right, thoughts together…", "Let me pack this up.", "Hold on, clearing my head.", "Extras aside.", "Compressing. Don't distract me."],
+          done: ["There, packed.", "Done, all clean.", "Packed it. Let's go.", "It all fits.", "Right, sorted."],
+        },
+        ru_m1: {
+          start: ["Compressing…", "Collapsing context.", "Squeezing out the noise.", "Optimizing memory.", "Gathering it into one diff."],
+          done: ["Done.", "Done. Context is clean.", "Compressed. Build is green.", "Optimization complete.", "All done, nothing lost."],
+        },
+        ru_f1: {
+          start: ["Setting the clutter aside…", "One sec, gathering my thoughts.", "Let me tidy up a bit, okay?", "Keeping only the important bits.", "Folding it all neatly."],
+          done: ["All packed.", "Done, everything at hand.", "Packed it. Nothing lost.", "There, much lighter.", "Tidied up!"],
+        },
+        fx_robot: {
+          start: ["Compressing context.", "Densifying memory.", "Archiving the excess.", "Recursive cleanup.", "Compressing. Do not move."],
+          done: ["Optimization complete.", "Done.", "Context densified.", "Memory cleaned. Proceeding.", "Compression successful."],
+        },
+        fx_penguin: {
+          start: ["Let me pack it all!", "Oh, so much stuff. One moment!", "We don't fold things like this at home. Trying!", "Important bits into the pocket.", "One sec, I'll check and pack everything!"],
+          done: ["Done, it fits!", "Packed! Like home, only worse.", "It all fit. Amazing!", "Done! Did we lose anything?", "Packed. This works on your planet!"],
+        },
+        fx_demoness: {
+          start: ["Folding your thoughts.", "One moment. Sorting it out.", "Let me compress this into something decent.", "Taking out the trash. From your head.", "The extras go into the void."],
+          done: ["Compact. Moving on.", "Done. Almost pleasant.", "Packed. No thanks needed.", "Clean. Like hell after cleaning.", "There. Easier to breathe."],
+        },
+        x2ai_ment: {
+          start: ["Right, let's pack this quietly…", "Hold on, sorting the paperwork.", "Everything extra goes in the bin.", "Cutting the testimony to the point.", "Filing it all, folder by folder."],
+          done: ["All stapled.", "Done, case closed.", "Packed. Nobody saw a thing.", "Clean as the precinct.", "Signed and in the safe."],
+        },
+        x2ai_alkash: {
+          start: ["Hold on, gathering my thoughts…", "Wait, it's foggy in my head.", "Right, tossing out the extra.", "One sec, brother, let me think.", "Thoughts ran off… one moment."],
+          done: ["There, I think it's packed.", "Right, now it's clear.", "Packed it, hope nothing's lost.", "Done. What was it again?", "All set, brother, on the shelves."],
+        },
+        x2ai_bratok: {
+          start: ["Hold on, bro, quick and clean.", "One sec, sorting it the way we do.", "Right, the extras go aside.", "One moment, gathering it up.", "Compressing. Don't touch."],
+          done: ["Packed, bro.", "Done, brother-style.", "Packed it. Lost nothing.", "All clean, like the yard.", "Done. Let's move on."],
+        },
+        x2ai_babka: {
+          start: ["Right, let me tidy up here.", "Putting everything in its place.", "Oh, what a mess you've made.", "Let me do it, I know better.", "The extras go in the bin."],
+          done: ["There, clean.", "Done, no need to thank me.", "Put away properly.", "Finally, all cleared.", "There, that's better."],
+        },
+        x2ai_sosochka: {
+          start: ["Right, sweetie, I'll tidy it up.", "One moment, darling, don't interfere.", "Folding your thoughts, uh-huh.", "The extras go to me, the useful to you.", "Let me make it pretty."],
+          done: ["There, clean and pretty.", "Done, no thanks needed.", "Packed. With a discount.", "All set, sweetie.", "Done. And I get credit for that."],
+        },
+        x2ai_telochka: {
+          start: ["Right, let's make it pretty.", "One sec, I'm thinking.", "Clearing the extras, uh-huh.", "Wait a bit, okay?", "Putting it all in place."],
+          done: ["There, done. Pretty.", "Packed. Even nice.", "Done, babe.", "It all fits, so easy.", "So clean, honestly."],
+        },
+        x2ai_narik: {
+          start: ["Uh… let me gather it.", "Hold on, I'm thinking…", "Right, extras aside.", "Just a sec, let me focus.", "How do I… compress this."],
+          done: ["There, packed… I think.", "Done. I guess.", "Right, clean.", "Squeezed it as best I could.", "Okay, thoughts are in place."],
+        },
+        x2ai_novyi_russkiy: {
+          start: ["Right, brother, we'll sort it out.", "One sec, closing the matter.", "Clearing the extras, by the rules.", "Just a moment, gathering it all.", "Everything's under control, compressing."],
+          done: ["All clean, brother.", "Done. Matter closed.", "Packed. All by the rules.", "Compact, like in the best houses.", "There, now we can relax."],
+        },
+        x2ai_kotohaker: {
+          start: ["Closing tabs…", "One sec, clearing the cache.", "Packing my thoughts into an archive.", "Meow. Lossless compression.", "Compressing it all into one file."],
+          done: ["Done. All archived.", "Compressed. Tail intact.", "Clean. We can continue.", "Packed. Purr.", "Done, context optimized."],
+        },
+        x2ai_coder: {
+          start: ["Closing the extras…", "One sec, clearing the context.", "Packing it into one commit.", "Removing noise from the logs.", "Lossless compression."],
+          done: ["Done. Ready to merge.", "Context is clean.", "Compressed. Build is green.", "All done, no regressions.", "Done. Opening the PR."],
+        },
+        x2ai_programmer: {
+          start: ["Let me tidy my thoughts…", "One sec, just the important bits.", "Sorting everything into place.", "Keeping only the essence.", "Compressing it neatly."],
+          done: ["Done, everything in place.", "Packed. Nothing lost.", "Clean and clear.", "There, we can continue.", "Done. Much lighter."],
+        },
+        x2ai_codergirl: {
+          start: ["Compressing this chaos…", "Taking the trash out of your head.", "One sec, gathering my thoughts.", "The extras go to the archive.", "Packing it all up."],
+          done: ["Done. Beautiful.", "Packed. Moving on.", "Clean. Almost pleasant.", "It all fits.", "Done. No thanks needed."],
+        },
+      },
+      neutral: {
+        m: {
+          start: ["Right, gathering my thoughts…", "Packing it up now.", "Tidying the context.", "Extras aside.", "Compressing, one second."],
+          done: ["Done. All packed.", "All done, nothing lost.", "Packed, context is clean.", "Everything fits.", "Done."],
+        },
+        f: {
+          start: ["Right, gathering my thoughts…", "Packing it up now.", "Tidying the context.", "Extras aside.", "Compressing, one second."],
+          done: ["Done. All packed.", "All done, nothing lost.", "Packed, context is clean.", "Everything fits.", "Done."],
+        },
+      },
+    },
+  };
+  // Старт и финиш приходят по пять раз (копии плагина): сценку дедупит
+  // playCompactScene, а голос страхуем своим окном в 8 с.
+  let lastCompactSayStage = "";
+  let lastCompactSayAt = 0;
+  const compactSay = (stage, retry) => {
+    if (!charReact(voice)) return;
+    const now = Date.now();
+    if (!retry) {
+      if (stage === lastCompactSayStage && now - lastCompactSayAt < 8000) return;
+      lastCompactSayStage = stage;
+      lastCompactSayAt = now;
+    }
+    const bank = COMPACT_BANK[voiceLang()] || COMPACT_BANK.ru;
+    const pair = pickByTemper(bank);
+    const text = pair && pickClip(pair[stage]);
+    if (!text) return;
+    bridge("/say", { text, sid: currentSid || "", voice: charVoice(voice) })
+      .then((r) => {
+        // Персонаж ещё говорил (частый случай: сжатие сразу после ответа) —
+        // один повтор, когда голос освободится.
+        if (!retry && r && r.ok === false && r.reason === "busy") {
+          const wait = Math.max(400, Math.min((Number(r.wait) || 1200) + 250, 20000));
+          setTimeout(() => compactSay(stage, true), wait);
+        }
+      })
+      .catch(() => {});
+  };
+
+  // Сценки компактизации: событие приходит с моста (/state.react), потому
+  // что в шине окна это семейство событий не гарантировано. Виды: «сжимаю
+  // мысли» на старте, «готово» в конце, грусть на провале.
+  // Злость по событию моста: пять копий серверного плагина пишут одну и ту
+  // же метку почти одновременно, поэтому вспышку гасим по времени.
+  let lastRageAt = 0;
+  const rageOnce = (ms) => {
+    const now = Date.now();
+    if (now - lastRageAt < 3000) return;
+    lastRageAt = now;
+    sadFor(ms || 4200);
+  };
+
+  const playCompactScene = (kind, at) => {
+    if (kind === "rage") {
+      rageOnce(4200);
+      return;
+    }
+    // Дубли того же события (несколько копий плагина) не играем дважды.
+    const seenAt = Number(at) || Date.now();
+    if (kind === lastReactKind && seenAt - lastReactKindAt < 2500) return;
+    lastReactKind = kind;
+    lastReactKindAt = seenAt;
+    if (kind === "compactFailed") {
+      sadFor(2500);
+      return;
+    }
+    if (kind === "compactDone") {
+      compactSay("done");
+      playReact("compactDone", [
+        { frame: "half", hold: 180, tilt: 2 },
+        { frame: "wide", hold: 260, fx: "✓", top: "2%", size: 12 },
+        { frame: "closed", hold: 140 },
+      ]);
+      return;
+    }
+    compactSay("start");
+    playReact("compact", [
+      { frame: "wide", hold: 220, fx: "✧", top: "2%", size: 12 },
+      { frame: "half", hold: 420, tilt: -3, fx: "⋯", top: "4%", size: 12 },
+      { frame: "closed", hold: 240, tilt: 0 },
+    ]);
+  };
+
+  // Демо всех сценок подряд: сервер считает нажатия (POST /demo), окно видит
+  // новое число в /state и ставит всю цепочку в очередь — одну за другой.
+  const runDemo = () => {
+    const scenes = [
+      ["Потягивание", [{ frame: "wide", hold: 260, tilt: 2 }, { frame: "half", hold: 240, tilt: -1 }, { frame: "closed", hold: 160 }]],
+      ["Улыбка", [{ frame: "half", hold: 220 }, { frame: "wide", hold: 380, fx: "✦", top: "2%", size: 12 }, { frame: "closed", hold: 180 }]],
+      ["Радость", [{ frame: "wide", hold: 300, fx: "✦", top: "1%", size: 13 }, { frame: "half", hold: 260, tilt: -3 }, { frame: "closed", hold: 160 }]],
+      ["Гордость", [{ frame: "wide", hold: 520, fx: "✧", top: "1%", size: 13 }, { frame: "closed", hold: 200, tilt: 2 }]],
+      ["Любопытство", [{ frame: "half", hold: 420, tilt: 3 }, { frame: "closed", hold: 180, tilt: 0 }]],
+      ["Тревога", [{ frame: "half", hold: 520, shake: true, fx: "…", top: "3%", size: 12 }, { frame: "closed", hold: 200 }]],
+      ["Смена чата", [{ tilt: 4, hold: 340, fx: "∙", top: "4%", size: 11 }]],
+      ["Смущение", [{ frame: "half", hold: 300, blush: 1800 }, { frame: "closed", hold: 200 }]],
+      ["Скука", [{ frame: "open", hold: 420 }, { frame: "half", hold: 300, tilt: -2 }, { frame: "closed", hold: 160 }]],
+      ["Злость", [{ frame: "wide", hold: 420, shake: true }, { frame: "closed", hold: 200 }]],
+    ];
+    for (const [raw, steps] of scenes) {
+      // Сначала название: пока оно звучит, персонаж уже смотрит на тебя.
+      const name = t(raw);
+      playReact(raw, [{ say: name, hold: 1600 }, ...steps], { force: true });
+    }
+  };
+
+  // Скука и случайное подмигивание: только когда персонаж один и бодр.
+  const boredTimer = setInterval(() => {
+    if (!charReact(voice) || speaking || panelOpen || reactPlaying) return;
+    if (moodState.value !== "awake" || reactQueue.length) return;
+    const idle = Date.now() - idleSince;
+    if (idle > 5 * 60 * 1000 && Date.now() - lastBoredAt > 40000) {
+      // Зевок: рот открылся, глаза прикрылись, лёгкий кивок.
+      lastBoredAt = Date.now();
+      playReact("bored", [
+        { frame: "open", hold: 420 },
+        { frame: "half", hold: 300, tilt: -2 },
+        { frame: "closed", hold: 160 },
+      ]);
+      return;
+    }
+  }, 15000);
 
   // --- Индикатор синтеза: точки, пока движок готовит звук ---
   let synthTimer = null;
@@ -2843,6 +3813,18 @@ function createView(ctx) {
   let blinkTimer = null;
   let speakTimer = null;
 
+  // «Второй праздный» кадр (idle2): изредка, когда персонаж долго молчит,
+  // на 15 секунд показываем его вместо покоя — без моргания и без эффектов.
+  // Любая речь сбрасывает idle2 сразу.
+  const IDLE2_AFTER_MS = 60 * 1000;
+  const IDLE2_HOLD_MS = 15 * 1000;
+  const IDLE2_CHANCE = 0.2;
+  // Во сне кадр с закрытыми глазами иногда подменяется на idle2.
+  const SLEEP_IDLE2_CHANCE = 0.25;
+  let idle2Active = false;
+  let idle2Timer = null;
+  let idle2Poll = null;
+
   // Партитура рта: считается в talk-plan.js (там же тест), здесь только
   // запуск кадров по таймеру.
 
@@ -2859,7 +3841,10 @@ function createView(ctx) {
       }
       const item = plan[i++];
       img.src = frame(voice, item.frame);
-      box.style.transform = `translateY(${i % 2 ? -1 : 0}px) rotate(${i % 2 ? -0.12 : 0.06}deg)`;
+      // Только подскок, без поворота: поворот заставлял браузер
+      // пере-ресемпливать спрайт на каждом кадре, и пиксель-арт выглядел
+      // бледнее и мягче, чем в покое.
+      box.style.transform = `translateY(${i % 2 ? -1 : 0}px)`;
       talkTimeout = setTimeout(step, thinking ? item.delay * 1.4 : item.delay);
     };
     step();
@@ -2882,6 +3867,8 @@ function createView(ctx) {
   };
 
   const startSpeaking = (ms, kind, text, offset = 0) => {
+    // Речь прерывает idle2: сначала вернуть покой, потом включать рот.
+    endIdle2();
     speaking = true;
     const thinking = kind === "reason";
     const line = bubbleLine(text);
@@ -2892,13 +3879,32 @@ function createView(ctx) {
     bubbleThinking = thinking;
     bubbleKind = thinking ? "reason" : "answer";
     paintBubble();
-    box.style.filter = thinking ? "saturate(.85) brightness(1.02)" : "";
+    // Смущение на благодарность и лёгкое удивление на вопрос: только
+    // эффекты, кадры не трогаем — иначе поедет артикуляция.
+    if (!thinking && line && charReact(voice)) {
+      if (/спасибо|молодец|умниц|thank/i.test(line)) blushOn(2000);
+      if (line.trim().endsWith("?")) fxFloat("?", 1400, "2%", 13);
+    }
+    // Рассуждения раньше гасились saturate(.85) — во время речи персонаж
+    // становился бледнее, чем в покое. Палитру не трогаем: думает он
+    // лёгким затемнением и «⋯» над плечом.
+    // Злость не гасим речью: пока персонаж ругается, красная подсветка
+    // остаётся — раньше обводка пропадала на первом же слове.
+    const glow = moodState.value === "angry" ? ANGRY_GLOW : "";
+    box.style.filter = glow;
     // Грусть не сбрасываем: ответ накладывается поверх, рот анимируется
     // кадрами партитуры, а настроение доигрывает свою очередь.
-    if (moodState.value === "sleeping") {
+    if (moodState.value === "sleeping" || moodState.value === "dozing") {
       if (moodTimer) clearTimeout(moodTimer);
       setMood("awake");
     }
+    if (thinking) {
+      box.style.filter = glow ? `${glow} brightness(.98)` : "brightness(.98)";
+      if (charReact(voice)) fxFloat("⋯", 1400, "2%", 12);
+    }
+    // Подскок рта без transition: 140-мс анимация не успевала доехать до
+    // целого пикселя, спрайт всё время висел в дробном смещении и мылился.
+    box.style.transition = "none";
     resetIdle();
     if (talkTimer) clearInterval(talkTimer);
     if (talkTimeout) clearTimeout(talkTimeout);
@@ -2918,7 +3924,7 @@ function createView(ctx) {
         const state = TALK[talkStep % TALK.length];
         img.src = frame(voice, state);
         talkStep++;
-        box.style.transform = `translateY(${talkStep % 2 ? -1 : 0}px) rotate(${talkStep % 2 ? -0.12 : 0.06}deg)`;
+        box.style.transform = `translateY(${talkStep % 2 ? -1 : 0}px)`;
       }, thinking ? 170 : 110);
     }
   };
@@ -2935,6 +3941,7 @@ function createView(ctx) {
     talkTimeout = null;
     talkStep = 0;
     box.style.transform = "";
+    box.style.transition = "";
     // Грусть и сон держат свои кадры (закрытые глаза) — не открываем их речью.
     img.src = frame(voice, moodFrame());
     // Речь сбрасывала transform/фильтры для артикуляции — вернуть позу настроения.
@@ -2955,7 +3962,21 @@ function createView(ctx) {
     px_ru_m1: "ru_m1",
     px_fx_robot: "fx_robot",
     px_fx_penguin: "fx_penguin",
+    px_fx_ghost: "fx_ghost",
     px_fx_demoness: "fx_demoness",
+    px_ru_m5: "ru_m5",
+    px_x2ai_ment: "x2ai_ment",
+    px_x2ai_alkash: "x2ai_alkash",
+    px_x2ai_bratok: "x2ai_bratok",
+    px_x2ai_babka: "x2ai_babka",
+    px_x2ai_sosochka: "x2ai_sosochka",
+    px_x2ai_telochka: "x2ai_telochka",
+    px_x2ai_narik: "x2ai_narik",
+    px_x2ai_novyi_russkiy: "x2ai_novyi_russkiy",
+    px_x2ai_kotohaker: "x2ai_kotohaker",
+    px_x2ai_coder: "x2ai_coder",
+    px_x2ai_programmer: "x2ai_programmer",
+    px_x2ai_codergirl: "x2ai_codergirl",
   };
   // Голос персонажа: сначала индивидуальная настройка (localStorage), потом
   // общий файл моста, потом встроенное соответствие пиксельных id.
@@ -3021,7 +4042,12 @@ function createView(ctx) {
   }
 
   const applyForSession = (sid) => {
+    const switched = Boolean(sid && currentSid && sid !== currentSid);
     if (sid) currentSid = sid;
+    // Смена чата: короткий наклон в сторону переключения.
+    if (switched && charReact(voice)) {
+      setTimeout(() => playReact("switch", [{ tilt: 4, hold: 340, fx: "∙", top: "4%", size: 11 }]), 80);
+    }
     const resolved = resolveVoice(currentSid);
     apply(resolved);
     if (!currentSid) return;
@@ -3097,6 +4123,11 @@ function createView(ctx) {
   // в памяти второй, невыбранный пак (аниме — половина веса бандла).
   const packLoading = new Map();
   const ensurePack = (name) => {
+    // «Все доступные» не файл: грузим все реальные паки, чтобы у объединения
+    // были кадры каждого персонажа.
+    if (name === ALL_PACK) {
+      return Promise.all(packList().map((packName) => ensurePack(packName))).then(() => null);
+    }
     if (!name || !PACK_INDEX[name]) return Promise.resolve(null);
     if (PACKS[name]) return Promise.resolve(PACKS[name]);
     if (packLoading.has(name)) return packLoading.get(name);
@@ -3128,11 +4159,14 @@ function createView(ctx) {
           PACK_INDEX[name] = (info && info.voices) || [];
           grew = true;
         }
+        if (grew && activePack === ALL_PACK) ensurePack(ALL_PACK);
         if (grew && panelOpen) renderPanel();
       })
       .catch(() => {});
   };
   // До загрузки кадров картинка пустая: перерисовываем, когда пак пришёл.
+  sideReady = true;
+  applySide(voice);
   Promise.all([ensurePack(activePack), ensurePack("anime")]).then(() => {
     apply(voice, true);
   });
@@ -3161,6 +4195,15 @@ function createView(ctx) {
   let bridgeSpeaking = false;
   let lastSpeakAt = 0;
   let lastNoteAt = 0;
+  let lastDemo = -1;
+  // Метка реакции с моста (компактизация): номер события, чтобы не играть
+  // одну и ту же дважды.
+  let lastReact = -1;
+  // Метка «одно и то же событие» для сценок: вид и время последней.
+  let lastReactKind = "";
+  let lastReactKindAt = 0;
+  // Пришли ли этому чату правила общения — показываем в «Дополнительно».
+  let chatRules = null;
   let bubbleSid = "";
   // Имя персонажа синхронизируем с мостом, чтобы правила в промпте знали пак.
   let lastSyncedName = "";
@@ -3174,6 +4217,7 @@ function createView(ctx) {
 
   const bootAt = Date.now();
   const pollBridge = () => {
+    if (!pluginOn()) return;
     syncName();
     // Кадр настроения сторожит себя сам: если спящему вернули «closed»
     // (моргание, конец фразы, перерисовка), глаза снова закрываем.
@@ -3220,6 +4264,37 @@ function createView(ctx) {
         // чтобы пузырь показал фразу без озвучки и без артикуляции.
         // Заметка живёт в файле 10 минут — берём только ту, что появилась
         // после загрузки окна, иначе после Cmd+R всплывёт вчерашняя фраза.
+        // Демо всех реакций: счётчик приходит с моста, окно играет сценки.
+        // Первое значение после Cmd+R только запоминаем — иначе демо
+        // запускалось бы при каждой перезагрузке окна.
+        if (typeof state.rules === "boolean") chatRules = state.rules;
+        if (Number.isFinite(Number(state.demo))) {
+          if (lastDemo < 0) lastDemo = Number(state.demo);
+          else if (Number(state.demo) !== lastDemo) {
+            lastDemo = Number(state.demo);
+            runDemo();
+          }
+        }
+        // Реакция с моста: компактизация контекста. Первое значение после
+        // Cmd+R только запоминаем — иначе проигралась бы старая метка.
+        if (state.react && state.react.kind) {
+          const rn = Number(state.react.n) || 0;
+          if (lastReact < 0) lastReact = rn;
+          else if (rn !== lastReact) {
+            lastReact = rn;
+            playCompactScene(state.react.kind, state.react.at);
+          }
+        }
+        // Красный фон злости держим до конца злой реплики: /state отдаёт
+        // остаток звука (ms, at), продлеваем настроение по нему.
+        if (ragePlaying && state.speaking && state.kind === "rage") {
+          const rMine = !state.sid || !currentSid || state.sid === currentSid;
+          if (rMine) {
+            const rat = Number(state.at) || 0;
+            const left = rat ? Math.max(0, rat * 1000 + (Number(state.ms) || 0) - Date.now()) : 0;
+            holdRage(left + 400);
+          }
+        }
         if (state.note && state.note.text && Number(state.note.at) >= bootAt) {
           const nsid = state.note.sid || "";
           if (nsid && currentSid && nsid === currentSid && state.note.at !== lastNoteAt) {
@@ -3229,6 +4304,10 @@ function createView(ctx) {
             bubbleThinking = state.note.kind === "reason";
             bubbleKind = bubbleThinking ? "reason" : "answer";
             paintBubble();
+            // Мысль пришла без звука (mute или тихие часы): персонаж явно
+            // работает, будим и продлеваем бодрствование.
+            if (moodState.value === "sleeping") wake();
+            resetIdle();
           }
         }
         // Губами двигает только тот чат, чья это озвучка: сервер пишет sid
@@ -3241,7 +4320,6 @@ function createView(ctx) {
           if (!bridgeSpeaking || (at && at !== lastSpeakAt)) {
             bridgeSpeaking = true;
             lastSpeakAt = at;
-            stopClick();
             stopSynth();
             // state.ms — остаток, а elapsed уже прошёл: считаем полную
             // длительность, и только ответы (рассуждения — не «ответы»).
@@ -3250,7 +4328,6 @@ function createView(ctx) {
               if (state.ms > 0) stats.ms += state.ms + elapsed;
             }
             saveStats();
-            refreshBadge();
             const total = state.ms > 0 ? state.ms + elapsed : 9000;
             startSpeaking(total, state.kind || "", state.text || "", elapsed);
           }
@@ -3265,7 +4342,6 @@ function createView(ctx) {
       })
       .catch(() => {});
   };
-  refreshBadge();
   // Опрос моста адаптивный: часто только пока идёт звук, иначе — редко.
   let bridgeTimer = null;
   const schedulePoll = () => {
@@ -3301,8 +4377,8 @@ function createView(ctx) {
     m: ["Ещё работаю, почти.", "Продолжаю, не ушёл.", "Ещё пара минут."],
     n: ["Ещё работаю, почти.", "Продолжаю работу.", "Ещё пара минут."],
   };
-  const FEMALE_VOICES = ["fx_demoness"];
-  const MALE_VOICES = ["fx_demon"];
+  const FEMALE_VOICES = ["fx_demoness", "fx_ghost", "x2ai_babka", "x2ai_sosochka", "x2ai_telochka", "x2ai_programmer", "x2ai_codergirl"];
+  const MALE_VOICES = ["fx_demon", "x2ai_ment", "x2ai_alkash", "x2ai_bratok", "x2ai_narik", "x2ai_novyi_russkiy", "x2ai_kotohaker", "x2ai_coder"];
   const voiceGender = (id) => {
     const v = String(id || "");
     if (/_f$/.test(v) || FEMALE_VOICES.includes(v)) return "f";
@@ -3334,6 +4410,11 @@ function createView(ctx) {
     const key = sid || "";
     if (!key || pingTimers.has(key)) return;
     const tick = () => {
+      // Плагин выключен — реплики простоя не звучат и таймер не крутится.
+      if (!pluginOn()) {
+        pingStop(key);
+        return;
+      }
       // Агент простаивает дольше полутора минут — реплики прекращаем.
       if (Date.now() - (activityAt.get(key) || 0) > 90000) {
         pingStop(key);
@@ -3364,32 +4445,20 @@ function createView(ctx) {
     pingTimers.set(key, setTimeout(tick, pingDelays.get(key) || 60000));
   };
 
-  // Клик по персонажу: короткая заранее сгенерированная реплика его голосом.
-  // Ждать TeraTTS не нужно — звук уже лежит внутри плагина.
+  // Клик по персонажу: реплика синтезируется движком через /say.
   box.style.cursor = "pointer";
 
-  // Одна реплика за раз: новый клик глушит предыдущую и текущую озвучку ответа.
-  let clickAudio = null;
-  const stopClick = () => {
-    if (!clickAudio) return;
-    try {
-      clickAudio.pause();
-      clickAudio.currentTime = 0;
-    } catch (e) {}
-    clickAudio = null;
-  };
   // Глушим только свой чат: очередь других чатов не трогаем.
   const stopAll = () => {
-    stopClick();
     stopSynth();
     stopSpeaking();
     bridge("/stop", { sid: currentSid }).catch(() => {});
   };
 
-  box.onclick = (event) => {
+  const onCharClick = (event) => {
     // Реплика — только по самому персонажу. Настройки и пузырь живут в этом
     // же контейнере, и раньше отпускание ползунка звучало как клик по нему.
-    if (event && event.target !== img) return;
+    if (event && event.target !== img && event.target !== box) return;
     // Пока персонаж говорит, клик его замолкает; в тишине — просто реплика.
     const wasSpeaking = speaking;
     stopAll();
@@ -3405,10 +4474,14 @@ function createView(ctx) {
         }
         return;
       }
-      const clip = pickClip(CLICKS[clipVoice(voice)] || CLICKS.ru_f1);
+      const clip = pickClip(CLICKS[packKey(voice)] || CLICKS[clipVoice(voice)] || CLICKS.ru_f1);
       playClip(clip, clip && clip.text);
     }
   };
+  // Слушаем и контейнер, и сам спрайт: если поверх картинки окажется слой
+  // эффектов, клик всё равно должен звучать.
+  box.onclick = onCharClick;
+  img.addEventListener("click", (ev) => { ev.stopPropagation(); onCharClick(ev); });
 
   // Правый клик — настройки персонажа.
   box.oncontextmenu = (event) => {
@@ -3420,12 +4493,13 @@ function createView(ctx) {
   const scheduleBlink = () => {
     blinkTimer = setTimeout(() => {
       // Во сне глаза уже закрыты (кадр blink): моргание только наяву, иначе
-      // через 120 мс кадр возвращает открытые глаза.
-      if (!speaking && moodState.value === "awake") {
+      // через 120 мс кадр возвращает открытые глаза. На idle2 не моргаем:
+      // там глаза нарисованы как на самом кадре.
+      if (!speaking && !idle2Active && moodState.value === "awake") {
         img.src = frame(voice, "blink");
         setTimeout(() => {
           // За 120 мс можно успеть заснуть — тогда глаза не открываем.
-          if (!speaking && moodState.value === "awake") {
+          if (!speaking && !idle2Active && moodState.value === "awake") {
             img.src = frame(voice, "closed");
             moodFrameShown = "closed";
           }
@@ -3435,6 +4509,41 @@ function createView(ctx) {
     }, 2600 + Math.random() * 2800);
   };
   scheduleBlink();
+
+  // Изредка показываем idle2 в простое. Кубик бросаем раз в 5 секунд, но
+  // только если персонаж бодр, один, не говорит и молчит дольше минуты.
+  const idle2Supported = () => {
+    const set = frameSetFor(voice);
+    return !!(set && typeof set === "object" && set.idle2);
+  };
+
+  const endIdle2 = () => {
+    if (!idle2Active) return;
+    idle2Active = false;
+    if (idle2Timer) clearTimeout(idle2Timer);
+    idle2Timer = null;
+    if (!speaking && moodState.value === "awake") {
+      const back = moodFrame();
+      img.src = frame(voice, back);
+      moodFrameShown = back;
+    }
+  };
+
+  const startIdle2 = () => {
+    if (!idle2Supported()) return;
+    idle2Active = true;
+    img.src = frame(voice, "idle2");
+    moodFrameShown = "idle2";
+    idle2Timer = setTimeout(endIdle2, IDLE2_HOLD_MS);
+  };
+
+  idle2Poll = setInterval(() => {
+    if (idle2Active || speaking || panelOpen || reactPlaying) return;
+    if (moodState.value !== "awake" || reactQueue.length) return;
+    if (Date.now() - idleSince < IDLE2_AFTER_MS) return;
+    if (Math.random() >= IDLE2_CHANCE) return;
+    startIdle2();
+  }, 5000);
 
   // Озвучка стартует по событию сервера приложения ("sidecar").
   // session.server.data в окне может быть устаревшим — берём сервер по id.
@@ -3473,6 +4582,11 @@ function createView(ctx) {
         } catch (err) {
         }
         let answerStartedAt = 0;
+        // Счётчики реакций: серия удачных ответов и объём работы инструментами.
+        let okStreak = 0;
+        let toolCount = 0;
+        let toolStartedAt = 0;
+        let anxietyShown = false;
         for (const name of ["session.execution.succeeded", "session.execution.interrupted"]) {
           try {
             offs.push(
@@ -3485,7 +4599,29 @@ function createView(ctx) {
                 if (answerStartedAt > 0) {
                   lastAnswerMs = Date.now() - answerStartedAt;
                   answerStartedAt = 0;
-                  refreshBadge();
+                }
+                // Радость от удачного ответа; серия из трёх — подскок,
+                // пять и больше инструментов в задаче — «гордость».
+                okStreak += 1;
+                if (okStreak >= 3) {
+                  okStreak = 0;
+                  playReact("cheer", [
+                    { frame: "wide", hold: 300, fx: "✦", top: "4%", size: 14 },
+                    { frame: "half", hold: 200, tilt: -3 },
+                    { frame: "closed", hold: 160 },
+                  ]);
+                } else if (toolCount >= 5) {
+                  toolCount = 0;
+                  playReact("proud", [
+                    { frame: "wide", hold: 620, fx: "✧", top: "2%", size: 16 },
+                    { frame: "closed", hold: 200, tilt: 2 },
+                  ]);
+                } else {
+                  playReact("smile", [
+                    { frame: "half", hold: 220 },
+                    { frame: "wide", hold: 240 },
+                    { frame: "closed", hold: 160 },
+                  ]);
                 }
               }),
             );
@@ -3501,6 +4637,10 @@ function createView(ctx) {
                 answerStartedAt = Date.now();
                 markActive(id || currentSid);
                 pingStart(id || currentSid);
+                // Новая задача: инструменты считаем с нуля.
+                toolCount = 0;
+                toolStartedAt = 0;
+                anxietyShown = false;
               }),
             );
           } catch (err) {
@@ -3512,6 +4652,13 @@ function createView(ctx) {
               data.on(name, (event) => {
                 const id = (event && event.data && event.data.sessionID) || "";
                 markActive(id || currentSid);
+                // Любопытство: инструмент начал работу — голову набок.
+                if ((!id || !currentSid || id === currentSid) && charReact(voice)) {
+                  toolCount += 1;
+                  toolStartedAt = Date.now();
+                  anxietyShown = false;
+                  if (!speaking) playReact("curious", [{ frame: "half", hold: 420, tilt: 3 }, { frame: "closed", hold: 140, tilt: 0 }]);
+                }
               }),
             );
           } catch (err) {
@@ -3523,6 +4670,20 @@ function createView(ctx) {
             offs.push(
               data.on(name, (event) => {
                 markActive((event && event.data && event.data.sessionID) || "");
+                // Инструмент молчит больше минуты — лёгкая тревога, один раз.
+                if (
+                  !anxietyShown &&
+                  toolStartedAt &&
+                  Date.now() - toolStartedAt > 60000 &&
+                  charReact(voice) &&
+                  !speaking
+                ) {
+                  anxietyShown = true;
+                  playReact("anxiety", [
+                    { frame: "half", hold: 500, shake: true, fx: "…", top: "2%", size: 12 },
+                    { frame: "closed", hold: 200 },
+                  ]);
+                }
               }),
             );
           } catch (err) {
@@ -3534,12 +4695,15 @@ function createView(ctx) {
               data.on(name, (event) => {
                 const id = (event && event.data && event.data.sessionID) || "";
                 if (id && currentSid && id !== currentSid) return;
-                if (charReact(voice)) sadFor(2500);
+                if (charReact(voice)) rageOnce(2500);
               }),
             );
           } catch (err) {
           }
         }
+        // Компактизация (/compact или автосжатие контекста): реакцию играет
+        // не шина окна, а мост — серверный плагин видит событие и кладёт
+        // метку в /state.react (см. pollBridge).
         for (const name of [
           "session.tool.success",
           "session.tool.error",
@@ -3565,7 +4729,7 @@ function createView(ctx) {
               data.on(name, (event) => {
                 const id = (event && event.data && event.data.sessionID) || "";
                 if (String(id).startsWith("ses_") && id !== currentSid) return;
-                if (charReact(voice)) sadFor(4200);
+                if (charReact(voice)) rageOnce(4200);
               }),
             );
           } catch (err) {
@@ -3573,6 +4737,8 @@ function createView(ctx) {
         }
         onCleanup(() => {
           for (const off of offs) if (typeof off === "function") off();
+          clearInterval(boredTimer);
+          if (reactTimer) clearTimeout(reactTimer);
         });
       },
     );
@@ -3582,7 +4748,7 @@ function createView(ctx) {
   // Горячие клавиши окна: не надо лезть в панель, чтобы замолчать.
   // В полях ввода не перехватываем — там Cmd/Ctrl+Shift могут значить другое.
   const onHotkey = (ev) => {
-    if (!uiPrefs.keys) return;
+    if (!uiPrefs.keys || !pluginOn()) return;
     if (!(ev.metaKey || ev.ctrlKey) || !ev.shiftKey) return;
     const tag = String((ev.target && ev.target.tagName) || "").toLowerCase();
     if (tag === "input" || tag === "textarea") return;
@@ -3602,6 +4768,8 @@ function createView(ctx) {
   const teardown = () => {
     pingReset();
     clearTimeout(blinkTimer);
+    clearTimeout(idle2Timer);
+    clearInterval(idle2Poll);
     clearTimeout(idleTimer);
     clearTimeout(moodTimer);
     clearTimeout(speakTimer);

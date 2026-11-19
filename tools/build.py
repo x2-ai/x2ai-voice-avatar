@@ -43,7 +43,7 @@ def main() -> int:
     template = (PLUGIN / "gui.template.cjs").read_text(encoding="utf-8")
     talk = (PLUGIN / "talk-plan.js").read_text(encoding="utf-8").strip()
     index = load(PLUGIN / "packs/index.json", "спрайты (tools/pack_sprites.py)")
-    clicks = load(PLUGIN / "clicks.json", "реплики (plugins/x2ai-avatar/gen-clicks.py)")
+    clicks = load(PLUGIN / "clicks.json", "реплики (clicks.json)")
     lines = load(PLUGIN / "lines.json", "реплики панели (plugins/x2ai-avatar/gen-lines.py)")
 
     for marker in ("__TALK_PLAN__", "__PACK_INDEX__", "__CLICKS__", "__LINES__"):

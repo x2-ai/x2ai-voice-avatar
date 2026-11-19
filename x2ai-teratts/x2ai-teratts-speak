@@ -23,14 +23,8 @@ fi
 
 export X2AI_TTS_TEXT="$text"
 
-"$PY" "$SEND" "$SOCK"
-rc=$?
-
-if [ "$rc" -eq 3 ]; then
-  # Сервера нет: поднимает ровно один клиент, остальные ждут появления сокета.
-  if mkdir "$LOCKD" 2>/dev/null; then
-    [ -S "$SOCK" ] && rm -f "$SOCK"
-    "$VENV" - "$VENV" "$DIR/server.py" "$LOG" <<'PY'
+start_server() {
+  "$VENV" - "$VENV" "$DIR/server.py" "$LOG" <<'PY'
 import subprocess, sys
 
 venv, srv, log = sys.argv[1:4]
@@ -45,16 +39,49 @@ with open(log, "ab") as fh:
         cwd=srv.rsplit("/", 1)[0],
     )
 PY
-    for _ in $(seq 1 120); do
-      [ -S "$SOCK" ] && break
-      sleep 0.5
-    done
+  # Сокет создаётся до загрузки модели (меньше секунды), поэтому долго ждать
+  # нечего: если за 10 с его нет, сервер не поднялся.
+  for _ in $(seq 1 40); do
+    [ -S "$SOCK" ] && break
+    sleep 0.25
+  done
+}
+
+wait_socket() {
+  for _ in $(seq 1 240); do
+    [ -S "$SOCK" ] && break
+    sleep 0.5
+  done
+}
+
+"$PY" "$SEND" "$SOCK"
+rc=$?
+
+if [ "$rc" -eq 3 ] || [ "$rc" -eq 4 ]; then
+  # 4 — сокет-мусор от умершего сервера: его можно удалить. 3 — файла нет
+  # вовсе; трогать чужой живой сокет нельзя, иначе сервер остаётся жив, но
+  # недоступен, и все следующие фразы теряются («already running» в логе).
+  [ "$rc" -eq 4 ] && rm -f "$SOCK"
+  owner=0
+  if mkdir "$LOCKD" 2>/dev/null; then
+    owner=1
+    start_server
     rmdir "$LOCKD" 2>/dev/null || true
   else
-    for _ in $(seq 1 240); do
-      [ -S "$SOCK" ] && break
-      sleep 0.5
+    wait_socket
+  fi
+  # Сервер мог быть жив, но с потерянным сокетом: новый не стартует из-за
+  # блокировки, а фразы уходят в пустоту. Снимаем недоступный процесс и
+  # поднимаем сервер заново.
+  if [ "$owner" -eq 1 ] && [ ! -S "$SOCK" ]; then
+    echo "$(date -u +%FT%TZ) stale server without socket, restart" >>"$LOG"
+    pkill -x x2ai-voice 2>/dev/null
+    for _ in $(seq 1 40); do
+      pgrep -x x2ai-voice >/dev/null || break
+      sleep 0.25
     done
+    rm -f "$SOCK"
+    start_server
   fi
   "$PY" "$SEND" "$SOCK"
   exit $?

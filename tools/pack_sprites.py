@@ -24,6 +24,8 @@ from pathlib import Path
 
 from PIL import Image
 
+import numpy as np
+
 ROOT = Path(__file__).resolve().parent.parent
 PACKS = ROOT / "packs"
 OUT = ROOT / "plugins" / "x2ai-avatar" / "sprites.json"
@@ -36,7 +38,18 @@ def uri(path: Path) -> str:
     img = Image.open(path).convert("RGBA")
     if img.height != HEIGHT:
         ratio = HEIGHT / img.height
-        img = img.resize((max(1, int(round(img.width * ratio))), HEIGHT), Image.LANCZOS)
+        size = (max(1, int(round(img.width * ratio))), HEIGHT)
+        # LANCZOS по обычной RGBA подмешивает RGB прозрачных пикселей и
+        # рисует светлый ореол по краю. Ресайзим с премультиплицированной
+        # альфой и возвращаем цвет обратно.
+        arr = np.asarray(img, dtype=np.float32)
+        alpha = arr[..., 3:4] / 255.0
+        arr[..., :3] *= alpha
+        img = Image.fromarray(np.clip(arr, 0, 255).astype(np.uint8)).resize(size, Image.LANCZOS)
+        arr = np.asarray(img, dtype=np.float32)
+        alpha = arr[..., 3:4] / 255.0
+        arr[..., :3] = np.where(alpha > 0, arr[..., :3] / np.maximum(alpha, 1e-6), 0)
+        img = Image.fromarray(np.clip(arr, 0, 255).astype(np.uint8))
     buf = io.BytesIO()
     # WebP q86: так кадры выглядели до всех экспериментов — мягче по краям,
     # без резкой пиксельной «лесенки». PNG-без-потерь, наоборот, проявлял её.

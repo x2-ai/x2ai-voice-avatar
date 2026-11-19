@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Отправка запроса озвучки в тёплый сервер teratts.
 
-Код выхода: 0 — озвучено, 1 — ошибка, 3 — сервер не запущен.
+Код выхода: 0 — озвучено, 1 — ошибка, 3 — сервер не запущен,
+4 — файл сокета есть, но слушателя нет (устаревший сокет).
 """
 
+import errno
 import json
 import os
 import socket
@@ -39,8 +41,11 @@ def main() -> int:
     sock.settimeout(wait)
     try:
         sock.connect(sock_path)
-    except OSError:
-        return 3
+    except OSError as exc:
+        # 3 — файла сокета нет (сервер не запущен), 4 — файл есть, но никто
+        # не слушает (сервер умер и оставил мусор). Это разные починки:
+        # в первом случае сокет трогать нельзя, во втором — надо удалить.
+        return 4 if exc.errno == errno.ECONNREFUSED else 3
     try:
         sock.sendall(payload)
         buf = b""
