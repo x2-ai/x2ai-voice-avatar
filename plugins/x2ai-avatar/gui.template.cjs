@@ -4044,6 +4044,7 @@ function createView(ctx) {
     px_x2ai_coder: "x2ai_coder",
     px_x2ai_programmer: "x2ai_programmer",
     px_x2ai_codergirl: "x2ai_codergirl",
+    px_x2ai_tsundere: "x2ai_tsundere",
   };
   // Голос персонажа: сначала индивидуальная настройка (localStorage), потом
   // общий файл моста, потом встроенное соответствие пиксельных id.
