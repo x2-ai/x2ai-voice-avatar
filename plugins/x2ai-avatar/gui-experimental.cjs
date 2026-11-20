@@ -22,38 +22,41 @@ const BRIDGE_URL = "http://127.0.0.1:47821";
 // манифест: какие паки есть и какие персонажи в них.
 const PACKS = {};
 const PACK_INDEX = {
- "anime": [
-  "fx_alien",
-  "fx_cat",
-  "fx_demoness",
-  "fx_ghost",
-  "fx_penguin",
-  "fx_robot",
-  "ru_f1",
-  "ru_f2",
-  "ru_m1",
-  "ru_m5"
+ "bit16": [
+  "px_ru_m1",
+  "px_x2ai_coder",
+  "px_x2ai_codergirl",
+  "px_x2ai_programmer"
  ],
- "pixel": [
+ "bit16night": [
   "px_fx_demoness",
   "px_fx_ghost",
   "px_fx_penguin",
   "px_fx_robot",
-  "px_ru_f1",
-  "px_ru_m1",
+  "px_x2ai_kotohaker"
+ ],
+ "bit16ninety": [
   "px_ru_m5",
   "px_x2ai_alkash",
   "px_x2ai_babka",
   "px_x2ai_bratok",
-  "px_x2ai_coder",
-  "px_x2ai_codergirl",
-  "px_x2ai_kotohaker",
   "px_x2ai_ment",
   "px_x2ai_narik",
   "px_x2ai_novyi_russkiy",
-  "px_x2ai_programmer",
   "px_x2ai_sosochka",
   "px_x2ai_telochka"
+ ],
+ "pixel": [
+  "px_ru_f1",
+  "px_x2ai_gakusei",
+  "px_x2ai_mahou",
+  "px_x2ai_neko",
+  "px_x2ai_ninja",
+  "px_x2ai_onime",
+  "px_x2ai_sakura",
+  "px_x2ai_samurai",
+  "px_x2ai_senpai",
+  "px_x2ai_tsundere"
  ]
 };
 // Виртуальный пак: все персонажи всех паков сразу. Включения и настройки
@@ -438,7 +441,7 @@ const CLICKS = {
    "text": "Оно само так вышло."
   },
   {
-   "text": "В проде не проверял, но должно."
+   "text": "В проде не проверял, но должно работать"
   },
   {
    "text": "Кофе кончился, я в печали."
@@ -1332,13 +1335,43 @@ const CHAR_NAMES = {
     px_x2ai_bratok: "Браток",
     px_x2ai_babka: "Бабка",
     px_x2ai_sosochka: "Сосочка",
-    px_x2ai_telochka: "Телочка",
+    px_x2ai_telochka: "Тёлочка",
     px_x2ai_narik: "Нарик",
     px_x2ai_novyi_russkiy: "Новый русский",
     px_x2ai_kotohaker: "Котохакер",
+    px_x2ai_tsundere: "Цундере",
+    px_x2ai_sakura: "Сакура",
+    px_x2ai_neko: "Нэко",
+    px_x2ai_gakusei: "Отличница",
+    px_x2ai_senpai: "Сенпай",
+    px_x2ai_samurai: "Самурай",
+    px_x2ai_mahou: "Махо-сёдзё",
+    px_x2ai_onime: "Онимэ",
+    px_x2ai_ninja: "Ниндзя",
+  },
+  bit16night: {
+    px_x2ai_kotohaker: "Котохакер",
+    px_fx_demoness: "Демонесса",
+    px_fx_robot: "Робот",
+    px_fx_penguin: "Инопланетянин",
+    px_fx_ghost: "Призрак",
+  },
+  bit16: {
+    px_ru_m1: "Программист",
     px_x2ai_coder: "Кодер",
     px_x2ai_programmer: "Программистка",
     px_x2ai_codergirl: "Кодерша",
+  },
+  bit16ninety: {
+    px_ru_m5: "Гопник",
+    px_x2ai_telochka: "Тёлочка",
+    px_x2ai_ment: "Мент",
+    px_x2ai_bratok: "Браток",
+    px_x2ai_sosochka: "Сосочка",
+    px_x2ai_novyi_russkiy: "Новый Русский",
+    px_x2ai_babka: "Бабка",
+    px_x2ai_alkash: "Алкаш",
+    px_x2ai_narik: "Нарик",
   },
 };
 
@@ -1478,6 +1511,15 @@ const CHAR_NAMES_EN = {
   px_x2ai_coder: "Coder",
   px_x2ai_programmer: "Programmer",
   px_x2ai_codergirl: "Code Girl",
+  px_x2ai_tsundere: "Tsundere",
+  px_x2ai_sakura: "Sakura",
+  px_x2ai_neko: "Neko",
+  px_x2ai_gakusei: "Honor Student",
+  px_x2ai_senpai: "Senpai",
+  px_x2ai_samurai: "Samurai",
+  px_x2ai_mahou: "Magical Girl",
+  px_x2ai_onime: "Onime",
+  px_x2ai_ninja: "Ninja",
 };
 const charName = (key) => {
   const k = packKey(key);
@@ -1577,16 +1619,14 @@ function voiceFor(sid) {
   return base;
 }
 
-// Паки: наши кадры и скачанные по лицензии. Пак может быть неполным —
-// отсутствующий персонаж берётся из базового пака "anime".
-const PACK_NAMES = { anime: "Аниме", pixel: "Пиксельарт", [ALL_PACK]: "Все доступные" };
+// Паки: только собственные арты. Отсутствующий персонаж ищется по всем пакам.
+const PACK_NAMES = { pixel: "16Bit - Аниме", bit16: "16Bit - Кодеры", bit16night: "16Bit - Ночная смена", bit16ninety: "16Bit - Девяностые", [ALL_PACK]: "Все доступные" };
 const PACK_KEY = "x2ai-avatar:pack";
 
 let activePack = "pixel";
 try {
   const saved = localStorage.getItem(PACK_KEY);
   if (saved === ALL_PACK || (saved && PACK_INDEX[saved])) activePack = saved;
-  else if (!PACK_INDEX.pixel || !PACK_INDEX.pixel.length) activePack = "anime";
 } catch (e) {}
 if (activePack !== ALL_PACK && !PACK_INDEX[activePack]) activePack = packList()[0] || "pixel";
 
@@ -1854,8 +1894,15 @@ function frameSetFor(voice) {
     }
   }
   const pack = PACKS[activePack] || {};
-  const base = PACKS.anime || {};
-  return pack[key] || base[key] || base.ru_f1 || EMPTY_FRAME;
+  if (pack[key]) return pack[key];
+  // Персонаж мог переехать в другой пак (pixel → bit16): ищем по всем пакам,
+  // иначе окно покажет чужой кадр из базового anime.
+  for (const name of packList()) {
+    const set = PACKS[name] && PACKS[name][key];
+    if (set && set.closed) return set;
+  }
+  const base = PACKS[packList()[0]] || {};
+  return base[key] || EMPTY_FRAME;
 }
 
 function frame(voice, state) {
@@ -1930,9 +1977,32 @@ function createView(ctx) {
   let voice = "ru_f1";
   img.src = frame(voice, "closed");
 
+  // Какой пак сейчас держит этого персонажа (null — уже текущий или «все доступные»).
+  const packForVoice = (v) => {
+    const key = packKey(v);
+    if (activePack === ALL_PACK) return null;
+    if ((PACK_INDEX[activePack] || []).includes(key)) return null;
+    for (const name of packList()) {
+      if (name === ALL_PACK) continue;
+      if ((PACK_INDEX[name] || []).includes(key)) return name;
+    }
+    return null;
+  };
+
   const apply = (next, force) => {
     if (!next || (next === voice && !force)) return;
     voice = next;
+    // Пак, в котором сейчас лежит персонаж: после переезда pixel → bit16
+    // сохранённый пак может его уже не содержать.
+    const owner = packForVoice(next);
+    if (owner) {
+      setPack(owner);
+      ensurePack(owner)
+        .then(() => {
+          if (voice === next) img.src = frame(voice, moodFrame());
+        })
+        .catch(() => {});
+    }
     img.src = frame(voice, moodFrame());
     moodFrameShown = moodFrame();
     if (moodState.value !== "awake") setMood(moodState.value, true);
@@ -5448,7 +5518,7 @@ function createView(ctx) {
   // До загрузки кадров картинка пустая: перерисовываем, когда пак пришёл.
   sideReady = true;
   applySide(voice);
-  Promise.all([ensurePack(activePack), ensurePack("anime")]).then(() => {
+  ensurePack(activePack).then(() => {
     apply(voice, true);
   });
 
