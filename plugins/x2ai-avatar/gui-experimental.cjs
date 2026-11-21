@@ -881,6 +881,23 @@ const CLICKS = {
   {
    "text": "Спокойно. Пойдём по шагам."
   }
+ ],
+ "px_x2ai_samurai": [
+  {
+   "text": "Я здесь."
+  },
+  {
+   "text": "Говори. Я слушаю."
+  },
+  {
+   "text": "Время терпит. Начинай."
+  },
+  {
+   "text": "Что тревожит тебя?"
+  },
+  {
+   "text": "Я готов. Веди."
+  }
  ]
 };
 // Партитура рта: чистые функции из plugins/x2ai-avatar/talk-plan.js — та же
@@ -1389,6 +1406,23 @@ const LINES = {
    {
     "text": "Покой придёт, когда дело завершено."
    }
+  ],
+  "x2ai_mahou": [
+   {
+    "text": "Сила дружбы — это не шутка! Смотри, как сияет!"
+   },
+   {
+    "text": "Луна, звёзды, свет — всё на нашей стороне!"
+   },
+   {
+    "text": "Не сдавайся! Настоящая магия — в твоём сердце!"
+   },
+   {
+    "text": "Я верю в тебя больше, чем в любое заклинание!"
+   },
+   {
+    "text": "Справедливость победит! Иначе и быть не может!"
+   }
   ]
  },
  "packs": {
@@ -1478,6 +1512,9 @@ const LINES = {
    },
    "x2ai_samurai": {
     "text": "Честь и сталь."
+   },
+   "x2ai_mahou": {
+    "text": "Магия!"
    }
   }
  },
@@ -4829,6 +4866,7 @@ function createView(ctx) {
         x2ai_tsundere: ["Дурак! Я же предупреждала.", "Вот и всё, да? Как всегда.", "Не смотри на меня так.", "Я не расстроилась! Просто обидно.", "Ладно… сейчас починю. Не думай, что ради тебя."],
         x2ai_gakusei: ["Ошибка. Так быть не должно.", "Я же говорила, проверяй.", "Это неаккуратно. Очень.", "Придётся переделать.", "Тихо. Сейчас разберём по пунктам."],
         x2ai_senpai: ["Хм. Так не должно было выйти.", "Ничего, бывает. Но давай аккуратнее.", "Спокойно. Сначала посмотрим логи.", "Я не злюсь. Просто неприятно.", "Ладно, откатим и попробуем иначе."],
+        x2ai_samurai: ["Недостойно. Но исправимо.", "Я разочарован. Спокойно.", "Ошибка. Примем как урок.", "Терпение. Сейчас всё исправим.", "Так быть не должно. Идём дальше."],
       },
       neutral: {
         m: ["Я так и знал.", "Ну что за дела.", "Я же говорил.", "Опять сломалось. Классика.", "Да сколько можно, а?"],
@@ -4861,6 +4899,7 @@ function createView(ctx) {
         x2ai_tsundere: ["Idiot! I warned you.", "Of course. As always.", "Don't look at me like that.", "I'm not upset! Just annoyed.", "Fine… I'll fix it. Not for you, though."],
         x2ai_gakusei: ["An error. That should not happen.", "I told you to check it.", "This is careless. Very.", "We will have to redo it.", "Quiet. Let us go through it point by point."],
         x2ai_senpai: ["Hmm. That should not have happened.", "It is fine, it happens. But let us be careful.", "Easy. Let us look at the logs first.", "I am not angry. Just unpleasant.", "All right, we roll back and try another way."],
+        x2ai_samurai: ["Unworthy. But fixable.", "I am disappointed. Calmly.", "A mistake. We take it as a lesson.", "Patience. We fix it now.", "This should not be. We move on."],
       },
       neutral: {
         m: ["I knew it.", "Come on, really.", "I told you so.", "Broken again. Classic.", "How much longer."],
@@ -5172,6 +5211,10 @@ function createView(ctx) {
           start: ["Так, спокойно разложим по шагам…", "Секунду, приберу мысли.", "Лишнее оставим в стороне.", "Не спеша, по порядку.", "Сейчас всё соберу в одно."],
           done: ["Готово. Дальше будет проще.", "Всё на месте. Продолжаем.", "Сложил, ничего важного не потерял.", "Чисто. Молодец, что подождал.", "Всё, можно двигаться дальше."],
         },
+        x2ai_samurai: {
+          start: ["Соберу мысли. Молча.", "Секунду. Отсекаю лишнее.", "Как клинок: только суть.", "Спокойно. Убираю шум.", "Немного терпения."],
+          done: ["Готово. Ясно и коротко.", "Всё лишнее отсечено.", "Чисто. Продолжим путь.", "Уложено. Ничего не забыто.", "Дело сделано."],
+        },
       },
       neutral: {
         m: {
@@ -5281,6 +5324,10 @@ function createView(ctx) {
         x2ai_senpai: {
           start: ["Right, let us take it step by step…", "One moment, clearing my head.", "The extras we leave aside.", "Slowly, in order.", "Let me gather it into one."],
           done: ["Done. It gets easier from here.", "Everything is in place. Let us continue.", "Packed it, nothing important lost.", "Clean. Good that you waited.", "There, we can move on."],
+        },
+        x2ai_samurai: {
+          start: ["I will gather my thoughts. In silence.", "One moment. Cutting away the rest.", "Like a blade: only the essence.", "Calmly. Clearing the noise.", "A little patience."],
+          done: ["Done. Clear and brief.", "All excess is cut away.", "Clean. We continue the path.", "Packed. Nothing forgotten.", "The deed is done."],
         },
       },
       neutral: {
@@ -5598,6 +5645,7 @@ function createView(ctx) {
     px_x2ai_gakusei: "x2ai_gakusei",
     px_x2ai_senpai: "x2ai_senpai",
     px_x2ai_samurai: "x2ai_samurai",
+    px_x2ai_mahou: "x2ai_mahou",
   };
   // Голос персонажа: сначала индивидуальная настройка (localStorage), потом
   // общий файл моста, потом встроенное соответствие пиксельных id.
