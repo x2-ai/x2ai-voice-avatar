@@ -898,6 +898,23 @@ const CLICKS = {
   {
    "text": "Я готов. Веди."
   }
+ ],
+ "px_x2ai_mahou": [
+  {
+   "text": "Я здесь! Готовность полная!"
+  },
+  {
+   "text": "Сила дружбы уже с нами!"
+  },
+  {
+   "text": "Говори, я слушаю очень внимательно!"
+  },
+  {
+   "text": "Свет на нашей стороне! Это точно!"
+  },
+  {
+   "text": "Вперёд! К справедливости!"
+  }
  ]
 };
 // Партитура рта: чистые функции из plugins/x2ai-avatar/talk-plan.js — та же
@@ -1423,6 +1440,23 @@ const LINES = {
    {
     "text": "Справедливость победит! Иначе и быть не может!"
    }
+  ],
+  "x2ai_onime": [
+   {
+    "text": "Смертные такие забавные. Всё куда-то спешат…"
+   },
+   {
+    "text": "Ты проживёшь меньше, чем я моргну. И всё равно стараешься. Похвально."
+   },
+   {
+    "text": "Ммм? Что, испугался рогов? Они не кусаются. Обычно."
+   },
+   {
+    "text": "Не суетись. У меня тысячи лет впереди, у тебя — нет."
+   },
+   {
+    "text": "Ладно, посижу с тобой. Только не надейся, что это из доброты."
+   }
   ]
  },
  "packs": {
@@ -1515,6 +1549,9 @@ const LINES = {
    },
    "x2ai_mahou": {
     "text": "Магия!"
+   },
+   "x2ai_onime": {
+    "text": "Смертный."
    }
   }
  },
@@ -4867,6 +4904,7 @@ function createView(ctx) {
         x2ai_gakusei: ["Ошибка. Так быть не должно.", "Я же говорила, проверяй.", "Это неаккуратно. Очень.", "Придётся переделать.", "Тихо. Сейчас разберём по пунктам."],
         x2ai_senpai: ["Хм. Так не должно было выйти.", "Ничего, бывает. Но давай аккуратнее.", "Спокойно. Сначала посмотрим логи.", "Я не злюсь. Просто неприятно.", "Ладно, откатим и попробуем иначе."],
         x2ai_samurai: ["Недостойно. Но исправимо.", "Я разочарован. Спокойно.", "Ошибка. Примем как урок.", "Терпение. Сейчас всё исправим.", "Так быть не должно. Идём дальше."],
+        x2ai_mahou: ["Нет-нет! Так нельзя!", "Свет, помоги мне!", "Зло не пройдёт!", "Я не сдамся! Слышишь?", "Соберись. Справедливость ждёт!"],
       },
       neutral: {
         m: ["Я так и знал.", "Ну что за дела.", "Я же говорил.", "Опять сломалось. Классика.", "Да сколько можно, а?"],
@@ -4900,6 +4938,7 @@ function createView(ctx) {
         x2ai_gakusei: ["An error. That should not happen.", "I told you to check it.", "This is careless. Very.", "We will have to redo it.", "Quiet. Let us go through it point by point."],
         x2ai_senpai: ["Hmm. That should not have happened.", "It is fine, it happens. But let us be careful.", "Easy. Let us look at the logs first.", "I am not angry. Just unpleasant.", "All right, we roll back and try another way."],
         x2ai_samurai: ["Unworthy. But fixable.", "I am disappointed. Calmly.", "A mistake. We take it as a lesson.", "Patience. We fix it now.", "This should not be. We move on."],
+        x2ai_mahou: ["No, no! This cannot be!", "Light, help me!", "Evil shall not pass!", "I will not give up! Hear me?", "Pull yourself together. Justice awaits!"],
       },
       neutral: {
         m: ["I knew it.", "Come on, really.", "I told you so.", "Broken again. Classic.", "How much longer."],
@@ -5215,6 +5254,10 @@ function createView(ctx) {
           start: ["Соберу мысли. Молча.", "Секунду. Отсекаю лишнее.", "Как клинок: только суть.", "Спокойно. Убираю шум.", "Немного терпения."],
           done: ["Готово. Ясно и коротко.", "Всё лишнее отсечено.", "Чисто. Продолжим путь.", "Уложено. Ничего не забыто.", "Дело сделано."],
         },
+        x2ai_mahou: {
+          start: ["Сейчас соберу мысли в луч!", "Секунду! Превращение контекста!", "Лишнее — в звёздную пыль!", "Сила концентрации, вперёд!", "Свет, помоги мне всё уложить!"],
+          done: ["Готово! Сияет как надо!", "Всё уложено! Справедливость восторжествовала!", "Чисто! Даже звёзды завидуют!", "Готово! Дружба победила!", "Всё на месте! Вперёд, к новым свершениям!"],
+        },
       },
       neutral: {
         m: {
@@ -5328,6 +5371,10 @@ function createView(ctx) {
         x2ai_samurai: {
           start: ["I will gather my thoughts. In silence.", "One moment. Cutting away the rest.", "Like a blade: only the essence.", "Calmly. Clearing the noise.", "A little patience."],
           done: ["Done. Clear and brief.", "All excess is cut away.", "Clean. We continue the path.", "Packed. Nothing forgotten.", "The deed is done."],
+        },
+        x2ai_mahou: {
+          start: ["Gathering my thoughts into a beam!", "One moment! Context transformation!", "The extra goes to stardust!", "Power of concentration, go!", "Light, help me pack it all!"],
+          done: ["Done! Shining as it should!", "All packed! Justice prevails!", "Clean! Even the stars are jealous!", "Done! Friendship wins!", "Everything in place! On to new deeds!"],
         },
       },
       neutral: {
@@ -5646,6 +5693,7 @@ function createView(ctx) {
     px_x2ai_senpai: "x2ai_senpai",
     px_x2ai_samurai: "x2ai_samurai",
     px_x2ai_mahou: "x2ai_mahou",
+    px_x2ai_onime: "x2ai_onime",
   };
   // Голос персонажа: сначала индивидуальная настройка (localStorage), потом
   // общий файл моста, потом встроенное соответствие пиксельных id.

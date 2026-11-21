@@ -55,7 +55,7 @@ const TERA_VOICES = [
   "x2ai_ment", "x2ai_alkash", "x2ai_bratok", "x2ai_babka", "x2ai_sosochka", "x2ai_telochka",
   "x2ai_narik", "x2ai_novyi_russkiy", "x2ai_kotohaker",
   "x2ai_coder", "x2ai_programmer", "x2ai_codergirl", "x2ai_sakura", "x2ai_neko", "x2ai_tsundere",
-  "x2ai_gakusei", "x2ai_senpai", "x2ai_samurai",
+  "x2ai_gakusei", "x2ai_senpai", "x2ai_samurai", "x2ai_mahou",
 ];
 
 // Характерные голоса говорят от лица своего персонажа.
