@@ -3330,6 +3330,7 @@ function createView(ctx) {
         x2ai_neko: ["Ня! Всё сломалось!", "Мур… мне это не нравится.", "Фыр. Нехорошо.", "Я расстроилась, ня.", "Ушки вянут… но я помогу."],
         x2ai_tsundere: ["Дурак! Я же предупреждала.", "Вот и всё, да? Как всегда.", "Не смотри на меня так.", "Я не расстроилась! Просто обидно.", "Ладно… сейчас починю. Не думай, что ради тебя."],
         x2ai_gakusei: ["Ошибка. Так быть не должно.", "Я же говорила, проверяй.", "Это неаккуратно. Очень.", "Придётся переделать.", "Тихо. Сейчас разберём по пунктам."],
+        x2ai_senpai: ["Хм. Так не должно было выйти.", "Ничего, бывает. Но давай аккуратнее.", "Спокойно. Сначала посмотрим логи.", "Я не злюсь. Просто неприятно.", "Ладно, откатим и попробуем иначе."],
       },
       neutral: {
         m: ["Я так и знал.", "Ну что за дела.", "Я же говорил.", "Опять сломалось. Классика.", "Да сколько можно, а?"],
@@ -3361,6 +3362,7 @@ function createView(ctx) {
         x2ai_neko: ["Nya! It broke!", "Mur… don't like it.", "Hmph. Not nice.", "I'm upset, nya.", "My ears droop… but I'll help."],
         x2ai_tsundere: ["Idiot! I warned you.", "Of course. As always.", "Don't look at me like that.", "I'm not upset! Just annoyed.", "Fine… I'll fix it. Not for you, though."],
         x2ai_gakusei: ["An error. That should not happen.", "I told you to check it.", "This is careless. Very.", "We will have to redo it.", "Quiet. Let us go through it point by point."],
+        x2ai_senpai: ["Hmm. That should not have happened.", "It is fine, it happens. But let us be careful.", "Easy. Let us look at the logs first.", "I am not angry. Just unpleasant.", "All right, we roll back and try another way."],
       },
       neutral: {
         m: ["I knew it.", "Come on, really.", "I told you so.", "Broken again. Classic.", "How much longer."],
@@ -3668,6 +3670,10 @@ function createView(ctx) {
           start: ["Так, разложим всё по пунктам…", "Секунду, структурирую.", "Лишнее — в черновик.", "Сейчас приведу мысли в порядок.", "Аккуратно, шаг за шагом."],
           done: ["Готово. Всё по полочкам.", "Уложила. Ничего не потеряно.", "Чисто и структурировано.", "Всё, можно продолжать по плану.", "Прибралась. Хвали меня."],
         },
+        x2ai_senpai: {
+          start: ["Так, спокойно разложим по шагам…", "Секунду, приберу мысли.", "Лишнее оставим в стороне.", "Не спеша, по порядку.", "Сейчас всё соберу в одно."],
+          done: ["Готово. Дальше будет проще.", "Всё на месте. Продолжаем.", "Сложил, ничего важного не потерял.", "Чисто. Молодец, что подождал.", "Всё, можно двигаться дальше."],
+        },
       },
       neutral: {
         m: {
@@ -3773,6 +3779,10 @@ function createView(ctx) {
         x2ai_gakusei: {
           start: ["Right, let us go point by point…", "One second, structuring it.", "The extra goes to the draft.", "Putting my thoughts in order now.", "Carefully, step by step."],
           done: ["Done. Everything in its place.", "Packed. Nothing lost.", "Clean and structured.", "There, we can continue per plan.", "Tidied up. Praise me."],
+        },
+        x2ai_senpai: {
+          start: ["Right, let us take it step by step…", "One moment, clearing my head.", "The extras we leave aside.", "Slowly, in order.", "Let me gather it into one."],
+          done: ["Done. It gets easier from here.", "Everything is in place. Let us continue.", "Packed it, nothing important lost.", "Clean. Good that you waited.", "There, we can move on."],
         },
       },
       neutral: {
@@ -4089,6 +4099,7 @@ function createView(ctx) {
     px_x2ai_neko: "x2ai_neko",
     px_x2ai_gakusei: "x2ai_gakusei",
     px_x2ai_senpai: "x2ai_senpai",
+    px_x2ai_samurai: "x2ai_samurai",
   };
   // Голос персонажа: сначала индивидуальная настройка (localStorage), потом
   // общий файл моста, потом встроенное соответствие пиксельных id.
