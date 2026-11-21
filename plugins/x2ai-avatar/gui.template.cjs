@@ -3327,6 +3327,8 @@ function createView(ctx) {
         x2ai_programmer: ["Ох, опять…", "Ну кто так пишет?", "Я же предупреждала.", "Спокойно. Сейчас починим.", "Костыли. Опять костыли."],
         x2ai_codergirl: ["Серьёзно?", "Кто трогал прод?", "Это уже стыд.", "Ладно, сейчас починю.", "Без паники. Но руки убрал."],
         x2ai_sakura: ["Ой… что-то пошло не так.", "Жаль, очень жаль.", "Не расстраивайся, нэ.", "Я расстроилась, но не сержусь.", "Давай попробуем ещё раз, хорошо?"],
+        x2ai_neko: ["Ня! Всё сломалось!", "Мур… мне это не нравится.", "Фыр. Нехорошо.", "Я расстроилась, ня.", "Ушки вянут… но я помогу."],
+        x2ai_tsundere: ["Дурак! Я же предупреждала.", "Вот и всё, да? Как всегда.", "Не смотри на меня так.", "Я не расстроилась! Просто обидно.", "Ладно… сейчас починю. Не думай, что ради тебя."],
       },
       neutral: {
         m: ["Я так и знал.", "Ну что за дела.", "Я же говорил.", "Опять сломалось. Классика.", "Да сколько можно, а?"],
@@ -3355,6 +3357,8 @@ function createView(ctx) {
         x2ai_programmer: ["Oh, not again…", "Who writes it like that?", "I warned you.", "Easy. We'll fix it.", "Spaghetti. Again."],
         x2ai_codergirl: ["Seriously?", "Who touched prod?", "This is embarrassing.", "Fine, I'll fix it.", "No panic. But hands off."],
         x2ai_sakura: ["Oh… something went wrong.", "That's a shame, truly.", "Don't be upset, ne.", "I'm sad, but not angry.", "Let's try once more, okay?"],
+        x2ai_neko: ["Nya! It broke!", "Mur… don't like it.", "Hmph. Not nice.", "I'm upset, nya.", "My ears droop… but I'll help."],
+        x2ai_tsundere: ["Idiot! I warned you.", "Of course. As always.", "Don't look at me like that.", "I'm not upset! Just annoyed.", "Fine… I'll fix it. Not for you, though."],
       },
       neutral: {
         m: ["I knew it.", "Come on, really.", "I told you so.", "Broken again. Classic.", "How much longer."],
@@ -3650,6 +3654,14 @@ function createView(ctx) {
           start: ["Сейчас я тихонько всё разложу…", "Погоди, соберу лепестки мыслей.", "Оставлю только важное, нэ.", "Не спеша, аккуратно…", "Уберу лишнее, как ветер."],
           done: ["Всё, стало легко.", "Готово, нэ.", "Сложила, ничего не потеряла.", "Чисто и спокойно.", "Всё уместилось."],
         },
+        x2ai_neko: {
+          start: ["Мур… сейчас всё сверну.", "Ня, подожди, собираю клубочек.", "Лишнее — под диван.", "Секунду, только хвост уберу.", "Мурр, сжимаю…"],
+          done: ["Ня! Всё уместилось.", "Готово, мур.", "Смотала в клубочек.", "Чисто. Можно спать.", "Всё, клубок на месте."],
+        },
+        x2ai_tsundere: {
+          start: ["Так, не смотри. Я просто уберусь.", "Секунду. Только не подглядывай.", "Лишнее — вон, и без вопросов.", "Я не для тебя это делаю, ясно?", "Хм. Сейчас всё сложу."],
+          done: ["Всё. И не благодари.", "Готово. Не то чтобы я старалась.", "Сложила. Хватит смотреть.", "Ну вот. Чисто.", "Всё, доволен? …Ладно, продолжай."],
+        },
       },
       neutral: {
         m: {
@@ -3743,6 +3755,14 @@ function createView(ctx) {
         x2ai_sakura: {
           start: ["Let me lay it all out gently…", "One moment, gathering the petals.", "Only the important things, ne.", "Slowly and carefully…", "Blowing the extra away like wind."],
           done: ["There, it feels light.", "Done, ne.", "Packed it, lost nothing.", "Clean and calm.", "Everything fits."],
+        },
+        x2ai_neko: {
+          start: ["Mur… winding it up now.", "Nya, hold on, gathering the yarn.", "All the extra under the sofa.", "One second, just moving my tail.", "Purr, compressing…"],
+          done: ["Nya! It all fits.", "Done, mur.", "Wound into a ball.", "Clean. Time to nap.", "All set, ball's in place."],
+        },
+        x2ai_tsundere: {
+          start: ["Right, don't look. I'm just tidying.", "One second. And no peeking.", "The extra goes out, no questions.", "I'm not doing this for you, got it?", "Hmph. Folding it now."],
+          done: ["Done. Don't thank me.", "Finished. Not that I tried.", "Packed. Stop staring.", "There. Clean.", "Done, happy? …Fine, continue."],
         },
       },
       neutral: {
@@ -4057,6 +4077,7 @@ function createView(ctx) {
     px_x2ai_tsundere: "x2ai_tsundere",
     px_x2ai_sakura: "x2ai_sakura",
     px_x2ai_neko: "x2ai_neko",
+    px_x2ai_gakusei: "x2ai_gakusei",
   };
   // Голос персонажа: сначала индивидуальная настройка (localStorage), потом
   // общий файл моста, потом встроенное соответствие пиксельных id.
