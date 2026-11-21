@@ -796,6 +796,23 @@ const CLICKS = {
   {
    "text": "Ладно, говори."
   }
+ ],
+ "px_x2ai_sakura": [
+  {
+   "text": "Я здесь, нэ."
+  },
+  {
+   "text": "Да, слушаю тебя."
+  },
+  {
+   "text": "Лепестки шепчут, что ты пришёл."
+  },
+  {
+   "text": "Не спеши, я никуда не тороплюсь."
+  },
+  {
+   "text": "Спасибо, что позвал."
+  }
  ]
 };
 // Партитура рта: чистые функции из plugins/x2ai-avatar/talk-plan.js — та же
@@ -1236,6 +1253,23 @@ const LINES = {
    {
     "text": "Устал? Тогда отдохни немного, я подожду."
    }
+  ],
+  "x2ai_neko": [
+   {
+    "text": "Ня! Ты пришёл — я как раз скучала, мур."
+   },
+   {
+    "text": "Мурр… почеши за ушком, ну пожалуйста."
+   },
+   {
+    "text": "Ой, что это там блестит? Пойдём посмотрим, ня!"
+   },
+   {
+    "text": "Ты такой внимательный… мур, мне это нравится."
+   },
+   {
+    "text": "Не уходи далеко, ладно? Я буду ждать, ня."
+   }
   ]
  },
  "packs": {
@@ -1313,6 +1347,9 @@ const LINES = {
    },
    "x2ai_sakura": {
     "text": "Пиксельарт!"
+   },
+   "x2ai_neko": {
+    "text": "Ня, пиксели!"
    }
   }
  },
@@ -4659,6 +4696,7 @@ function createView(ctx) {
         x2ai_coder: ["Опять легаси.", "Кто это писал?", "Тесты бы не помешали.", "Классика. Как в туториале.", "Даже не удивлён."],
         x2ai_programmer: ["Ох, опять…", "Ну кто так пишет?", "Я же предупреждала.", "Спокойно. Сейчас починим.", "Костыли. Опять костыли."],
         x2ai_codergirl: ["Серьёзно?", "Кто трогал прод?", "Это уже стыд.", "Ладно, сейчас починю.", "Без паники. Но руки убрал."],
+        x2ai_sakura: ["Ой… что-то пошло не так.", "Жаль, очень жаль.", "Не расстраивайся, нэ.", "Я расстроилась, но не сержусь.", "Давай попробуем ещё раз, хорошо?"],
       },
       neutral: {
         m: ["Я так и знал.", "Ну что за дела.", "Я же говорил.", "Опять сломалось. Классика.", "Да сколько можно, а?"],
@@ -4686,6 +4724,7 @@ function createView(ctx) {
         x2ai_coder: ["Legacy again.", "Who wrote this?", "Tests would help.", "Classic. Straight from a tutorial.", "Not even surprised."],
         x2ai_programmer: ["Oh, not again…", "Who writes it like that?", "I warned you.", "Easy. We'll fix it.", "Spaghetti. Again."],
         x2ai_codergirl: ["Seriously?", "Who touched prod?", "This is embarrassing.", "Fine, I'll fix it.", "No panic. But hands off."],
+        x2ai_sakura: ["Oh… something went wrong.", "That's a shame, truly.", "Don't be upset, ne.", "I'm sad, but not angry.", "Let's try once more, okay?"],
       },
       neutral: {
         m: ["I knew it.", "Come on, really.", "I told you so.", "Broken again. Classic.", "How much longer."],
@@ -4977,6 +5016,10 @@ function createView(ctx) {
           start: ["Сжимаю этот хаос…", "Убираю мусор из головы. Вашей.", "Секунду, соберу мысли в кучу.", "Лишнее — в архив.", "Сейчас всё упакую."],
           done: ["Готово. Красиво.", "Упаковала. Продолжаем.", "Чисто. Даже приятно.", "Всё влезло.", "Готово. Не благодарите."],
         },
+        x2ai_sakura: {
+          start: ["Сейчас я тихонько всё разложу…", "Погоди, соберу лепестки мыслей.", "Оставлю только важное, нэ.", "Не спеша, аккуратно…", "Уберу лишнее, как ветер."],
+          done: ["Всё, стало легко.", "Готово, нэ.", "Сложила, ничего не потеряла.", "Чисто и спокойно.", "Всё уместилось."],
+        },
       },
       neutral: {
         m: {
@@ -5066,6 +5109,10 @@ function createView(ctx) {
         x2ai_codergirl: {
           start: ["Compressing this chaos…", "Taking the trash out of your head.", "One sec, gathering my thoughts.", "The extras go to the archive.", "Packing it all up."],
           done: ["Done. Beautiful.", "Packed. Moving on.", "Clean. Almost pleasant.", "It all fits.", "Done. No thanks needed."],
+        },
+        x2ai_sakura: {
+          start: ["Let me lay it all out gently…", "One moment, gathering the petals.", "Only the important things, ne.", "Slowly and carefully…", "Blowing the extra away like wind."],
+          done: ["There, it feels light.", "Done, ne.", "Packed it, lost nothing.", "Clean and calm.", "Everything fits."],
         },
       },
       neutral: {
@@ -5379,6 +5426,7 @@ function createView(ctx) {
     px_x2ai_codergirl: "x2ai_codergirl",
     px_x2ai_tsundere: "x2ai_tsundere",
     px_x2ai_sakura: "x2ai_sakura",
+    px_x2ai_neko: "x2ai_neko",
   };
   // Голос персонажа: сначала индивидуальная настройка (localStorage), потом
   // общий файл моста, потом встроенное соответствие пиксельных id.
