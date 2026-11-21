@@ -2070,6 +2070,7 @@ const I18N = {
     "спит": "asleep",
     "дремлет": "dozing",
     "Показывать логи": "Show logs",
+    "Пак запоминается для каждого проекта": "Remember pack per project",
     "правила чата: выданы": "chat rules: sent",
     "правила чата: ещё нет": "chat rules: not yet",
     "правила чата: неизвестно": "chat rules: unknown",
@@ -2168,6 +2169,44 @@ function setPack(name) {
   try {
     localStorage.setItem(PACK_KEY, name);
   } catch (e) {}
+  rememberProjectPack(name);
+}
+
+// Пак по проекту: карта «каталог проекта → пак» в localStorage. Работает
+// только при включённой галочке «Пак запоминается для каждого проекта»,
+// поэтому обычный глобальный выбор пака остаётся как был.
+const PACK_MAP_KEY = "x2ai-avatar:pack-projects";
+let projectDir = "";
+function projectPackMap() {
+  try {
+    const raw = localStorage.getItem(PACK_MAP_KEY);
+    const map = raw ? JSON.parse(raw) : null;
+    return map && typeof map === "object" ? map : {};
+  } catch (e) {
+    return {};
+  }
+}
+function rememberProjectPack(name) {
+  if (!uiPrefs.packPerProject || !projectDir || !name) return;
+  try {
+    const map = projectPackMap();
+    if (map[projectDir] === name) return;
+    map[projectDir] = name;
+    localStorage.setItem(PACK_MAP_KEY, JSON.stringify(map));
+  } catch (e) {}
+}
+function restoreProjectPack() {
+  if (!uiPrefs.packPerProject) return Promise.resolve(false);
+  return bridge("/project")
+    .then((data) => {
+      projectDir = String((data && data.dir) || "");
+      const pack = projectDir ? projectPackMap()[projectDir] : "";
+      if (!pack || pack === activePack) return false;
+      if (pack !== ALL_PACK && !PACK_INDEX[pack]) return false;
+      setPack(pack);
+      return ensurePack(pack).then(() => true);
+    })
+    .catch(() => false);
 }
 
 // Ключ персонажа внутри пака: у пиксельного пака id с префиксом px_,
@@ -4343,6 +4382,31 @@ function createView(ctx) {
       refreshLog();
       box.append(logsRow, logBox);
 
+      // Пак по проекту: одна галочка вместо отдельного раздела — при
+      // включении пак запоминается за каталогом проекта и возвращается сам.
+      const packRow = document.createElement("label");
+      packRow.style.cssText = "display:flex;align-items:center;gap:8px;margin-top:10px;font-size:11px;cursor:pointer";
+      const packCb = document.createElement("input");
+      packCb.type = "checkbox";
+      packCb.checked = Boolean(uiPrefs.packPerProject);
+      packCb.style.cssText = "width:14px;height:14px;accent-color:#5b8dee;cursor:pointer";
+      packCb.onclick = (ev) => ev.stopPropagation();
+      const packLabel = document.createElement("span");
+      packLabel.textContent = t("Пак запоминается для каждого проекта");
+      packRow.append(packCb, packLabel);
+      packCb.onchange = () => {
+        saveUiPref({ packPerProject: packCb.checked });
+        if (packCb.checked) restoreProjectPack().then((ok) => { if (!ok) rememberProjectPack(activePack); });
+        else if (projectDir) {
+          try {
+            const map = projectPackMap();
+            delete map[projectDir];
+            localStorage.setItem(PACK_MAP_KEY, JSON.stringify(map));
+          } catch (e) {}
+        }
+      };
+      box.append(packRow);
+
       // Донат: список кошельков из DONATE. Пока он пуст — вежливая заглушка.
       const donHead = document.createElement("div");
       donHead.textContent = t("Поддержать автора");
@@ -5813,6 +5877,7 @@ function createView(ctx) {
 
   const applyForSession = (sid) => {
     const switched = Boolean(sid && currentSid && sid !== currentSid);
+    if (switched) restoreProjectPack();
     if (sid) currentSid = sid;
     // Смена чата: короткий наклон в сторону переключения.
     if (switched && charReact(voice)) {

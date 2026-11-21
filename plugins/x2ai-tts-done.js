@@ -1585,6 +1585,14 @@ function startBridge(ctx) {
   // присылает его в /stop и /say. Запрос со старым token отбрасывается —
   // иначе долетевшая реплика прошлого персонажа звучала его голосом.
   const sayTokens = new Map();
+  // Каталог проекта текущего окна: нужен, чтобы помнить пак по проекту.
+  const PROJECT_DIR = (() => {
+    const loc = (ctx && ctx.location) || {};
+    const raw = loc.directory || (loc.project && loc.project.directory) || (ctx && (ctx.directory || ctx.worktree));
+    if (typeof raw === "string") return raw;
+    const dir = raw && (raw.directory || raw.path || raw.cwd || raw.worktree);
+    return typeof dir === "string" ? dir : "";
+  })();
   const voicesFile = `${process.env.HOME}/.config/opencode/x2ai-voices.json`;
   const CORS = {
     "access-control-allow-origin": "*",
@@ -1794,6 +1802,10 @@ function startBridge(ctx) {
         }
       } catch (e) {}
       send(res, 200, { packs });
+      return;
+    }
+    if (req.method === "GET" && route === "/project") {
+      send(res, 200, { dir: PROJECT_DIR });
       return;
     }
     if (req.method === "GET" && route === "/pack") {
