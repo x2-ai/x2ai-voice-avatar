@@ -285,7 +285,7 @@ const projectPack = (dir) => {
 };
 const packKnown = (name) => name === ALL_PACK || Boolean(PACK_INDEX[name]);
 const hasProjectPack = (dir) => Boolean(projectPack(dir)) && packKnown(projectPack(dir));
-const PROJECTS_OFF = true; // временно выключено: окно падало на этой фиче
+const PROJECTS_OFF = !location.protocol.startsWith("http"); // в окне плагина фича роняет бандл (см. restoreProjectPack)
 const projectEnabled = (pack) => {
   if (PROJECTS_OFF) return null;
   if (!hasProjectPack(projectDir) || projectPack(projectDir) !== pack) return null;
@@ -299,7 +299,10 @@ const projectDirs = () => {
 };
 function restoreProjectPack() {
   if (PROJECTS_OFF) return Promise.resolve(false);
-  return bridge("/project")
+  // bridge объявлен ниже по коду (const), поэтому зовём его в микрозадаче:
+  // прямой вызов при инициализации падал с ReferenceError (TDZ).
+  return Promise.resolve()
+    .then(() => bridge("/project"))
     .then((data) => {
       projectDir = String((data && data.dir) || "");
       const name = projectPack(projectDir);
@@ -1792,7 +1795,8 @@ function createView(ctx) {
 
       // Проекты: у каждого каталога свой пак и свой набор доступных персонажей.
       // «По умолчанию» — общие настройки окна, «Все доступные» — виртуальный пак.
-      const prBody = collapsible("Проекты", "projects", box);
+      // В окне плагина фича выключена — секцию не показываем, иначе она пустая и мёртвая.
+      const prBody = PROJECTS_OFF ? document.createElement("div") : collapsible("Проекты", "projects", box);
       const prHint = document.createElement("div");
       prHint.style.cssText = "font-size:10px;line-height:1.5;opacity:.6;margin:2px 0 6px";
       prHint.textContent = t("Пак и персонажи для конкретного проекта. «По умолчанию» — общие настройки.");
@@ -1909,9 +1913,23 @@ function createView(ctx) {
         return wrap;
       };
 
-      const refreshProjects = () => {
+      const paintProjects = () => {
         prList.textContent = "";
         for (const dir of projectDirs()) prList.append(projectRow(dir));
+      };
+      const refreshProjects = () => {
+        // Каталог текущего проекта приходит с моста: без него список пуст,
+        // пока не отработает restoreProjectPack (а он может ещё не дойти).
+        paintProjects();
+        Promise.resolve()
+          .then(() => bridge("/project"))
+          .then((data) => {
+            const dir = String((data && data.dir) || "");
+            if (!dir) return;
+            projectDir = dir;
+            paintProjects();
+          })
+          .catch(() => {});
       };
       try {
         refreshProjects();
