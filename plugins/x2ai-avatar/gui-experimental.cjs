@@ -3446,9 +3446,8 @@ function createView(ctx) {
         headBtn.append(caret, title, mark);
 
         const body = document.createElement("div");
-        const isCurrent = dir === projectDir;
-        body.style.cssText = isCurrent ? "display:block;padding:0 7px 7px" : "display:none;padding:0 7px 7px";
-        if (isCurrent) caret.textContent = "▾";
+        // Всегда свёрнуто: раскрытие проекта не переживает закрытие настроек.
+        body.style.cssText = "display:none;padding:0 7px 7px";
         headBtn.onclick = (ev) => {
           ev.stopPropagation();
           const open = body.style.display === "none";
@@ -4653,6 +4652,9 @@ function createView(ctx) {
     } else if (!next && panelOpen) {
       panelClosedAt = Date.now();
       panelOpen = false;
+      // Список проектов закрывается вместе с настройками: при следующем
+      // заходе он снова свёрнут, а не раскрывает прошлый проект.
+      if (typeof sectionOpen === "object" && sectionOpen) sectionOpen.projects = false;
     }
     // Настройки перекрывают пузырь — при открытой панели он скрыт.
     paintBubble();
