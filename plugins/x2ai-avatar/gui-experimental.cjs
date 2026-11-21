@@ -1874,7 +1874,7 @@ const projectPack = (dir) => {
 };
 const packKnown = (name) => name === ALL_PACK || Boolean(PACK_INDEX[name]);
 const hasProjectPack = (dir) => Boolean(projectPack(dir)) && packKnown(projectPack(dir));
-const PROJECTS_OFF = !location.protocol.startsWith("http"); // в окне плагина фича роняет бандл (см. restoreProjectPack)
+const PROJECTS_OFF = false; // включено: bridge объявлен функцией и виден до инициализации // в окне плагина фича роняет бандл (см. restoreProjectPack)
 const projectEnabled = (pack) => {
   if (PROJECTS_OFF) return null;
   if (!hasProjectPack(projectDir) || projectPack(projectDir) !== pack) return null;
@@ -1885,6 +1885,37 @@ const projectDirs = () => {
   const list = Object.keys(projects);
   if (projectDir && !list.includes(projectDir)) list.unshift(projectDir);
   return list;
+};
+// Каталог чата: в разных сборках хост кладёт его в разные поля. Если каталога
+// нет — ключом становится сам чат, а подписью его заголовок: значения всё равно
+// запоминаются, просто не на весь проект, а на конкретный чат.
+const sessionDirOf = (s) => {
+  if (!s) return "";
+  const cands = [
+    s.directory, s.dir, s.path, s.cwd, s.worktree,
+    s.project && (s.project.directory || s.project.path),
+  ];
+  for (const c of cands) if (typeof c === "string" && c) return c;
+  return "";
+};
+const projectKeyOf = (s) => {
+  if (!s) return "";
+  const dir = sessionDirOf(s);
+  if (dir) return dir;
+  return s.id ? "chat:" + s.id : "";
+};
+const projectLabel = (dir) => {
+  if (!dir) return "";
+  if (dir.startsWith("chat:")) {
+    try {
+      const list = ctx && ctx.sessions && ctx.sessions.list ? ctx.sessions.list() : null;
+      const hit = (list || []).find((s) => s && s.id === dir.slice(5));
+      if (hit && hit.title) return String(hit.title);
+    } catch (e) {}
+    return t("этот чат");
+  }
+  const parts = dir.split("/").filter(Boolean);
+  return parts.length ? parts[parts.length - 1] : dir;
 };
 function restoreProjectPack() {
   if (PROJECTS_OFF) return Promise.resolve(false);
@@ -3384,8 +3415,8 @@ function createView(ctx) {
 
       // Проекты: у каждого каталога свой пак и свой набор доступных персонажей.
       // «По умолчанию» — общие настройки окна, «Все доступные» — виртуальный пак.
-      // В окне плагина фича выключена — секцию не показываем, иначе она пустая и мёртвая.
-      const prBody = PROJECTS_OFF ? document.createElement("div") : collapsible("Проекты", "projects", box);
+      // Текущий проект подставляется сам при переключении чата.
+      const prBody = collapsible("Проекты", "projects", box);
       const prHint = document.createElement("div");
       prHint.style.cssText = "font-size:10px;line-height:1.5;opacity:.6;margin:2px 0 6px";
       prHint.textContent = t("Пак и персонажи для конкретного проекта. «По умолчанию» — общие настройки.");
@@ -3404,7 +3435,7 @@ function createView(ctx) {
         const caret = document.createElement("span");
         caret.textContent = "▸";
         caret.style.cssText = "width:10px;opacity:.7";
-        const base = dir.split("/").filter(Boolean).pop() || dir;
+        const base = projectLabel(dir) + (dir === projectDir ? " · " + t("текущий") : "");
         const title = document.createElement("span");
         title.textContent = base;
         title.style.cssText = "flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap";
@@ -3415,7 +3446,9 @@ function createView(ctx) {
         headBtn.append(caret, title, mark);
 
         const body = document.createElement("div");
-        body.style.cssText = "display:none;padding:0 7px 7px";
+        const isCurrent = dir === projectDir;
+        body.style.cssText = isCurrent ? "display:block;padding:0 7px 7px" : "display:none;padding:0 7px 7px";
+        if (isCurrent) caret.textContent = "▾";
         headBtn.onclick = (ev) => {
           ev.stopPropagation();
           const open = body.style.display === "none";
@@ -4723,6 +4756,16 @@ function createView(ctx) {
         return;
       }
       lastSid = session.id;
+      const pkey = projectKeyOf(session);
+      if (pkey && pkey !== projectDir) {
+        projectDir = pkey;
+        const name = projectPack(projectDir);
+        if (name && packKnown(name) && name !== activePack) {
+          setPack(name, false);
+          ensurePack(name).then(() => {}).catch(() => {});
+        }
+        if (panelOpen) renderPanel();
+      }
       applyForSession(session.id);
       refreshVisibility();
     });
@@ -6051,12 +6094,14 @@ function createView(ctx) {
     }
   };
 
-  const bridge = (route, body) => {
+  // Объявление функцией, а не const: restoreProjectPack() зовёт мост ещё до
+  // этой строки, и стрелка в const давала TDZ-падение всего бандла.
+  function bridge(route, body) {
     const init = body
       ? { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }
       : undefined;
     return fetch(BRIDGE_URL + route, init).then((r) => r.json());
-  };
+  }
   bridgeReady = true;
   bridge("/speech", { lang: activeLang }).catch(() => {});
   // Голоса и готовые характеры нужны раньше, чем откроют их блок: без них
