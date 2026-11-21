@@ -421,7 +421,7 @@ const CLICKS = {
    "text": "Чё надо?"
   },
   {
-   "text": "Слышь, я на движухе."
+   "text": "Слышь, мелочь есть? Шучу!"
   },
   {
    "text": "Нормально всё, не парься."
@@ -515,7 +515,7 @@ const CLICKS = {
    "text": "Чё, опять бумажки?"
   },
   {
-   "text": "Не торопись, братан."
+   "text": "Не торопись"
   }
  ],
  "px_x2ai_alkash": [
@@ -577,7 +577,7 @@ const CLICKS = {
    "text": "Скучал без меня?"
   },
   {
-   "text": "Я вся внимание."
+   "text": "Я вся во внимании."
   },
   {
    "text": "Только по делу, милый."
@@ -961,7 +961,7 @@ const LINES = {
   ],
   "fx_demoness": [
    {
-    "text": "Не бойся, я только с виду."
+    "text": "Не бойся, я только с виду страшная."
    },
    {
     "text": "Я знаю, о чём ты думаешь."
@@ -1022,13 +1022,13 @@ const LINES = {
     "text": "Та-ак, кто тут шумит?"
    },
    {
-    "text": "Протокол составим, братан."
+    "text": "Протокол составим. Или не будем?"
    },
    {
     "text": "Не суетись, всё под контролем."
    },
    {
-    "text": "Понятия знаешь? Вот и хорошо."
+    "text": "Ща все порешаем"
    }
   ],
   "x2ai_alkash": [
@@ -1063,6 +1063,15 @@ const LINES = {
    },
    {
     "text": "Говори быстро, я занят."
+   },
+   {
+    "text": "Вилку в глаз или..?"
+   },
+   {
+    "text": "Если петуха сгенерировать в нано-банана, как кормить его будешь?"
+   },
+   {
+    "text": "Вечер в хату"
    }
   ],
   "x2ai_babka": [
@@ -1093,7 +1102,7 @@ const LINES = {
     "text": "Всё имеет цену, милый."
    },
    {
-    "text": "Ты не думай, я не дёшево."
+    "text": "Я всё сделаю, как ты скажешь"
    },
    {
     "text": "Котик, а деньги у тебя есть?"
@@ -1101,7 +1110,7 @@ const LINES = {
   ],
   "x2ai_telochka": [
    {
-    "text": "Ну наконец-то, прикинь."
+    "text": "Ну наконец-то."
    },
    {
     "text": "Я тут вообще-то скучала."
@@ -1127,7 +1136,7 @@ const LINES = {
     "text": "Ну это… короче, да."
    },
    {
-    "text": "Тихо, у меня голова."
+    "text": "Тихо, у меня голова… Есть чо?"
    },
    {
     "text": "Ты только не шуми, ага."
@@ -1147,7 +1156,7 @@ const LINES = {
     "text": "По понятиям, братан."
    },
    {
-    "text": "Деньги — не проблема."
+    "text": "Ща всё порешаем"
    }
   ],
   "x2ai_kotohaker": [
@@ -1209,6 +1218,23 @@ const LINES = {
    },
    {
     "text": "Ладно, покажу как надо. Смотри внимательно."
+   }
+  ],
+  "x2ai_sakura": [
+   {
+    "text": "Ммм, как хорошо, что ты рядом, нэ."
+   },
+   {
+    "text": "Смотри, лепестки летят… красиво, правда?"
+   },
+   {
+    "text": "Спасибо, что помогаешь мне. Я это очень ценю."
+   },
+   {
+    "text": "Давай сделаем это вместе, не спеша, нэ."
+   },
+   {
+    "text": "Устал? Тогда отдохни немного, я подожду."
    }
   ]
  },
@@ -1283,6 +1309,9 @@ const LINES = {
     "text": "Пиксельарт!"
    },
    "x2ai_tsundere": {
+    "text": "Пиксельарт!"
+   },
+   "x2ai_sakura": {
     "text": "Пиксельарт!"
    }
   }
@@ -4620,7 +4649,7 @@ function createView(ctx) {
         fx_ghost: ["Не надо было.", "Я расстроена… очень.", "Ты слышишь этот скрип?", "Зря ты так.", "Я запомню. Я всё помню."],
         x2ai_ment: ["Ну ё-моё, опять.", "Ты чё, не по-хорошему?", "Да я ж по-человечески просил.", "Слышь, ты нарушаешь.", "Опять двадцать пять, ёлки."],
         x2ai_alkash: ["Эх, опять…", "Ну вот, всю малину испортили.", "Да ты чё, брат…", "Вот же ж, а я только успокоился.", "Ох, ёлки-моталки."],
-        x2ai_bratok: ["Да ты чё, братан?!", "Э, ты чё делаешь?", "Ну это ваще беспредел.", "Слышь, аккуратнее.", "Да я тебя… ладно, спокойно."],
+        x2ai_bratok: ["Да ты чё, в натуре?!", "Э, чё за шляпа?", "Ну это ваще беспредел.", "Слышь, аккуратнее.", "Да я тебя… ладно, спокойно."],
         x2ai_babka: ["Да что ты говоришь.", "Ох, горе с тобой.", "Вот у нас во дворе такого не было.", "Тьфу, безрукий.", "Да я тебя ещё щами кормила бы…"],
         x2ai_sosochka: ["Ну и что это было, зайка?", "Милый, ты серьёзно?", "Опять ты всё сломал.", "За такое доплачивать надо.", "Я так и думала, честно."],
         x2ai_telochka: ["Фу, бред какой.", "Ну капец вообще.", "Чо, ты серьёзно?", "Это что сейчас было?", "Я аж растерялась."],
@@ -4647,7 +4676,7 @@ function createView(ctx) {
         fx_ghost: ["Shouldn't have done that.", "I'm upset… very.", "Do you hear that creak?", "You shouldn't have.", "I'll remember. I remember everything."],
         x2ai_ment: ["Not again, damn it.", "We can do this the easy way.", "I asked you nicely.", "You're in violation, friend.", "Oh, for heaven's sake."],
         x2ai_alkash: ["Ah, not again…", "There goes the mood.", "Come on, brother…", "Just when I settled down.", "Oh, for crying out loud."],
-        x2ai_bratok: ["What are you doing, bro?!", "Hey, easy there.", "That's out of line, man.", "Watch it, friend.", "I ought to… fine, calm down."],
+        x2ai_bratok: ["Are you for real?!", "Hey, what's this mess?", "That's out of line, man.", "Watch it, friend.", "I ought to… fine, calm down."],
         x2ai_babka: ["Oh, listen to you.", "What a burden you are.", "We never had this in my day.", "Useless, honestly.", "I'd have fed you soup, you know."],
         x2ai_sosochka: ["And what was that, sweetie?", "Seriously, darling?", "You broke it again.", "That costs extra, you know.", "I knew it, honestly."],
         x2ai_telochka: ["Ew, so cringe.", "Ugh, seriously?", "What was that even?", "I\u2019m literally lost.", "Total mess, babe."],
@@ -4900,10 +4929,6 @@ function createView(ctx) {
           start: ["Собираю мысли в туман…", "Сейчас лишнее растворится…", "Тише… я складываю.", "Развею всё ненужное.", "Погоди, я в тени."],
           done: ["Всё. Только важное осталось.", "Растворила лишнее.", "Готово… тихо.", "Всё уместилось в тень.", "Я закончила. Слышишь эхо?"],
         },
-        fx_ghost: {
-          start: ["Gathering thoughts into mist…", "Letting the extra fade…", "Quiet… I'm folding it.", "I'll scatter what's unnecessary.", "Wait, I'm in the shadows."],
-          done: ["There. Only what matters remains.", "The extra has dissolved.", "Done… quietly.", "It all fits in the shadow.", "I'm done. Hear the echo?"],
-        },
         x2ai_ment: {
           start: ["Ну чё, сожмём по-тихому…", "Погоди, разложу бумажки.", "Так, всё лишнее — в урну.", "Убираю показания, оставляю суть.", "Сейчас всё по папочкам."],
           done: ["Всё, подшито.", "Готово, дело закрыто.", "Утрамбовал. Никто не видел.", "Всё, чисто, как в отделении.", "Подписал и в сейф."],
@@ -4913,8 +4938,8 @@ function createView(ctx) {
           done: ["Всё, вроде уложил.", "Ну вот, теперь ясно.", "Утрамбовал, вроде ничего не забыл.", "Готово. А что было-то?", "Всё, брат, по полочкам."],
         },
         x2ai_bratok: {
-          start: ["Ща, братан, всё по-быстрому.", "Погоди, раскидаю по понятиям.", "Так, лишнее — в сторону.", "Секунду, соберу в кучу.", "Сжимаю. Не лезь."],
-          done: ["Всё, уложил, братан.", "Готово, по-братски.", "Утрамбовал. Ничё не потерял.", "Всё, чисто, как в падике.", "Готово. Погнали дальше."],
+          start: ["Ща, втрамбую всё по-быстрому.", "Погоди, раскидаю по понятиям.", "Так, всё лишнее — за борт.", "Обожди! Соберу в кучу.", "Сжимаю. Не лезь."],
+          done: ["Всё, уложил, в натуре.", "Готово!", "Утрамбовал. Ничё не потерял.", "Всё, вычищено, как после шмона.", "Готово. Погнали дальше."],
         },
         x2ai_babka: {
           start: ["Так, приберусь тут.", "Сейчас всё по местам разложу.", "Ох, намусорили-то.", "Дай-ка, я лучше знаю.", "Так, лишнее — на помойку."],
@@ -4929,7 +4954,7 @@ function createView(ctx) {
           done: ["Всё, готово, красота.", "Уложила. Даже приятно.", "Готово, все чотенько.", "Всё влезло, вообще легко.", "Капец, как чисто."],
         },
         x2ai_narik: {
-          start: ["Ну это… сейчас соберу.", "Погоди, я подумаю…", "Так, лишнее — в сторону.", "Ща, только соберусь.", "Как бы это… сжать."],
+          start: ["Ну это… сейчас соберу.", "Погоди, я подумаю…", "Бутор весь выкидываем.", "Ща, только соберусь.", "Как бы это… сжать."],
           done: ["Всё, уложил… вроде.", "Готово. Кажется.", "Ну вот, чисто.", "Утрамбовал, как смог.", "Всё, мысли на месте."],
         },
         x2ai_novyi_russkiy: {
@@ -4990,6 +5015,10 @@ function createView(ctx) {
           start: ["Folding your thoughts.", "One moment. Sorting it out.", "Let me compress this into something decent.", "Taking out the trash. From your head.", "The extras go into the void."],
           done: ["Compact. Moving on.", "Done. Almost pleasant.", "Packed. No thanks needed.", "Clean. Like hell after cleaning.", "There. Easier to breathe."],
         },
+        fx_ghost: {
+          start: ["Gathering thoughts into mist…", "Letting the extra fade…", "Quiet… I'm folding it.", "I'll scatter what's unnecessary.", "Wait, I'm in the shadows."],
+          done: ["There. Only what matters remains.", "The extra has dissolved.", "Done… quietly.", "It all fits in the shadow.", "I'm done. Hear the echo?"],
+        },
         x2ai_ment: {
           start: ["Right, let's pack this quietly…", "Hold on, sorting the paperwork.", "Everything extra goes in the bin.", "Cutting the testimony to the point.", "Filing it all, folder by folder."],
           done: ["All stapled.", "Done, case closed.", "Packed. Nobody saw a thing.", "Clean as the precinct.", "Signed and in the safe."],
@@ -4999,8 +5028,8 @@ function createView(ctx) {
           done: ["There, I think it's packed.", "Right, now it's clear.", "Packed it, hope nothing's lost.", "Done. What was it again?", "All set, brother, on the shelves."],
         },
         x2ai_bratok: {
-          start: ["Hold on, bro, quick and clean.", "One sec, sorting it the way we do.", "Right, the extras go aside.", "One moment, gathering it up.", "Compressing. Don't touch."],
-          done: ["Packed, bro.", "Done, brother-style.", "Packed it. Lost nothing.", "All clean, like the yard.", "Done. Let's move on."],
+          start: ["Right, stuffing it in, quick.", "One sec, sorting it the way we do.", "Right, all the extras overboard.", "Hold on! Gathering it up.", "Compressing. Don't touch."],
+          done: ["All packed, for real.", "Done!", "Packed it. Lost nothing.", "All cleared out, like after a shakedown.", "Done. Let's move on."],
         },
         x2ai_babka: {
           start: ["Right, let me tidy up here.", "Putting everything in its place.", "Oh, what a mess you've made.", "Let me do it, I know better.", "The extras go in the bin."],
@@ -5015,7 +5044,7 @@ function createView(ctx) {
           done: ["There, done. Pretty.", "Packed. Even nice.", "Done, babe.", "It all fits, so easy.", "So clean, honestly."],
         },
         x2ai_narik: {
-          start: ["Uh… let me gather it.", "Hold on, I'm thinking…", "Right, extras aside.", "Just a sec, let me focus.", "How do I… compress this."],
+          start: ["Uh… let me gather it.", "Hold on, I'm thinking…", "All the junk goes out.", "Just a sec, let me focus.", "How do I… compress this."],
           done: ["There, packed… I think.", "Done. I guess.", "Right, clean.", "Squeezed it as best I could.", "Okay, thoughts are in place."],
         },
         x2ai_novyi_russkiy: {
@@ -5349,6 +5378,7 @@ function createView(ctx) {
     px_x2ai_programmer: "x2ai_programmer",
     px_x2ai_codergirl: "x2ai_codergirl",
     px_x2ai_tsundere: "x2ai_tsundere",
+    px_x2ai_sakura: "x2ai_sakura",
   };
   // Голос персонажа: сначала индивидуальная настройка (localStorage), потом
   // общий файл моста, потом встроенное соответствие пиксельных id.
