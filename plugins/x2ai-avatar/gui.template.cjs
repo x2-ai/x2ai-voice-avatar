@@ -264,6 +264,51 @@ const speedEmotion = (engine) => {
   return "";
 };
 
+// Пак и персонажи по проектам: { [каталог]: { pack, enabled: { [пак]: [id] } } }.
+// pack === "" — «по умолчанию»: берутся глобальные настройки.
+const PROJECTS_KEY = "x2ai-avatar:projects";
+let projects = {};
+try {
+  const raw = JSON.parse(localStorage.getItem(PROJECTS_KEY) || "{}");
+  if (raw && typeof raw === "object") projects = raw;
+} catch (e) {}
+let projectDir = "";
+const saveProjects = () => {
+  try {
+    localStorage.setItem(PROJECTS_KEY, JSON.stringify(projects));
+  } catch (e) {}
+};
+const projectEntry = (dir) => (dir && projects[dir]) || {};
+const projectPack = (dir) => {
+  const value = projectEntry(dir).pack;
+  return typeof value === "string" ? value : "";
+};
+const packKnown = (name) => name === ALL_PACK || Boolean(PACK_INDEX[name]);
+const hasProjectPack = (dir) => Boolean(projectPack(dir)) && packKnown(projectPack(dir));
+const PROJECTS_OFF = true; // временно выключено: окно падало на этой фиче
+const projectEnabled = (pack) => {
+  if (PROJECTS_OFF) return null;
+  if (!hasProjectPack(projectDir) || projectPack(projectDir) !== pack) return null;
+  const list = projectEntry(projectDir).enabled && projectEntry(projectDir).enabled[pack];
+  return Array.isArray(list) ? list : null;
+};
+const projectDirs = () => {
+  const list = Object.keys(projects);
+  if (projectDir && !list.includes(projectDir)) list.unshift(projectDir);
+  return list;
+};
+function restoreProjectPack() {
+  if (PROJECTS_OFF) return Promise.resolve(false);
+  return bridge("/project")
+    .then((data) => {
+      projectDir = String((data && data.dir) || "");
+      const name = projectPack(projectDir);
+      if (!name || !packKnown(name) || name === activePack) return false;
+      setPack(name, false);
+      return ensurePack(name).then(() => true);
+    })
+    .catch(() => false);
+}
 // Какие персонажи пака доступны: для новых чатов и для кнопки смены.
 const ENABLED_KEY = "x2ai-avatar:enabled";
 let enabledMap = {};
@@ -274,7 +319,7 @@ try {
 const enabledChars = (pack) => {
   const name = pack || activePack;
   const all = packVoices(name);
-  const saved = enabledMap[name];
+  const saved = projectEnabled(name) || enabledMap[name];
   if (!Array.isArray(saved)) return all;
   const list = all.filter((key) => saved.includes(key));
   // Пустой список оставил бы новые чаты без персонажа — тогда доступны все.
@@ -286,6 +331,13 @@ const setCharEnabled = (key, on) => {
   const cur = enabledChars();
   const next = all.filter((k) => (on ? cur.includes(k) || k === key : cur.includes(k) && k !== key));
   if (!next.length) return false;
+  if (hasProjectPack(projectDir) && projectPack(projectDir) === activePack) {
+    const entry = projects[projectDir] || (projects[projectDir] = { pack: activePack, enabled: {} });
+    entry.enabled = entry.enabled || {};
+    entry.enabled[activePack] = next;
+    saveProjects();
+    return true;
+  }
   enabledMap[activePack] = next;
   try {
     localStorage.setItem(ENABLED_KEY, JSON.stringify(enabledMap));
@@ -481,7 +533,11 @@ const I18N = {
     "спит": "asleep",
     "дремлет": "dozing",
     "Показывать логи": "Show logs",
-    "Пак запоминается для каждого проекта": "Remember pack per project",
+    "Проекты": "Projects",
+    "по умолчанию": "default",
+    "По умолчанию": "Default",
+    "Пак и персонажи для конкретного проекта. «По умолчанию» — общие настройки.":
+      "Pack and characters for this project. \"Default\" uses the global settings.",
     "правила чата: выданы": "chat rules: sent",
     "правила чата: ещё нет": "chat rules: not yet",
     "правила чата: неизвестно": "chat rules: unknown",
@@ -574,50 +630,13 @@ function packVoices(name) {
   return list.filter((voice) => !pack[voice] || (pack[voice] && pack[voice].closed));
 }
 
-function setPack(name) {
+function setPack(name, remember = true) {
   if (name !== ALL_PACK && !PACK_INDEX[name]) return;
   activePack = name;
+  if (!remember) return;
   try {
     localStorage.setItem(PACK_KEY, name);
   } catch (e) {}
-  rememberProjectPack(name);
-}
-
-// Пак по проекту: карта «каталог проекта → пак» в localStorage. Работает
-// только при включённой галочке «Пак запоминается для каждого проекта»,
-// поэтому обычный глобальный выбор пака остаётся как был.
-const PACK_MAP_KEY = "x2ai-avatar:pack-projects";
-let projectDir = "";
-function projectPackMap() {
-  try {
-    const raw = localStorage.getItem(PACK_MAP_KEY);
-    const map = raw ? JSON.parse(raw) : null;
-    return map && typeof map === "object" ? map : {};
-  } catch (e) {
-    return {};
-  }
-}
-function rememberProjectPack(name) {
-  if (!uiPrefs.packPerProject || !projectDir || !name) return;
-  try {
-    const map = projectPackMap();
-    if (map[projectDir] === name) return;
-    map[projectDir] = name;
-    localStorage.setItem(PACK_MAP_KEY, JSON.stringify(map));
-  } catch (e) {}
-}
-function restoreProjectPack() {
-  if (!uiPrefs.packPerProject) return Promise.resolve(false);
-  return bridge("/project")
-    .then((data) => {
-      projectDir = String((data && data.dir) || "");
-      const pack = projectDir ? projectPackMap()[projectDir] : "";
-      if (!pack || pack === activePack) return false;
-      if (pack !== ALL_PACK && !PACK_INDEX[pack]) return false;
-      setPack(pack);
-      return ensurePack(pack).then(() => true);
-    })
-    .catch(() => false);
 }
 
 // Ключ персонажа внутри пака: у пиксельного пака id с префиксом px_,
@@ -1770,6 +1789,135 @@ function createView(ctx) {
       }
       box.appendChild(list);
       hint("Галочка — персонаж доступен в новых чатах и при смене. Снятая — уже выбранного не убирает.", box);
+
+      // Проекты: у каждого каталога свой пак и свой набор доступных персонажей.
+      // «По умолчанию» — общие настройки окна, «Все доступные» — виртуальный пак.
+      const prBody = collapsible("Проекты", "projects", box);
+      const prHint = document.createElement("div");
+      prHint.style.cssText = "font-size:10px;line-height:1.5;opacity:.6;margin:2px 0 6px";
+      prHint.textContent = t("Пак и персонажи для конкретного проекта. «По умолчанию» — общие настройки.");
+      prBody.append(prHint);
+      const prList = document.createElement("div");
+      prList.style.cssText = "display:flex;flex-direction:column;gap:4px;max-height:260px;overflow-y:auto";
+      prBody.append(prList);
+
+      const projectRow = (dir) => {
+        const entry = projects[dir] || (projects[dir] = {});
+        const wrap = document.createElement("div");
+        wrap.style.cssText = "border:1px solid rgba(255,255,255,.08);border-radius:7px;background:rgba(255,255,255,.03)";
+        const headBtn = document.createElement("button");
+        headBtn.type = "button";
+        headBtn.style.cssText = "display:flex;align-items:center;gap:6px;box-sizing:border-box;width:100%;padding:4px 7px;border:none;background:transparent;color:inherit;font:inherit;font-size:11px;text-align:left;cursor:pointer";
+        const caret = document.createElement("span");
+        caret.textContent = "▸";
+        caret.style.cssText = "width:10px;opacity:.7";
+        const base = dir.split("/").filter(Boolean).pop() || dir;
+        const title = document.createElement("span");
+        title.textContent = base;
+        title.style.cssText = "flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap";
+        const mark = document.createElement("span");
+        const chosen = projectPack(dir);
+        mark.textContent = chosen ? (PACK_NAMES[chosen] || chosen) : t("по умолчанию");
+        mark.style.cssText = "font-size:10px;opacity:.6;flex:0 0 auto";
+        headBtn.append(caret, title, mark);
+
+        const body = document.createElement("div");
+        body.style.cssText = "display:none;padding:0 7px 7px";
+        headBtn.onclick = (ev) => {
+          ev.stopPropagation();
+          const open = body.style.display === "none";
+          body.style.display = open ? "block" : "none";
+          caret.textContent = open ? "▾" : "▸";
+        };
+
+        const sel = document.createElement("select");
+        sel.style.cssText = "box-sizing:border-box;width:100%;margin:2px 0 5px;padding:3px 6px;border-radius:6px;border:1px solid rgba(255,255,255,.16);background:#23262c;color:inherit;font:inherit;font-size:11px";
+        const add = (value, label) => {
+          const opt = document.createElement("option");
+          opt.value = value;
+          opt.textContent = label;
+          sel.append(opt);
+        };
+        add("", t("По умолчанию"));
+        add(ALL_PACK, t("Все доступные"));
+        for (const name of packList()) add(name, PACK_NAMES[name] || name);
+        sel.value = chosen;
+        body.append(sel);
+
+        const charsBox = document.createElement("div");
+        charsBox.style.cssText = "display:flex;flex-direction:column;gap:3px;max-height:170px;overflow-y:auto";
+        body.append(charsBox);
+
+        const fillChars = () => {
+          charsBox.textContent = "";
+          const name = projectPack(dir);
+          if (!name || !packKnown(name)) return;
+          const all = packVoices(name);
+          const saved = entry.enabled && Array.isArray(entry.enabled[name]) ? entry.enabled[name] : null;
+          for (const key of all) {
+            const row = document.createElement("label");
+            row.style.cssText = "display:flex;align-items:center;gap:6px;padding:2px 4px;border-radius:6px;background:rgba(255,255,255,.03);font-size:11px;cursor:pointer";
+            const cb = document.createElement("input");
+            cb.type = "checkbox";
+            cb.checked = saved ? saved.includes(key) : true;
+            cb.style.cssText = "width:13px;height:13px;flex:0 0 13px;margin:0;accent-color:#5b8dee;cursor:pointer";
+            cb.onchange = () => {
+              const cur = entry.enabled && Array.isArray(entry.enabled[name]) ? entry.enabled[name].slice() : all.slice();
+              const next = all.filter((k) => (cb.checked ? cur.includes(k) || k === key : cur.includes(k) && k !== key));
+              if (!next.length) {
+                cb.checked = true;
+                return;
+              }
+              entry.enabled = entry.enabled || {};
+              entry.enabled[name] = next;
+              saveProjects();
+              if (dir === projectDir && name === activePack) renderPanel();
+            };
+            const text = document.createElement("span");
+            text.textContent = charName(key);
+            text.style.cssText = "flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap";
+            row.append(cb, text);
+            charsBox.append(row);
+          }
+        };
+        fillChars();
+
+        sel.onchange = () => {
+          entry.pack = sel.value;
+          saveProjects();
+          mark.textContent = entry.pack ? (PACK_NAMES[entry.pack] || entry.pack) : t("по умолчанию");
+          fillChars();
+          if (dir !== projectDir) return;
+          if (entry.pack) {
+            setPack(entry.pack, false);
+            ensurePack(entry.pack).then(() => renderPanel());
+          } else {
+            let globalPack = "";
+            try {
+              globalPack = localStorage.getItem(PACK_KEY) || "";
+            } catch (e) {}
+            if (globalPack && packKnown(globalPack)) {
+              setPack(globalPack, true);
+              ensurePack(globalPack).then(() => renderPanel());
+            } else {
+              renderPanel();
+            }
+          }
+        };
+
+        wrap.append(headBtn, body);
+        return wrap;
+      };
+
+      const refreshProjects = () => {
+        prList.textContent = "";
+        for (const dir of projectDirs()) prList.append(projectRow(dir));
+      };
+      try {
+        refreshProjects();
+      } catch (e) {
+        console.warn("x2ai: список проектов", e);
+      }
     } else if (view.name === "char") {
       const key = view.key;
       head(charName(key), { name: "chars" });
@@ -2793,30 +2941,6 @@ function createView(ctx) {
       refreshLog();
       box.append(logsRow, logBox);
 
-      // Пак по проекту: одна галочка вместо отдельного раздела — при
-      // включении пак запоминается за каталогом проекта и возвращается сам.
-      const packRow = document.createElement("label");
-      packRow.style.cssText = "display:flex;align-items:center;gap:8px;margin-top:10px;font-size:11px;cursor:pointer";
-      const packCb = document.createElement("input");
-      packCb.type = "checkbox";
-      packCb.checked = Boolean(uiPrefs.packPerProject);
-      packCb.style.cssText = "width:14px;height:14px;accent-color:#5b8dee;cursor:pointer";
-      packCb.onclick = (ev) => ev.stopPropagation();
-      const packLabel = document.createElement("span");
-      packLabel.textContent = t("Пак запоминается для каждого проекта");
-      packRow.append(packCb, packLabel);
-      packCb.onchange = () => {
-        saveUiPref({ packPerProject: packCb.checked });
-        if (packCb.checked) restoreProjectPack().then((ok) => { if (!ok) rememberProjectPack(activePack); });
-        else if (projectDir) {
-          try {
-            const map = projectPackMap();
-            delete map[projectDir];
-            localStorage.setItem(PACK_MAP_KEY, JSON.stringify(map));
-          } catch (e) {}
-        }
-      };
-      box.append(packRow);
 
       // Донат: список кошельков из DONATE. Пока он пуст — вежливая заглушка.
       const donHead = document.createElement("div");
@@ -4191,6 +4315,7 @@ function createView(ctx) {
   let voiceMap = {};
   let charVoices = {};
   let currentSid = "";
+  let projectSynced = false;
   // Персонаж и голос — разные вещи: по умолчанию голос персонажа совпадает
   // с его id, но в настройках можно привязать любой другой голос.
   // Пиксельные персонажи имеют свои id, но говорят общим голосом.
@@ -4289,6 +4414,10 @@ function createView(ctx) {
   const applyForSession = (sid) => {
     const switched = Boolean(sid && currentSid && sid !== currentSid);
     if (switched) restoreProjectPack();
+    else if (!projectSynced) {
+      projectSynced = true;
+      restoreProjectPack();
+    }
     if (sid) currentSid = sid;
     // Смена чата: короткий наклон в сторону переключения.
     if (switched && charReact(voice)) {
