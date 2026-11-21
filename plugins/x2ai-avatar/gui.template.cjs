@@ -3331,6 +3331,7 @@ function createView(ctx) {
         x2ai_tsundere: ["Дурак! Я же предупреждала.", "Вот и всё, да? Как всегда.", "Не смотри на меня так.", "Я не расстроилась! Просто обидно.", "Ладно… сейчас починю. Не думай, что ради тебя."],
         x2ai_gakusei: ["Ошибка. Так быть не должно.", "Я же говорила, проверяй.", "Это неаккуратно. Очень.", "Придётся переделать.", "Тихо. Сейчас разберём по пунктам."],
         x2ai_senpai: ["Хм. Так не должно было выйти.", "Ничего, бывает. Но давай аккуратнее.", "Спокойно. Сначала посмотрим логи.", "Я не злюсь. Просто неприятно.", "Ладно, откатим и попробуем иначе."],
+        x2ai_onime: ["Скучно. И как-то жалко.", "Смертные, вы всё ломаете.", "Даже я бы сделала лучше.", "Ох, какие же вы хрупкие.", "Ладно. Исправлю. Не благодари."],
         x2ai_samurai: ["Недостойно. Но исправимо.", "Я разочарован. Спокойно.", "Ошибка. Примем как урок.", "Терпение. Сейчас всё исправим.", "Так быть не должно. Идём дальше."],
         x2ai_mahou: ["Нет-нет! Так нельзя!", "Свет, помоги мне!", "Зло не пройдёт!", "Я не сдамся! Слышишь?", "Соберись. Справедливость ждёт!"],
       },
@@ -3365,6 +3366,7 @@ function createView(ctx) {
         x2ai_tsundere: ["Idiot! I warned you.", "Of course. As always.", "Don't look at me like that.", "I'm not upset! Just annoyed.", "Fine… I'll fix it. Not for you, though."],
         x2ai_gakusei: ["An error. That should not happen.", "I told you to check it.", "This is careless. Very.", "We will have to redo it.", "Quiet. Let us go through it point by point."],
         x2ai_senpai: ["Hmm. That should not have happened.", "It is fine, it happens. But let us be careful.", "Easy. Let us look at the logs first.", "I am not angry. Just unpleasant.", "All right, we roll back and try another way."],
+        x2ai_onime: ["Boring. And a bit sad.", "Mortals break everything.", "Even I would have done better.", "Oh, how fragile you are.", "Fine. I will fix it. No thanks needed."],
         x2ai_samurai: ["Unworthy. But fixable.", "I am disappointed. Calmly.", "A mistake. We take it as a lesson.", "Patience. We fix it now.", "This should not be. We move on."],
         x2ai_mahou: ["No, no! This cannot be!", "Light, help me!", "Evil shall not pass!", "I will not give up! Hear me?", "Pull yourself together. Justice awaits!"],
       },
@@ -3682,6 +3684,10 @@ function createView(ctx) {
           start: ["Соберу мысли. Молча.", "Секунду. Отсекаю лишнее.", "Как клинок: только суть.", "Спокойно. Убираю шум.", "Немного терпения."],
           done: ["Готово. Ясно и коротко.", "Всё лишнее отсечено.", "Чисто. Продолжим путь.", "Уложено. Ничего не забыто.", "Дело сделано."],
         },
+        x2ai_onime: {
+          start: ["Соберу вашу суету в горсть…", "Секунду. Отсею лишнее.", "Смертное — в сторону.", "Мм. Всё это — пыль.", "Уберу шум. Тихо."],
+          done: ["Всё. Осталось только вечное.", "Уложила. Даже изящно.", "Чисто. Как до вас.", "Всё уместилось в одну мысль.", "Готово. Не суетись."],
+        },
         x2ai_mahou: {
           start: ["Сейчас соберу мысли в луч!", "Секунду! Превращение контекста!", "Лишнее — в звёздную пыль!", "Сила концентрации, вперёд!", "Свет, помоги мне всё уложить!"],
           done: ["Готово! Сияет как надо!", "Всё уложено! Справедливость восторжествовала!", "Чисто! Даже звёзды завидуют!", "Готово! Дружба победила!", "Всё на месте! Вперёд, к новым свершениям!"],
@@ -3799,6 +3805,10 @@ function createView(ctx) {
         x2ai_samurai: {
           start: ["I will gather my thoughts. In silence.", "One moment. Cutting away the rest.", "Like a blade: only the essence.", "Calmly. Clearing the noise.", "A little patience."],
           done: ["Done. Clear and brief.", "All excess is cut away.", "Clean. We continue the path.", "Packed. Nothing forgotten.", "The deed is done."],
+        },
+        x2ai_onime: {
+          start: ["Let me gather your bustle in one palm…", "One moment. Sifting out the rest.", "Mortal things aside.", "Mm. All of this is dust.", "Clearing the noise. Quietly."],
+          done: ["There. Only the eternal remains.", "Packed it. Elegant, even.", "Clean. Like before you came.", "Everything fits in one thought.", "Done. Do not fuss."],
         },
         x2ai_mahou: {
           start: ["Gathering my thoughts into a beam!", "One moment! Context transformation!", "The extra goes to stardust!", "Power of concentration, go!", "Light, help me pack it all!"],
