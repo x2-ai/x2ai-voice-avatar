@@ -1581,6 +1581,10 @@ function startBridge(ctx) {
   }
   const port = Number(process.env.X2AI_BRIDGE_PORT || 47821);
   const stateFile = `${process.env.HOME}/.config/opencode/x2ai-teratts.state`;
+  // Поколение реплик по чату: окно при смене персонажа поднимает token и
+  // присылает его в /stop и /say. Запрос со старым token отбрасывается —
+  // иначе долетевшая реплика прошлого персонажа звучала его голосом.
+  const sayTokens = new Map();
   const voicesFile = `${process.env.HOME}/.config/opencode/x2ai-voices.json`;
   const CORS = {
     "access-control-allow-origin": "*",
@@ -2092,6 +2096,13 @@ function startBridge(ctx) {
           return;
         }
         const ssid = String(payload.sid || "");
+        // Реплика из прошлого поколения (персонажа уже сменили) — не играем.
+        const token = Number(payload.token) || 0;
+        if (token && token < (sayTokens.get(ssid) || 0)) {
+          send(res, 200, { ok: false, reason: "stale" });
+          return;
+        }
+        if (token) sayTokens.set(ssid, Math.max(token, sayTokens.get(ssid) || 0));
         if (readSpeech() === "silent" || inQuietHours()) {
           send(res, 200, { ok: false, reason: "muted" });
           return;
@@ -2189,7 +2200,12 @@ function startBridge(ctx) {
         return;
       }
       if (req.method === "POST" && route === "/stop") {
-        stopTts(String(payload.sid || ""));
+        const sidStop = String(payload.sid || "");
+        const tokenStop = Number(payload.token) || 0;
+        if (tokenStop) {
+          sayTokens.set(sidStop, Math.max(tokenStop, sayTokens.get(sidStop) || 0));
+        }
+        stopTts(sidStop);
         send(res, 200, { ok: true });
         return;
       }

@@ -680,6 +680,13 @@ function createView(ctx) {
     "filter:drop-shadow(0 2px 6px rgba(0,0,0,.28))",
     "transition:opacity 90ms linear",
   ].join(";");
+  // Спрайты бывают выше 336 px (самурай с пучком): при загрузке кадра
+  // пересчитываем высоту, чтобы он выглядел пропорционально выше остальных.
+  img.addEventListener("load", () => {
+    const px = spritePx();
+    img.style.height = `${px}px`;
+    panel.style.bottom = `${px + 30}px`;
+  });
   box.appendChild(img);
 
 
@@ -902,11 +909,19 @@ function createView(ctx) {
   let userLoaded = false;
 
   // Размер персонажа: высота картинки и отступ панели над ним.
+  // charHeight — высота «эталонного» спрайта в 336 px. Если спрайт выше
+  // (например, у самурая пучок волос торчит над головой), он рисуется
+  // пропорционально выше, а низ остаётся на месте — как у остальных.
+  const spritePx = () => {
+    const nat = img.naturalHeight || 336;
+    return Math.max(1, Math.round((charHeight * nat) / 336));
+  };
   function applyHeight(value) {
     const h = Math.round(Math.min(HEIGHT_MAX, Math.max(HEIGHT_MIN, Number(value) || DEFAULT_HEIGHT)));
     charHeight = h;
-    img.style.height = `${h}px`;
-    panel.style.bottom = `${h + 30}px`;
+    const px = spritePx();
+    img.style.height = `${px}px`;
+    panel.style.bottom = `${px + 30}px`;
     return h;
   }
   function applyHeightFor(key) {
@@ -1021,6 +1036,12 @@ function createView(ctx) {
   function pickClip(list) {
     return list && list.length ? list[Math.floor(Math.random() * list.length)] : null;
   }
+  // Поколение реплик: смена персонажа, клик-стоп и стоп по кнопке поднимают
+  // метку. Всё, что было отправлено раньше, отменяется — и таймер повтора в
+  // окне, и уже летящий запрос на сервере (он сверяет token).
+  let sayToken = 0;
+  const bumpSayToken = () => (sayToken = Math.max(Date.now(), sayToken + 1));
+
   // voiceId — чей голос: при смене персонажа voice ещё старый (apply ждёт
   // конца анимации), поэтому реплику озвучиваем голосом того, на кого уходим.
   function playClip(item, text = "", voiceId, rawVoice = false) {
@@ -1038,15 +1059,20 @@ function createView(ctx) {
     // rawVoice — озвучить ровно этот голос, не глядя на настройки персонажа:
     // так пример в списке голосов звучит выбранным голосом, а не прежним.
     const sayVoice = rawVoice && voiceId ? voiceId : charVoice(voiceId || voice);
+    // Токен фиксируем на момент запроса: если персонажа успели сменить или
+    // нажать стоп, повтор уже не отправится и старая реплика не зазвучит.
+    const token = sayToken;
+    const postSay = () =>
+      bridge("/say", { text: line, sid: currentSid || "", voice: sayVoice, token });
     const ask = () =>
-      bridge("/say", { text: line, sid: currentSid || "", voice: sayVoice })
+      postSay()
         .then((res) => {
           const wait = Number(res && res.wait) || 0;
           if (res && res.ok === false && res.reason === "busy" && wait > 0) {
-            setTimeout(
-              () => bridge("/say", { text: line, sid: currentSid || "", voice: sayVoice }).catch(() => {}),
-              Math.min(5000, wait + 200),
-            );
+            setTimeout(() => {
+              if (token !== sayToken) return;
+              postSay().catch(() => {});
+            }, Math.min(5000, wait + 200));
           }
         })
         .catch(() => {});
@@ -1107,7 +1133,7 @@ function createView(ctx) {
       const text = tf(pickClip(EN_SUMMON), { name: charName(next) });
       if (text) {
         if (mutedState) showLineOnly(text);
-        else bridge("/say", { text, sid: currentSid, voice: charVoice(next) }).catch(() => {});
+        else bridge("/say", { text, sid: currentSid, voice: charVoice(next), token: sayToken }).catch(() => {});
       }
     } else {
       // Реплики есть по голосу, а не по id персонажа.
@@ -4607,7 +4633,8 @@ function createView(ctx) {
   const stopAll = () => {
     stopSynth();
     stopSpeaking();
-    bridge("/stop", { sid: currentSid }).catch(() => {});
+    bumpSayToken();
+    bridge("/stop", { sid: currentSid, token: sayToken }).catch(() => {});
   };
 
   const onCharClick = (event) => {
@@ -4625,7 +4652,7 @@ function createView(ctx) {
             showLineOnly(text);
             return;
           }
-          bridge("/say", { text, sid: currentSid, voice: charVoice(voice) }).catch(() => {});
+          bridge("/say", { text, sid: currentSid, voice: charVoice(voice), token: sayToken }).catch(() => {});
         }
         return;
       }

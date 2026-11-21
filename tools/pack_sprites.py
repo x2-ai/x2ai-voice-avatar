@@ -30,13 +30,16 @@ ROOT = Path(__file__).resolve().parent.parent
 PACKS = ROOT / "packs"
 OUT = ROOT / "plugins" / "x2ai-avatar" / "sprites.json"
 PKG = ROOT / "plugins" / "x2ai-avatar" / "packs"
+# Паки с пиксельными персонажами: их id живут с префиксом px_.
+PX_PACKS = {"pixel", "bit16", "bit16night", "bit16ninety"}
 STATES = ["closed", "half", "open", "round", "wide", "blink"]
 HEIGHT = 336
 
 
 def uri(path: Path) -> str:
     img = Image.open(path).convert("RGBA")
-    if img.height != HEIGHT:
+    # Высокие спрайты (выше 336) оставляем как есть — см. x2ai-sync_pack.py.
+    if img.height < HEIGHT:
         ratio = HEIGHT / img.height
         size = (max(1, int(round(img.width * ratio))), HEIGHT)
         # LANCZOS по обычной RGBA подмешивает RGB прозрачных пикселей и
@@ -90,10 +93,14 @@ def main() -> int:
             continue
         # Пиксельный пак: папка fx_demon = персонаж fx_demoness, и у всех
         # персонажей свой префикс px_, чтобы не путались с аниме-паком.
-        if pack_dir.name == "pixel":
-            if "fx_demon" in voices:
-                voices["fx_demoness"] = voices.pop("fx_demon")
-            voices = {k if k.startswith("px_") else f"px_{k}": v for k, v in voices.items()}
+        if pack_dir.name in PX_PACKS:
+            # Порядок берём из sprites.json как есть: переименование fx_demon
+            # делаем на месте, а не через pop (иначе персонаж уезжал в конец).
+            renamed = {}
+            for key, value in voices.items():
+                key = "fx_demoness" if key == "fx_demon" else key
+                renamed[key if key.startswith("px_") else f"px_{key}"] = value
+            voices = renamed
         packs[pack_dir.name] = voices
 
     OUT.write_text(json.dumps(packs, ensure_ascii=False), encoding="utf-8")
