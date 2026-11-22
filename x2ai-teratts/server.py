@@ -128,7 +128,7 @@ FX = {
     "x2ai_samurai": {"base": "ru_m5", "pitch": 0.90},
     "x2ai_mahou": {"base": "ru_f1", "pitch": 1.15},
     "x2ai_onime": {"base": "ru_f2", "pitch": 0.90},
-    "x2ai_ninja": {"base": "ru_f2", "pitch": 0.98},
+    "x2ai_ninja": {"base": "ru_m1", "pitch": 0.94},
 }
 
 
@@ -309,6 +309,98 @@ def split_chunks(text: str, limit: int = CHUNK_CHARS) -> list:
     return parts
 
 
+# Ударения, которые нужны только в одной фразе: «здорОво» (приветствие), а не
+# «здОрово» (хорошо). Глобальный словарь трогать нельзя — там слово верное.
+LOCAL_STRESS = {
+    "здорово, брат": {"здорово": "здор+ово"},
+}
+
+# Ударения, которые зависят от голоса: у Братка «малАя» (обращение), в других
+# местах движок читает «мАлая». Действует только на время синтеза его реплик.
+VOICE_STRESS = {
+    "x2ai_bratok": {
+        "малая": "мал+ая",
+        "внатуре": "внат+уре",
+        "натуре": "нат+уре",
+        "втрамбую": "втрамб+ую",
+    },
+    "x2ai_narik": {
+        "бутор": "б+утор",
+    },
+    "x2ai_sosochka": {
+        "сосочка": "с+осочка",
+    },
+    # Призрак: движок ставит «исчЕзаю» и «тАю» неверно только в его манере.
+    "fx_ghost": {
+        "исчезаю": "исчез+аю",
+        "таю": "т+аю",
+    },
+}
+
+# Ё-слова: движок схлопывает «ё» в «е» и ставит ударение по своей модели
+# («тЕлочка»). Возврат ё делается через yo_words движка, а не через accents:
+# в accents переносится только позиция «+», буква остаётся «е».
+VOICE_YO = {
+    "x2ai_telochka": {
+        "телочка": "тёлочка",
+    },
+}
+
+
+def _word_in(word: str, low: str) -> bool:
+    """Слово целиком, а не подстрокой: «таю» не должно срабатывать в «читаю»."""
+    return re.search(r"(?<![а-яa-z])" + re.escape(word) + r"(?![а-яa-z])", low) is not None
+
+
+def patch_local_stress(tts, text: str, voice: str = "") -> dict:
+    """Временно кладёт ударения из LOCAL_STRESS и VOICE_STRESS в словарь движка."""
+    accentizer = getattr(tts, "accentizer", None)
+    accents = getattr(accentizer, "accents", None)
+    if not isinstance(accents, dict):
+        return {}
+    low = (text or "").lower().replace("ё", "е")
+    patch = {}
+    for phrase, words in LOCAL_STRESS.items():
+        if phrase in low:
+            patch.update(words)
+    words_for_voice = VOICE_STRESS.get(str(voice or "").replace("px_", ""), {})
+    for word, stressed in words_for_voice.items():
+        if _word_in(word, low):
+            patch[word] = stressed
+    yo_patch = {}
+    yo_words = getattr(accentizer, "yo_words", None)
+    for word, fixed in VOICE_YO.get(str(voice or "").replace("px_", ""), {}).items():
+        if _word_in(word, low):
+            yo_patch[word] = fixed
+    if not patch and not yo_patch:
+        return {}
+    saved = {
+        "accents": {w: accents.get(w) for w in patch},
+        "yo": {},
+    }
+    accents.update(patch)
+    if yo_patch and isinstance(yo_words, dict):
+        saved["yo"] = {w: yo_words.get(w) for w in yo_patch}
+        yo_words.update(yo_patch)
+    return saved
+
+
+def restore_local_stress(tts, saved: dict) -> None:
+    if not saved:
+        return
+    accentizer = getattr(tts, "accentizer", None)
+    for name, key in (("accents", "accents"), ("yo_words", "yo")):
+        table = getattr(accentizer, name, None)
+        patch = saved.get(key) or {}
+        if not isinstance(table, dict) or not patch:
+            continue
+        for word, old in patch.items():
+            if old is None:
+                table.pop(word, None)
+            else:
+                table[word] = old
+
+
 def synth(tts, text: str, voice: str, scale: float):
     import teratts
 
@@ -319,16 +411,20 @@ def synth(tts, text: str, voice: str, scale: float):
     if m:
         tag, body = m.group(1), m.group(2)
     chunks = [f"<{tag}>{c}</{tag}>" for c in split_chunks(body)]
-    if len(chunks) == 1:
-        return teratts.generate_speech(tts, chunks[0], voice, duration_scale=scale)
-    gap = np.zeros(int(CHUNK_GAP * float(teratts.SAMPLE_RATE)), dtype=np.float32)
-    out = []
-    for idx, chunk in enumerate(chunks):
-        audio = teratts.generate_speech(tts, chunk, voice, duration_scale=scale)
-        out.append(np.asarray(audio, dtype=np.float32).reshape(-1))
-        if idx != len(chunks) - 1:
-            out.append(gap)
-    return np.concatenate(out)
+    saved = patch_local_stress(tts, body, voice)
+    try:
+        if len(chunks) == 1:
+            return teratts.generate_speech(tts, chunks[0], voice, duration_scale=scale)
+        gap = np.zeros(int(CHUNK_GAP * float(teratts.SAMPLE_RATE)), dtype=np.float32)
+        out = []
+        for idx, chunk in enumerate(chunks):
+            audio = teratts.generate_speech(tts, chunk, voice, duration_scale=scale)
+            out.append(np.asarray(audio, dtype=np.float32).reshape(-1))
+            if idx != len(chunks) - 1:
+                out.append(gap)
+        return np.concatenate(out)
+    finally:
+        restore_local_stress(tts, saved)
 
 
 def fx_spec(voice: str, emotion: str | None = None) -> dict | None:
@@ -481,6 +577,10 @@ def main() -> int:
         "потом": "пот+ом",
         "сосочка": "с+осочка",
         "нарик": "н+арик",
+        # «то» всегда под ударением: без этого «то есть» звучало «тоЕсть».
+        "то": "т+о",
+        # «готов» движок читает «гОтов», а нужно «готОв».
+        "готов": "гот+ов",
     }
     try:
         accents = getattr(getattr(tts, "accentizer", None), "accents", None)
