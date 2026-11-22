@@ -5285,8 +5285,8 @@ function createView(ctx) {
   // характером своей манеры нет, но род у фразы остаётся (говорил/говорила).
   const lineGender = () => {
     const v = clipVoice(voice);
-    if (/^ru_m|^fx_robot|^fx_penguin|^fx_demon$|^x2ai_(ment|alkash|bratok|narik|novyi_russkiy|kotohaker|coder)$/.test(v)) return "m";
-    if (/^ru_f|^fx_demoness|^fx_alien|^fx_cat|^fx_ghost|^x2ai_(babka|sosochka|telochka|programmer|codergirl)$/.test(v)) return "f";
+    if (/^ru_m|^fx_robot|^fx_penguin|^fx_demon$|^x2ai_(ment|alkash|bratok|narik|novyi_russkiy|kotohaker|coder|senpai|samurai|ninja)$/.test(v)) return "m";
+    if (/^ru_f|^fx_demoness|^fx_alien|^fx_cat|^fx_ghost|^x2ai_(babka|sosochka|telochka|programmer|codergirl|tsundere|sakura|neko|gakusei|mahou|onime)$/.test(v)) return "f";
     return "m";
   };
   // Характер включён — свои реплики персонажа; выключен — нейтральные по полу.
