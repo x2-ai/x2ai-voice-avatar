@@ -3611,6 +3611,7 @@ function createView(ctx) {
         x2ai_onime: ["Скучно. И как-то жалко.", "Смертные, вы всё ломаете.", "Даже я бы сделала лучше.", "Ох, какие же вы хрупкие.", "Ладно. Исправлю. Не благодари."],
         x2ai_samurai: ["Недостойно. Но исправимо.", "Я разочарован. Спокойно.", "Ошибка. Примем как урок.", "Терпение. Сейчас всё исправим.", "Так быть не должно. Идём дальше."],
         x2ai_mahou: ["Нет-нет! Так нельзя!", "Свет, помоги мне!", "Зло не пройдёт!", "Я не сдамся! Слышишь?", "Соберись. Справедливость ждёт!"],
+        x2ai_ninja: ["Ошибка. Непростительно.", "Тишина. Я исправляю.", "Плохо. Очень.", "Не отвлекай. Сбиваешь.", "Ещё раз — и без ошибок."],
       },
       neutral: {
         m: ["Я так и знал.", "Ну что за дела.", "Я же говорил.", "Опять сломалось. Классика.", "Да сколько можно, а?"],
@@ -3646,6 +3647,7 @@ function createView(ctx) {
         x2ai_onime: ["Boring. And a bit sad.", "Mortals break everything.", "Even I would have done better.", "Oh, how fragile you are.", "Fine. I will fix it. No thanks needed."],
         x2ai_samurai: ["Unworthy. But fixable.", "I am disappointed. Calmly.", "A mistake. We take it as a lesson.", "Patience. We fix it now.", "This should not be. We move on."],
         x2ai_mahou: ["No, no! This cannot be!", "Light, help me!", "Evil shall not pass!", "I will not give up! Hear me?", "Pull yourself together. Justice awaits!"],
+        x2ai_ninja: ["A mistake. Unforgivable.", "Silence. I am fixing it.", "Bad. Very.", "Do not distract me. You break my focus.", "One more time — no mistakes."],
       },
       neutral: {
         m: ["I knew it.", "Come on, really.", "I told you so.", "Broken again. Classic.", "How much longer."],
@@ -3969,6 +3971,10 @@ function createView(ctx) {
           start: ["Сейчас соберу мысли в луч!", "Секунду! Превращение контекста!", "Лишнее — в звёздную пыль!", "Сила концентрации, вперёд!", "Свет, помоги мне всё уложить!"],
           done: ["Готово! Сияет как надо!", "Всё уложено! Справедливость восторжествовала!", "Чисто! Даже звёзды завидуют!", "Готово! Дружба победила!", "Всё на месте! Вперёд, к новым свершениям!"],
         },
+        x2ai_ninja: {
+          start: ["Сжимаю. Без лишнего.", "Секунду. Отсекаю шум.", "Только суть. Остальное — прочь.", "Тихо. Собираю.", "Убираю следы."],
+          done: ["Готово. Чисто.", "Всё. Лишнего нет.", "Сжато. Следов не осталось.", "Готово. Молча.", "Всё на месте. Ухожу."],
+        },
       },
       neutral: {
         m: {
@@ -4090,6 +4096,10 @@ function createView(ctx) {
         x2ai_mahou: {
           start: ["Gathering my thoughts into a beam!", "One moment! Context transformation!", "The extra goes to stardust!", "Power of concentration, go!", "Light, help me pack it all!"],
           done: ["Done! Shining as it should!", "All packed! Justice prevails!", "Clean! Even the stars are jealous!", "Done! Friendship wins!", "Everything in place! On to new deeds!"],
+        },
+        x2ai_ninja: {
+          start: ["Compressing. Nothing extra.", "One moment. Cutting the noise.", "Only the essence. The rest goes.", "Quiet. Gathering.", "Erasing my tracks."],
+          done: ["Done. Clean.", "That is it. Nothing extra.", "Compressed. No tracks left.", "Done. Silently.", "All in place. I am gone."],
         },
       },
       neutral: {
