@@ -1,98 +1,145 @@
-# x2ai-avatar
+# x2ai-avatar — плагин окна
 
-Аниме-персонаж в левом нижнем углу окна OpenCode Desktop. Голос выбирается тем
-же хешем `sessionID`, что в `plugins/x2ai-tts-done.js`, поэтому персонаж всегда
-совпадает с голосом озвучки чата.
+Плагин GUI для OpenCode Desktop: пиксельный персонаж в левом нижнем углу,
+пузырь с произносимой фразой, панель настроек. Работает в связке с серверным
+плагином `plugins/x2ai-tts-done.js` (озвучка) и TTS-сервером
+`x2ai-teratts/`. Всё офлайн.
 
-| голос | персонаж | спрайт |
-| --- | --- | --- |
-| ru_f1 | Аня | char06 (синие волосы, форма) |
-| ru_f2 | Мила | f06 (белые волосы, наушники) |
-| ru_m1 | Гриша | char07 (тёмные волосы, китель) |
-| ru_m5 | Тимур | w01 (рыжие волосы, зелёная куртка) |
-| fx_robot | Робик | char07, серая кожа, циановые глаза, антенна |
-| fx_demon | Азазель | v05 (рога), красная кожа, жёлтые глаза |
-| fx_alien | Зета | f06, зелёная кожа, антенны |
-| fx_cat | Мурзик | q03 (чиби в кошачьем капюшоне) |
-| fx_penguin | Пико | p03 (пингвин) |
-| fx_ghost | Юки | v07, бледно-голубая кожа |
-
-Голоса `fx_*` — те же четыре базовых голоса TeraTTS плюс обработка
-(см. `FX` в `x2ai-teratts/server.py`): робот — кольцевая модуляция и
-биткраш, демон — понижение на 20 % и лёгкая перегрузка, пришелец —
-повышение и вибрато, кот и пингвин — «чипманьи» тона, призрак — мягкий
-реверб. Порядок `VOICES` в этом плагине и `TERA_VOICES` в
-`x2ai-tts-done.js` должен совпадать, иначе персонаж разойдётся с голосом.
+Полная документация по проекту, установке и созданию своих паков — в
+[корневом README](../../README.md).
 
 ## Как устроено
 
-- `gui-experimental.cjs` — единственный файл плагина. Внутри: `Plugin.define`,
-  слот `window.bottom`, спрайты кадрами в base64 (`SPRITES`).
-- Важно: приложение исполняет GUI-бандл через `new Function` с подставленным
-  `module`, поэтому `require` работает только для `@opencode/plugin/gui` и
-  `solid-js`. Любой `require("./файл")` роняет весь плагин — данные держим
-  внутри.
-- Кадры рта: `closed`, `half`, `open`, `round`, `wide`; отдельный кадр `blink`.
-  Пока идёт озвучка (сигнал `afplay` через Ipc `x2ai-avatar.speaking`)
-  кадры меняются каждые 110 мс, в тишине персонаж моргает раз в 2.6–5.4 с.
-- Размер на экране — константа `HEIGHT` (168 px), спрайты нарисованы в 2×.
+- Исходник — `gui.template.cjs`. Сборка: `python3 tools/build.py` →
+  `gui-experimental.cjs`. Именно собранный файл лежит в
+  `~/.config/opencode/plugins/x2ai-avatar/`.
+- Бандл исполняется через `new Function`: внутри него **нет `require`**, кроме
+  двух модулей, которые передаёт сборка (`@opencode/plugin/gui` и `solid-js`).
+  Попытка `require("./файл")` внутри бандла роняет плагин.
+- `bridge()` объявлен как `function` (hoisting) — доступен с момента
+  инициализации; все запросы к мосту идут через него.
+- Данные подставляются в шаблон маркерами при сборке:
+  `__PACK_INDEX__` (`plugins/x2ai-avatar/packs/index.json`), `__CLICKS__`
+  (`clicks.json`), `__LINES__` (`lines.json`), `__CHARACTERS__`
+  (`plugins/x2ai-avatar/packs/characters.json`), `__TALK_PLAN__`
+  (`talk-plan.js`).
+- Кадры **не лежат в бандле**: окно лениво грузит их с моста
+  `GET /pack?name=<пак>` через `ensurePack(name)`. `packList()` — ключи
+  `PACK_INDEX`; `packForVoice()` автоматически переключает пак под выбранного
+  персонажа; виртуальный пак `@all` грузит все паки сразу.
+- Размер на экране: `const HEIGHT = 224` (`gui.template.cjs:114`), спрайты
+  336 px. Границы `HEIGHT_MIN = 120`, `HEIGHT_MAX = 420`; значение хранится в
+  `localStorage` окна под ключом `x2ai-avatar:height`.
 
-## Спрайты
+## Паки и персонажи
 
-Персонажи: LivLiv (livliv.ai), LivLiv Featured Characters License 1.0 —
-бесплатно для некоммерческого использования с указанием авторства.
-Кадры собраны из слоёв `characters/<id>/textures/` репозитория
-`livliv-dev/player`: тело, лицо, волосы, глаза (открытые/закрытые), пять
-текстур рта. Сборка — PIL: слои накладывались по `model.json` (x, y, w, h),
-затем кроп «голова + плечи» и ресайз в 336 px.
+Сейчас 4 пака и 28 персонажей. Источник истины — `packs/<пак>/characters.json`:
 
-Локальная сборка кадров требует сети (текстуры) и Pillow:
-
-```sh
-pip install pillow
-# текстуры: https://raw.githubusercontent.com/livliv-dev/player/HEAD/characters/<id>/textures/*
-# порядок слоёв: back_hair, body, inner_hair, face, eye_*_skin, eye_*,
-# iris_*, mouth (frames[0..4]), side_hair, front_hair, brows
-# при моргании eye_*/iris_* пропускаются, рисуются eye_*_closed
+```json
+{
+  "name": "16Bit - Кодеры",
+  "prefix": "px_",
+  "characters": {
+    "px_hero": {
+      "name": "Герой", "nameEn": "Hero", "gender": "m",
+      "voice": "ru_m1", "temper": "...",
+      "clicks": ["..."],
+      "rage":   { "ru": ["..."], "en": ["..."] },
+      "compact": { "ru": { "start": ["..."], "done": ["..."] },
+                   "en": { "start": ["..."], "done": ["..."] } },
+      "lines": ["..."]
+    }
+  }
+}
 ```
 
-## Реплики на клик
+`prefix` добавляется к id персонажа при сборке пака. `tools/pack_sprites.py`
+собирает агрегат `plugins/x2ai-avatar/packs/characters.json`, а
+`tools/build.py` вшивает его в бандл как `__CHARACTERS__`. GUI мёржит имена,
+пол, голос, характер, клики, реплики злости/компактизации и приветствия поверх
+таблиц кода (код остаётся фолбэком). Серверный плагин читает тот же файл с
+кешем по mtime. Поэтому имя, характер и реплики персонажа правятся в
+`characters.json`, а не в коде.
 
-Клик по персонажу проигрывает короткую фразу его же голосом. Фразы
-синтезированы заранее (10 штук на каждый из четырёх голосов), лежат
-внутри `gui-experimental.cjs` как `const CLICKS` в виде data-URI m4a
-(48 кбит/с, моно, ~15 КБ на фразу), поэтому звук стартует мгновенно и
-не зависит от того, поднят ли TeraTTS-демон.
+## Кадры
 
-Пересобрать фразы (нужен venv с onnxruntime и `afconvert`):
+- Достаточно **двух**: `closed` (покой) и хотя бы одного кадра разговора —
+  `half`, `open`, `round` или `wide`.
+- Разговор строится из доступных кадров рта: `buildTalkPlan()` мапит гласные в
+  `wide/open/round/half`, а `frame()` подменяет отсутствующие состояния
+  доступными по кругу.
+- `blink` необязателен — вместо него используется `closed`.
+- `idle2` необязателен — если есть, используется для «сна»/второй позы покоя.
+- Пока идёт озвучка, кадры меняются каждые 110 мс; в тишине персонаж моргает
+  раз в 2.6–5.4 с.
+
+Кадры собираются `tools/pack_sprites.py` в WebP data-URI (высота 336 px);
+`normalize()` заполняет недостающие состояния, `tools/smoke.py` проверяет
+наличие `closed`, `blink` и хотя бы одного talk-кадра.
+
+## Реплики
+
+Предгенерированного аудио нет: все реплики — **текст**. Синтез идёт через
+`POST /say` (`playClip()` → `bridge("/say", { text, sid, voice, token })`).
+Клики берутся из `CLICKS[packKey(voice)]`, приветствие при смене персонажа —
+из `LINES.lines[clipVoice(voice)]`; обе таблицы приходят из данных пака.
+Токены `sayToken` / `sayTokens` отсекают устаревшие запросы при быстрой смене
+персонажа.
+
+## Добавление своего пака
+
+В панели «Пак персонажей» есть кнопка **«Добавить пак»**: она открывает выбор
+папки, читает файлы в base64 и отправляет `POST /packs/install` серверному
+плагину. Тот проверяет состав (имя пака, `sprites.json` или PNG с `closed` +
+одним talk-кадром, валидный `characters.json`, не более 600 файлов / 30 МБ,
+только `.png/.jpg/.webp/.json`, запрет имён встроенных паков), пишет папку в
+`packs/<name>/`, запускает `pack_sprites.py` и `build.py`, копирует результат
+в `~/.config/opencode/plugins/x2ai-avatar/` и при любой ошибке откатывает
+изменения. После успеха окно перезагружается само.
+
+Внешние паки можно положить и без сборки — в
+`~/.config/opencode/x2ai-avatar-packs/<name>/sprites.json`. Мост отдаёт их как
+есть, а резолвер `frame()` в окне подставит недостающие кадры.
+
+Подробная инструкция, пример `sprites.json` и схема `characters.json` — в
+[корневом README](../../README.md), раздел «Свои паки / Custom packs».
+
+## Мост
+
+Серверный плагин поднимает HTTP-мост на `127.0.0.1:47821` (порт меняется
+`X2AI_BRIDGE_PORT`). Окно опрашивает `GET /state` раз в 250 мс и сверяет `sid`,
+чтобы артикулировал только тот чат, который сейчас озвучивается.
+
+| маршрут | назначение |
+| --- | --- |
+| `GET /state` | состояние озвучки (`ms`, `at`, текст), пузырь |
+| `GET /packs`, `GET /pack?name=` | список паков и кадры пака |
+| `POST /packs/install` | установка своего пака |
+| `GET /voices`, `GET /chars`, `/charvoice`, `/models`, `/model`, `/user` | голоса, характеры, модели, пользователь |
+| `GET /log`, `GET /demo`, `/limits`, `/project` | логи, демо, лимиты, каталог проекта |
+| `POST /say`, `/stop`, `/test`, `/voice`, `/speech` | реплика, стоп, проверка, смена голоса/режима |
+| `POST /power`, `/open`, `/settings/export`, `/settings/import` | питание, открытые чаты, экспорт/импорт настроек |
+
+## Сборка и деплой
 
 ```sh
-~/.config/opencode/teratts-venv/bin/python gen-clicks.py
-# gen-clicks.py пишет clicks.json, его содержимое вставляется в
-# gui-experimental.cjs как `const CLICKS = ...`
+node --check plugins/x2ai-avatar/gui.template.cjs
+python3 tools/pack_sprites.py          # если менялись кадры или characters.json
+python3 tools/build.py
+cp plugins/x2ai-avatar/gui-experimental.cjs ~/.config/opencode/plugins/x2ai-avatar/
+cp -R plugins/x2ai-avatar/packs ~/.config/opencode/plugins/x2ai-avatar/
+python3 tools/smoke.py
 ```
 
-Тексты реплик — список `PHRASES` в `gen-clicks.py`.
-
-## Реплики панели
-
-`gen-lines.py` готовит ещё три набора (тоже data-URI m4a, в
-`gui-experimental.cjs` как `const LINES`):
-
-| ключ | когда звучит | что это |
-| --- | --- | --- |
-| `lines[voice]` | смена персонажа (кнопка или правый клик) | три забавные реплики персонажа, играется случайная |
-| `packs[pack][voice]` | смена пака в селекте | персонаж называет пак: «Аниме!» / «Пиксельарт!» |
-| `samples[voice]` | клик по голосу в «Голос персонажа» | пример голоса: «Привет. Это мой голос.» |
-
-```sh
-~/.config/opencode/teratts-venv/bin/python gen-lines.py            # все голоса
-~/.config/opencode/teratts-venv/bin/python gen-lines.py fx_cat     # только один
-```
-
-Тексты — словари `LINES`, `PACKS` и константа `SAMPLE` в `gen-lines.py`.
+Серверный плагин копируется отдельно (`cp plugins/x2ai-tts-done.js
+~/.config/opencode/plugins/`) и перезагружается сам; TTS-сервер —
+`cp x2ai-teratts/server.py ~/.config/opencode/x2ai-teratts/` и
+`pkill -x x2ai-voice`. `smoke.py` ничего не копирует — только сверяет байты
+и маркеры. Окно подхватывает новый бандл только после **Cmd+R**.
 
 ## Отключить
 
-Убрать путь `.../plugins/x2ai-avatar` из массива `plugins` в
-`~/.config/opencode/opencode.jsonc`.
+Убрать `~/.config/opencode/plugins/x2ai-avatar` из массива `plugins` в
+`~/.config/opencode/opencode.jsonc`. Кнопка питания в окне делает мягкое
+выключение: пишет `~/.config/opencode/x2ai-tts-done.disabled`, глушит
+`x2ai-voice` и режет события и `/say`, не удаляя настройки.

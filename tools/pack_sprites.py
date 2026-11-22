@@ -9,6 +9,12 @@
 Если в папке пака нет sprites.json, но есть PNG-кадры по персонажам,
 файл собирается из них и сохраняется рядом.
 
+Обязательные кадры персонажа: `closed` (покой) и ХОТЯ БЫ ОДИН кадр
+разговора (`half`/`open`/`round`/`wide`). `blink` и `idle2` необязательны:
+моргание подменяется покоем, idle2 используется только если есть.
+Недостающие кадры разговора берутся из доступных по кругу, поэтому пак
+из двух кадров тоже говорит.
+
 Итог пишется в plugins/x2ai-avatar/sprites.json (этот файл в .gitignore).
 
 Запуск: python3 tools/pack_sprites.py
@@ -32,7 +38,10 @@ OUT = ROOT / "plugins" / "x2ai-avatar" / "sprites.json"
 PKG = ROOT / "plugins" / "x2ai-avatar" / "packs"
 # Паки с пиксельными персонажами: их id живут с префиксом px_.
 PX_PACKS = {"pixel", "bit16", "bit16night", "bit16ninety"}
-STATES = ["closed", "half", "open", "round", "wide", "blink"]
+CLOSED = "closed"
+TALK_STATES = ["half", "open", "round", "wide"]
+OPTIONAL_STATES = ["blink", "idle2"]
+STATES = [CLOSED, *TALK_STATES, *OPTIONAL_STATES]
 HEIGHT = 336
 
 
@@ -60,20 +69,37 @@ def uri(path: Path) -> str:
     return "data:image/webp;base64," + base64.b64encode(buf.getvalue()).decode()
 
 
+def normalize(entry: dict | None) -> dict | None:
+    """Покой + доступные кадры рта → полный набор для окна.
+
+    Разговор строится только из кадров разговора, которые реально есть в паке:
+    недостающие состояния подменяются доступными по кругу. Моргание без
+    `blink` становится покоем; `idle2` не добавляется, если его нет.
+    """
+    if not isinstance(entry, dict) or not entry.get(CLOSED):
+        return None
+    talk = [s for s in TALK_STATES if entry.get(s)]
+    if not talk:
+        return None
+    out = {CLOSED: entry[CLOSED]}
+    for idx, state in enumerate(TALK_STATES):
+        out[state] = entry.get(state) or entry[talk[idx % len(talk)]]
+    out["blink"] = entry.get("blink") or entry[CLOSED]
+    if entry.get("idle2"):
+        out["idle2"] = entry["idle2"]
+    return out
+
+
 def from_png(pack_dir: Path) -> dict[str, dict[str, str]]:
     voices: dict[str, dict[str, str]] = {}
     for voice_dir in sorted(p for p in pack_dir.iterdir() if p.is_dir()):
         files = {p.stem: p for p in voice_dir.glob("*.png")}
-        if "closed" not in files:
+        if CLOSED not in files:
             continue
-        closed = uri(files["closed"])
-        opened = uri(files["open"]) if "open" in files else closed
-        entry = {"closed": closed}
-        for state in STATES[1:]:
-            if state == "blink":
-                entry[state] = uri(files["blink"]) if "blink" in files else closed
-            else:
-                entry[state] = uri(files[state]) if state in files else opened
+        entry = {CLOSED: uri(files[CLOSED])}
+        for state in [*TALK_STATES, *OPTIONAL_STATES]:
+            if state in files:
+                entry[state] = uri(files[state])
         voices[voice_dir.name] = entry
     return voices
 
@@ -91,15 +117,38 @@ def main() -> int:
                 print(f"{pack_dir.name}: собран sprites.json из PNG")
         if not voices:
             continue
+        # Кадры из двух состояний (покой + любой рот) тоже рабочие.
+        norm: dict[str, dict[str, str]] = {}
+        for voice, entry in voices.items():
+            item = normalize(entry)
+            if item is None:
+                print(
+                    f"ошибка: {pack_dir.name}/{voice}: нужен кадр {CLOSED} "
+                    f"и хотя бы один из {', '.join(TALK_STATES)}",
+                    file=sys.stderr,
+                )
+                return 1
+            norm[voice] = item
+        voices = norm
+        # Префикс id: из метаданных пака (characters.json), иначе старый
+        # список пиксельных паков. Так новый пак может сам объявить префикс.
+        meta_prefix = None
+        meta_file = pack_dir / "characters.json"
+        if meta_file.exists():
+            try:
+                meta_prefix = json.loads(meta_file.read_text(encoding="utf-8")).get("prefix")
+            except Exception:
+                meta_prefix = None
+        prefix = meta_prefix if meta_prefix is not None else ("px_" if pack_dir.name in PX_PACKS else "")
         # Пиксельный пак: папка fx_demon = персонаж fx_demoness, и у всех
         # персонажей свой префикс px_, чтобы не путались с аниме-паком.
-        if pack_dir.name in PX_PACKS:
+        if prefix:
             # Порядок берём из sprites.json как есть: переименование fx_demon
             # делаем на месте, а не через pop (иначе персонаж уезжал в конец).
             renamed = {}
             for key, value in voices.items():
                 key = "fx_demoness" if key == "fx_demon" else key
-                renamed[key if key.startswith("px_") else f"px_{key}"] = value
+                renamed[key if key.startswith(prefix) else f"{prefix}{key}"] = value
             voices = renamed
         packs[pack_dir.name] = voices
 
@@ -112,6 +161,27 @@ def main() -> int:
     # Манифест: имена паков и персонажи в них. Маленький, едет в бандл.
     index = {name: sorted(voices.keys()) for name, voices in packs.items()}
     (PKG / "index.json").write_text(json.dumps(index, ensure_ascii=False, indent=1), encoding="utf-8")
+    # Обвязка персонажей (имя, голос, характер, реплики) — данные пака.
+    # Собираем в один файл: его читают и окно (в бандл), и серверный плагин.
+    char_packs: dict[str, dict[str, str]] = {}
+    chars: dict[str, dict] = {}
+    for pack_dir in sorted(p for p in PACKS.iterdir() if p.is_dir()):
+        file = pack_dir / "characters.json"
+        if not file.exists():
+            continue
+        meta = json.loads(file.read_text(encoding="utf-8"))
+        char_packs[pack_dir.name] = {
+            "name": meta.get("name") or pack_dir.name,
+            "prefix": meta.get("prefix") or "",
+        }
+        for full, rec in (meta.get("characters") or {}).items():
+            item = dict(rec)
+            item["pack"] = pack_dir.name
+            chars[full] = item
+    (PKG / "characters.json").write_text(
+        json.dumps({"packs": char_packs, "characters": chars}, ensure_ascii=False, indent=1),
+        encoding="utf-8",
+    )
     total = sum(len(v) for v in packs.values())
     names = ", ".join(f"{k} ({len(v)})" for k, v in packs.items())
     print(f"готово: паков {len(packs)}, персонажей {total} — {names}")

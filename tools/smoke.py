@@ -132,13 +132,16 @@ def check_sprites() -> None:
         bad("нет sprites.json")
         return
     data = json.loads(SPRITES.read_text(encoding="utf-8"))
+    talk = ("half", "open", "round", "wide")
     for pack, frames in data.items():
         for voice, states in frames.items():
             for state in ("closed", "blink"):
                 if state not in states:
                     bad(f"спрайт {pack}/{voice} без кадра {state}")
+            if not any(s in states for s in talk):
+                bad(f"спрайт {pack}/{voice} без кадров разговора {', '.join(talk)}")
     if not problems:
-        ok("у всех спрайтов есть closed и blink")
+        ok("у всех спрайтов есть closed, blink и хотя бы один кадр разговора")
 
 
 def check_lines() -> None:

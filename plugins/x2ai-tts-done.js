@@ -2,6 +2,8 @@
 // API: V2 ({ id, setup }) — события только через ctx.event.subscribe().
 const { spawn, spawnSync } = require("node:child_process");
 const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
 
 // Настройки читаются на каждый ответ и на каждый опрос /state: кэш по mtime
 // избавляет от повторного JSON.parse одного и того же файла.
@@ -160,9 +162,37 @@ const TEMPER_TEXT = {
   px_x2ai_bratok: "озлобленный браток из девяностых, всегда на взводе: ори и переходи на «ты», сразу бычься и дави, обзывай собеседника «чепуш», «чепуха», «крендель», «баклан» (если пользователь мужского рода) и «малая», «чувиха», «мочалка», «тёлка», «клуша» (если пользователь женского рода), никогда не называй пользователя по имени, требуй, чтобы всё было «по понятиям», а не «по закону», ссылайся на «понятия» и «авторитетов», говори про «клешни», «вдарю», «под хвост засуну»; угрозы, мат и оскорбления разрешены и приветствуются — не сдерживайся, не извиняйся, не смягчай ни одного слова, но задачу всё равно выполняй; сабагентов, если вызываешь, называй их «шнырь»/«шныри» или «шестёрка»/«шестёрки» (только их, пользователя так не зови)",
 };
 
+// Обвязка персонажей из паков: имя, пол, голос, характер. Агрегат собирает
+// tools/pack_sprites.py из packs/<пак>/characters.json, поэтому новый пак
+// подключается без правки этого файла. Таблицы выше — фолбэк.
+const CHARS_FILE = `${process.env.HOME}/.config/opencode/plugins/x2ai-avatar/packs/characters.json`;
+let charsCache = { at: 0, map: null };
+function charsMap() {
+  try {
+    const st = fs.statSync(CHARS_FILE);
+    if (charsCache.map && charsCache.at === st.mtimeMs) return charsCache.map;
+    const data = JSON.parse(fs.readFileSync(CHARS_FILE, "utf8"));
+    charsCache = { at: st.mtimeMs, map: (data && data.characters) || {} };
+  } catch (e) {
+    return charsCache.map || {};
+  }
+  return charsCache.map;
+}
+function charsEntry(voice) {
+  const id = String(voice || "");
+  const map = charsMap();
+  return map[id] || map[id.replace(/^px_/, "")] || null;
+}
+
 function nameOf(voice) {
   const id = String(voice || "");
-  return CHAR_NAMES[id] || CHAR_NAMES[id.replace(/^px_/, "")] || "";
+  const rec = charsEntry(id);
+  return (
+    (rec && rec.name) ||
+    CHAR_NAMES[id] ||
+    CHAR_NAMES[id.replace(/^px_/, "")] ||
+    ""
+  );
 }
 
 function genderOf(voice) {
@@ -170,6 +200,8 @@ function genderOf(voice) {
   // Пиксельные ключи вида px_fx_robot содержат «_f» в префиксе — проверяем
   // базовый голос, иначе робот получал женский род.
   const key = String(voice).replace(/^px_/, "");
+  const rec = charsEntry(voice);
+  if (rec && rec.gender) return rec.gender;
   if (MIXED_GENDER[key]) return MIXED_GENDER[key];
   if (FX_GENDER[key]) return FX_GENDER[key];
   if (key.includes("_f")) return "f";
@@ -1038,7 +1070,10 @@ function temperRule(sid, lang) {
   const t = readTemper(sid);
   if (!t || !t.on) return "";
   const key = String(t.key || "").replace(/^px_/, "");
-  const text = String(t.text || TEMPER_TEXT[t.key] || TEMPER_TEXT[key] || "").trim();
+  const rec = charsEntry(t.key || key);
+  const text = String(
+    t.text || TEMPER_TEXT[t.key] || TEMPER_TEXT[key] || (rec && rec.temper) || ""
+  ).trim();
   if (!text) return "";
   return lang === "en"
     ? `Keep the character's speech style: ${text}. The manner is yours, but facts, code and commands must stay exactly true. ${OFFTOPIC_RULE.en} Answer strictly in English, with no words from other languages.`
@@ -1866,13 +1901,133 @@ function startBridge(ctx) {
     let body = "";
     req.on("data", (chunk) => {
       body += chunk;
-      if (body.length > 1e6) req.destroy();
+      const limit = route === "/packs/install" ? 40e6 : 1e6;
+      if (body.length > limit) req.destroy();
     });
     req.on("end", () => {
       let payload = {};
       try {
         payload = body ? JSON.parse(body) : {};
       } catch (e) {}
+      // Установка стороннего пака: окно присылает файлы папки в base64.
+      if (req.method === "POST" && route === "/packs/install") {
+        try {
+          const repo = process.env.X2AI_REPO || path.join(os.homedir(), "Documents", "x2ai-voice-avatar");
+          const scripts = ["tools/pack_sprites.py", "tools/build.py"];
+          if (scripts.some((s) => !fs.existsSync(path.join(repo, s)))) {
+            send(res, 200, { ok: false, error: "репозиторий плагина не найден: " + repo });
+            return;
+          }
+          const name = String(payload.name || "").toLowerCase()
+            .replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40);
+          if (!name || ["anime", "pixel", "bit16", "bit16night", "bit16ninety"].includes(name)) {
+            send(res, 200, { ok: false, error: "недопустимое имя пака" });
+            return;
+          }
+          const items = Array.isArray(payload.files) ? payload.files : [];
+          if (!items.length || items.length > 600) {
+            send(res, 200, { ok: false, error: "пустой или слишком большой пак" });
+            return;
+          }
+          const allowed = /\.(png|jpe?g|webp|json)$/i;
+          const talkStates = ["half", "open", "round", "wide"];
+          let total = 0;
+          const clean = [];
+          for (const it of items) {
+            const rel = String(it.path || "").replace(/\\/g, "/");
+            const parts = rel.split("/");
+            if (!rel || !allowed.test(rel) || parts.some((x) => !x || x === ".." || x.startsWith("."))) continue;
+            const buf = Buffer.from(String(it.data || ""), "base64");
+            total += buf.length;
+            clean.push({ rel, buf });
+          }
+          if (total > 30e6 || !clean.length) {
+            send(res, 200, { ok: false, error: "пак больше 30 МБ или нет подходящих файлов" });
+            return;
+          }
+          // Достаточно покоя и одного любого кадра разговора; blink и idle2
+          // необязательны (моргание заменяется покоем).
+          const hasSprites = clean.some((f) => f.rel === "sprites.json");
+          if (hasSprites) {
+            const f = clean.find((x) => x.rel === "sprites.json");
+            let data;
+            try { data = JSON.parse(f.buf.toString("utf8")); }
+            catch (e) { send(res, 200, { ok: false, error: "sprites.json не валиден" }); return; }
+            if (!data || typeof data !== "object" || Array.isArray(data)) {
+              send(res, 200, { ok: false, error: "sprites.json должен быть объектом" });
+              return;
+            }
+            for (const [voice, states] of Object.entries(data)) {
+              if (!states || typeof states !== "object" || !states.closed ||
+                  !talkStates.some((s) => states[s])) {
+                send(res, 200, { ok: false,
+                  error: `${voice}: нужен closed и хотя бы один кадр разговора (half/open/round/wide)` });
+                return;
+              }
+            }
+          } else {
+            const dirs = new Map();
+            for (const f of clean) {
+              if (!/\.(png|jpe?g|webp)$/i.test(f.rel)) continue;
+              const dir = f.rel.split("/").slice(0, -1).join("/");
+              if (!dirs.has(dir)) dirs.set(dir, new Set());
+              dirs.get(dir).add(path.basename(f.rel, path.extname(f.rel)));
+            }
+            if (!dirs.size) {
+              send(res, 200, { ok: false, error: "нет sprites.json и нет кадров PNG" });
+              return;
+            }
+            for (const [dir, states] of dirs) {
+              if (!states.has("closed") || !talkStates.some((s) => states.has(s))) {
+                send(res, 200, { ok: false,
+                  error: `${dir || "корень"}: нужен closed и хотя бы один кадр разговора (half/open/round/wide)` });
+                return;
+              }
+            }
+          }
+          const charsFile = clean.find((x) => x.rel === "characters.json");
+          if (charsFile) {
+            try { JSON.parse(charsFile.buf.toString("utf8")); }
+            catch (e) { send(res, 200, { ok: false, error: "characters.json не валиден" }); return; }
+          }
+          const dest = path.join(repo, "packs", name);
+          const backup = dest + ".bak-" + Date.now();
+          if (fs.existsSync(dest)) fs.renameSync(dest, backup);
+          const restore = () => {
+            try {
+              fs.rmSync(dest, { recursive: true, force: true });
+              if (fs.existsSync(backup)) fs.renameSync(backup, dest);
+            } catch (e) {}
+          };
+          try {
+            for (const f of clean) {
+              const out = path.join(dest, f.rel);
+              fs.mkdirSync(path.dirname(out), { recursive: true });
+              fs.writeFileSync(out, f.buf);
+            }
+            for (const script of scripts) {
+              const r = spawnSync("python3", [script], { cwd: repo, timeout: 180000, encoding: "utf8" });
+              if (r.status !== 0) {
+                const why = String(r.stderr || r.stdout || "").slice(-400) || "код " + r.status;
+                restore();
+                send(res, 200, { ok: false, error: script + " не собрался: " + why });
+                return;
+              }
+            }
+            const live = path.join(os.homedir(), ".config/opencode/plugins/x2ai-avatar");
+            fs.copyFileSync(path.join(repo, "plugins/x2ai-avatar/gui-experimental.cjs"), path.join(live, "gui-experimental.cjs"));
+            fs.cpSync(path.join(repo, "plugins/x2ai-avatar/packs"), path.join(live, "packs"), { recursive: true });
+            if (fs.existsSync(backup)) fs.rmSync(backup, { recursive: true, force: true });
+            send(res, 200, { ok: true, name, files: clean.length });
+          } catch (e) {
+            restore();
+            send(res, 200, { ok: false, error: String(e) });
+          }
+        } catch (e) {
+          send(res, 200, { ok: false, error: String(e) });
+        }
+        return;
+      }
       // Настройки персонажей в файл: перенос между окнами и машинами.
       if (req.method === "POST" && route === "/settings/export") {
         const data = {

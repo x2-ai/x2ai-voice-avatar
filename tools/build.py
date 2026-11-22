@@ -9,6 +9,8 @@ GUI-плагины OpenCode Desktop исполняются через new Functi
     __PACK_INDEX__  plugins/x2ai-avatar/packs/index.json (паки и персонажи)
     __CLICKS__      plugins/x2ai-avatar/clicks.json   (реплики на клик)
     __LINES__       plugins/x2ai-avatar/lines.json    (реплики/паки/примеры)
+    __CHARACTERS__  plugins/x2ai-avatar/packs/characters.json (имя, голос,
+                    характер и реплики персонажей — уже без правки кода)
 
 Сами кадры спрайтов в бандл НЕ кладутся: они лежат отдельными файлами
 plugins/x2ai-avatar/packs/<пак>.json и приходят в окно с моста (/pack) —
@@ -45,8 +47,9 @@ def main() -> int:
     index = load(PLUGIN / "packs/index.json", "спрайты (tools/pack_sprites.py)")
     clicks = load(PLUGIN / "clicks.json", "реплики (clicks.json)")
     lines = load(PLUGIN / "lines.json", "реплики панели (plugins/x2ai-avatar/gen-lines.py)")
+    chars = load(PLUGIN / "packs/characters.json", "обвязку персонажей (tools/pack_sprites.py)")
 
-    for marker in ("__TALK_PLAN__", "__PACK_INDEX__", "__CLICKS__", "__LINES__"):
+    for marker in ("__TALK_PLAN__", "__PACK_INDEX__", "__CLICKS__", "__LINES__", "__CHARACTERS__"):
         if marker not in template:
             sys.exit(f"в шаблоне нет маркера {marker}")
 
@@ -55,6 +58,7 @@ def main() -> int:
         .replace("__PACK_INDEX__", index)
         .replace("__CLICKS__", clicks)
         .replace("__LINES__", lines)
+        .replace("__CHARACTERS__", chars)
     )
     target = PLUGIN / "gui-experimental.cjs"
     target.write_text(out, encoding="utf-8")

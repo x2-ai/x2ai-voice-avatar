@@ -713,10 +713,22 @@ function frameSetFor(voice) {
   return base[key] || EMPTY_FRAME;
 }
 
+const TALK_STATES = ["half", "open", "round", "wide"];
 function frame(voice, state) {
   const set = frameSetFor(voice);
   if (typeof set === "string") return set; // пустой пак ещё не загружен
-  return set[state] || set.closed || EMPTY_FRAME;
+  if (!set || typeof set !== "object" || !set.closed) return EMPTY_FRAME;
+  if (state === "closed") return set.closed;
+  // Необязательные кадры: без blink показываем покой, idle2 только если есть.
+  if (state === "blink") return set.blink || set.closed;
+  if (state === "idle2") return set.idle2 || set.closed;
+  if (set[state]) return set[state];
+  // Пак может состоять всего из двух кадров: покой + один кадр рта.
+  // Тогда разговор строится из доступных кадров разговора по кругу.
+  const talk = TALK_STATES.filter((s) => set[s]);
+  if (!talk.length) return set.closed;
+  const idx = TALK_STATES.indexOf(state);
+  return set[talk[(idx < 0 ? 0 : idx) % talk.length]] || set.closed;
 }
 
 // Таймеры пинга живут на уровне модуля: при повторном рендере слота старый
@@ -1758,6 +1770,50 @@ function createView(ctx) {
           }),
         );
       }
+      // Установка своего пака: выбираем папку, сервер проверяет состав и
+      // сам пересобирает паки и бандл. Потом перезагружаем окно.
+      const packInput = document.createElement("input");
+      packInput.type = "file";
+      packInput.webkitdirectory = true;
+      packInput.multiple = true;
+      packInput.style.display = "none";
+      pBody.appendChild(packInput);
+      const addPackBtn = vRow("Добавить пак", false, () => packInput.click());
+      addPackBtn.style.borderStyle = "dashed";
+      pList.appendChild(addPackBtn);
+      packInput.addEventListener("change", async () => {
+        const files = Array.from(packInput.files || []);
+        packInput.value = "";
+        if (!files.length) return;
+        const folder = String(files[0].webkitRelativePath || files[0].name || "").split("/")[0];
+        const name = folder.toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40);
+        if (!name) { hint("Не удалось определить имя папки пака", pBody); return; }
+        const items = [];
+        for (const f of files) {
+          const parts = String(f.webkitRelativePath || f.name || "").split("/");
+          const rel = parts.slice(1).join("/");
+          if (!rel || !/\.(png|jpe?g|webp|json)$/i.test(rel)) continue;
+          if (parts.some((x) => x === ".." || x.startsWith("."))) continue;
+          const bytes = new Uint8Array(await f.arrayBuffer());
+          let bin = "";
+          for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+          items.push({ path: rel, data: btoa(bin) });
+        }
+        if (!items.length) { hint("В папке нет кадров или JSON пака", pBody); return; }
+        const label = addPackBtn.textContent;
+        addPackBtn.disabled = true;
+        addPackBtn.textContent = "Устанавливаю…";
+        const fail = (msg) => {
+          addPackBtn.disabled = false;
+          addPackBtn.textContent = label;
+          hint("Пак не установлен: " + msg, pBody);
+        };
+        try {
+          const r = await bridge("/packs/install", { name, files: items });
+          if (r && r.ok) { location.reload(); return; }
+          fail((r && r.error) || "неизвестная ошибка");
+        } catch (e) { fail(String(e)); }
+      });
       pBody.appendChild(pList);
       hint("«Все доступные» — персонажи всех паков сразу. Его галочки доступности и настройки персонажей хранятся отдельно и не меняют настройки самих паков.", pBody);
 
@@ -3657,8 +3713,12 @@ function createView(ctx) {
   };
   // Пол нужен только для нейтральных реплик: у персонажа с выключенным
   // характером своей манеры нет, но род у фразы остаётся (говорил/говорила).
+  // Пол из данных пака главнее: свои паки не знают наших регулярк.
+  const CHAR_GENDER = {};
   const lineGender = () => {
     const v = clipVoice(voice);
+    const fromData = CHAR_GENDER[v] || CHAR_GENDER[String(v).replace(/^px_/, "")];
+    if (fromData) return fromData;
     if (/^ru_m|^fx_robot|^fx_penguin|^fx_demon$|^x2ai_(ment|alkash|bratok|narik|novyi_russkiy|kotohaker|coder|senpai|samurai|ninja)$/.test(v)) return "m";
     if (/^ru_f|^fx_demoness|^fx_alien|^fx_cat|^fx_ghost|^x2ai_(babka|sosochka|telochka|programmer|codergirl|tsundere|sakura|neko|gakusei|mahou|onime)$/.test(v)) return "f";
     return "m";
@@ -4422,6 +4482,43 @@ function createView(ctx) {
     px_x2ai_mahou: "x2ai_mahou",
     px_x2ai_onime: "x2ai_onime",
   };
+  // Обвязка персонажей из паков (packs/<пак>/characters.json → агрегат):
+  // имя, пол, голос, характер и реплики. Таблицы выше остаются фолбэком
+  // для старых паков, где characters.json ещё нет.
+  const CHAR_DATA = (() => {
+    try {
+      return __CHARACTERS__;
+    } catch (e) {
+      return { packs: {}, characters: {} };
+    }
+  })();
+  (() => {
+    const meta = (CHAR_DATA && CHAR_DATA.packs) || {};
+    const chars = (CHAR_DATA && CHAR_DATA.characters) || {};
+    for (const [name, info] of Object.entries(meta)) {
+      if (info && info.name) PACK_NAMES[name] = info.name;
+    }
+    for (const [full, rec] of Object.entries(chars)) {
+      if (!rec) continue;
+      const base = full.replace(/^px_/, "");
+      const pack = rec.pack || "pixel";
+      if (!CHAR_NAMES[pack]) CHAR_NAMES[pack] = {};
+      CHAR_NAMES[pack][full] = rec.name || base;
+      if (rec.nameEn) CHAR_NAMES_EN[base] = rec.nameEn;
+      if (rec.voice) VOICE_ALIAS[full] = rec.voice;
+      if (rec.gender) CHAR_GENDER[base] = rec.gender;
+      if (rec.rage) {
+        if (rec.rage.ru && rec.rage.ru.length) RAGE_BANK.ru.chars[base] = rec.rage.ru;
+        if (rec.rage.en && rec.rage.en.length) RAGE_BANK.en.chars[base] = rec.rage.en;
+      }
+      if (rec.compact) {
+        if (rec.compact.ru) COMPACT_BANK.ru.chars[base] = rec.compact.ru;
+        if (rec.compact.en) COMPACT_BANK.en.chars[base] = rec.compact.en;
+      }
+      if (rec.clicks && rec.clicks.length) CLICKS[full] = rec.clicks.map((text) => ({ text }));
+      if (rec.lines && rec.lines.length) LINES.lines[base] = rec.lines.map((text) => ({ text }));
+    }
+  })();
   // Голос персонажа: сначала индивидуальная настройка (localStorage), потом
   // общий файл моста, потом встроенное соответствие пиксельных id.
   // Голос для конкретного языка: авто-режим на сервере берёт нужный сам.
