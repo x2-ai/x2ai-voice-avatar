@@ -4408,6 +4408,7 @@ function createView(ctx) {
     px_x2ai_gakusei: "x2ai_gakusei",
     px_x2ai_senpai: "x2ai_senpai",
     px_x2ai_samurai: "x2ai_samurai",
+    px_x2ai_ninja: "x2ai_ninja",
     px_x2ai_mahou: "x2ai_mahou",
     px_x2ai_onime: "x2ai_onime",
   };

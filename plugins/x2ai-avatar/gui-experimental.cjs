@@ -1474,6 +1474,23 @@ const LINES = {
    {
     "text": "Ладно, посижу с тобой. Только не надейся, что это из доброты."
    }
+  ],
+  "x2ai_ninja": [
+   {
+    "text": "Тихо. Я уже здесь."
+   },
+   {
+    "text": "Цель отмечена. Работаю."
+   },
+   {
+    "text": "Меньше слов — больше точности."
+   },
+   {
+    "text": "…Я ушла. Не ищи."
+   },
+   {
+    "text": "Слушай внимательно: один раз скажу."
+   }
   ]
  },
  "packs": {
@@ -1569,6 +1586,9 @@ const LINES = {
    },
    "x2ai_onime": {
     "text": "Смертный."
+   },
+   "x2ai_ninja": {
+    "text": "Пиксельарт!"
    }
   }
  },
@@ -5997,6 +6017,7 @@ function createView(ctx) {
     px_x2ai_gakusei: "x2ai_gakusei",
     px_x2ai_senpai: "x2ai_senpai",
     px_x2ai_samurai: "x2ai_samurai",
+    px_x2ai_ninja: "x2ai_ninja",
     px_x2ai_mahou: "x2ai_mahou",
     px_x2ai_onime: "x2ai_onime",
   };
